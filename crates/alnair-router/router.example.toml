@@ -1,0 +1,35 @@
+# alnair-router configuration.
+# Copy to $ALNAIR_ROUTER_HOME/config.toml (default ~/.alnair-router/config.toml).
+#
+# Every value can be overridden by an environment variable using the
+# ALNAIR_ROUTER__SECTION__KEY form, e.g.:
+#   ALNAIR_ROUTER__SERVER__PORT=9000
+#   ALNAIR_ROUTER__STORAGE__URL=sqlite:///var/lib/alnair-router/router.sqlite?mode=rwc
+
+[server]
+# Port the router listens on.
+port = 7878
+# Interface to bind. Keep 127.0.0.1 unless you have a reverse proxy in front:
+# the admin API is unauthenticated and can mint API keys.
+host = "127.0.0.1"
+# When false, /v1/* accepts requests without an Authorization header.
+# Convenient for localhost development; set true for anything reachable.
+require_api_key = false
+
+[storage]
+# SQLite URL. Leave empty to use $ALNAIR_ROUTER_HOME/db/router.sqlite.
+url = ""
+
+[router]
+# Connection used for bare model names with no `prefix/` segment.
+# Must match a connection name.
+default_connection = "openai-main"
+# Maximum number of fallback tiers attempted for a single request.
+max_attempts = 5
+
+[queue]
+# Reserved for upstream concurrency limiting.
+enabled = true
+max_concurrent = 4
+max_queue_size = 16
+timeout_secs = 300

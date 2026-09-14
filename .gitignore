@@ -1,0 +1,5 @@
+target/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

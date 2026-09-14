@@ -1,0 +1,45 @@
+import { createRouter, createWebHistory } from 'vue-router';
+
+import AboutPage from '@/pages/AboutPage.vue';
+import AliasesPage from '@/pages/AliasesPage.vue';
+import CombosPage from '@/pages/CombosPage.vue';
+import ConnectionsPage from '@/pages/ConnectionsPage.vue';
+import KeysPage from '@/pages/KeysPage.vue';
+import NotFoundPage from '@/pages/NotFoundPage.vue';
+import OverviewPage from '@/pages/OverviewPage.vue';
+import UsagePage from '@/pages/UsagePage.vue';
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    title?: string;
+  }
+}
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/', name: 'overview', component: OverviewPage, meta: { title: 'Overview' } },
+    {
+      path: '/connections',
+      name: 'connections',
+      component: ConnectionsPage,
+      meta: { title: 'Connections' },
+    },
+    { path: '/aliases', name: 'aliases', component: AliasesPage, meta: { title: 'Aliases' } },
+    { path: '/combos', name: 'combos', component: CombosPage, meta: { title: 'Combos' } },
+    { path: '/keys', name: 'keys', component: KeysPage, meta: { title: 'API Keys' } },
+    { path: '/usage', name: 'usage', component: UsagePage, meta: { title: 'Usage' } },
+    { path: '/about', name: 'about', component: AboutPage, meta: { title: 'About' } },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: NotFoundPage,
+      meta: { title: 'Not found' },
+    },
+  ],
+  scrollBehavior: () => ({ top: 0 }),
+});
+
+router.afterEach((to) => {
+  document.title = to.meta.title ? `${to.meta.title} | Alnair Router` : 'Alnair Router';
+});
