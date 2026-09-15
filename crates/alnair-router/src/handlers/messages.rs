@@ -26,9 +26,12 @@ pub async fn messages(
     Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(request): Json<MessagesRequest>,
 ) -> Result<Response> {
-    let api_key_id = key.map(|k| k.0.id);
+    let api_key_id = key.as_ref().map(|auth| auth.key.id.clone());
 
     let requested_model = request.model.clone();
+    if let Some(auth) = &key {
+        auth.policy.ensure_model(&requested_model)?;
+    }
     let stream_requested = request.stream;
 
     let chat_request = request.into_chat_request()?;
@@ -254,8 +257,13 @@ fn stream_response(
 
 /// `POST /v1/messages/count_tokens` — heuristic estimate, no tokenizer dependency.
 pub async fn count_tokens(
+    Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(request): Json<MessagesRequest>,
 ) -> Result<Json<CountTokensResponse>> {
+    if let Some(auth) = &key {
+        auth.policy.ensure_model(&request.model)?;
+    }
+
     let chat_request = request.into_chat_request()?;
     let messages = chat_request.into_messages()?;
     Ok(Json(CountTokensResponse {

@@ -81,4 +81,25 @@ describe('api', () => {
     });
     expect(init.body).toBe(JSON.stringify({ name: 'laptop' }));
   });
+
+  it('creates plans and clears a key plan with an explicit null', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse({ id: 'plan-1' }, 201)));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.createPlan({
+      name: 'team-free',
+      allowed_models: ['openai/*'],
+      rate_limit_per_minute: 60,
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/plans');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+
+    await api.updateKey('key-1', { plan_id: null, allowed_models: null });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe('/api/keys/key-1');
+    expect(init.method).toBe('PATCH');
+    expect(init.body).toBe(JSON.stringify({ plan_id: null, allowed_models: null }));
+  });
 });

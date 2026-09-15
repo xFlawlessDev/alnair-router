@@ -20,6 +20,7 @@ pub mod limits;
 pub mod metrics;
 pub mod middleware;
 pub mod model;
+pub mod policy;
 pub mod protocol;
 pub mod server;
 pub mod state;

@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
 
 use crate::error::{Error, Result};
@@ -24,6 +25,10 @@ pub struct ApiKey {
     pub monthly_budget_usd: Option<f64>,
     /// `off`, `warn`, or `block`.
     pub budget_mode: String,
+    /// Optional plan whose rules fill the fields this key leaves empty.
+    pub plan_id: Option<String>,
+    /// Model allowlist patterns; `None` inherits the plan (or allows any model).
+    pub allowed_models: Option<Json<Vec<String>>>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
 }
@@ -31,6 +36,13 @@ pub struct ApiKey {
 impl ApiKey {
     pub fn is_enabled(&self) -> bool {
         self.enabled != 0
+    }
+
+    /// Model patterns stored on the key itself, if any.
+    pub fn allowed_models(&self) -> Option<&[String]> {
+        self.allowed_models
+            .as_ref()
+            .map(|models| models.0.as_slice())
     }
 
     /// Effective per-key rate override, ignoring non-positive values.
@@ -70,6 +82,10 @@ pub struct CreateApiKey {
     pub monthly_budget_usd: Option<f64>,
     #[serde(default)]
     pub budget_mode: Option<String>,
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    #[serde(default)]
+    pub allowed_models: Option<Vec<String>>,
 }
 
 /// Partial update. `null` clears nullable fields; absence leaves them unchanged.
@@ -85,6 +101,10 @@ pub struct UpdateApiKey {
     pub monthly_budget_usd: Option<Option<f64>>,
     #[serde(default)]
     pub budget_mode: Option<String>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub plan_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub allowed_models: Option<Option<Vec<String>>>,
 }
 
 fn default_true() -> bool {
@@ -98,7 +118,7 @@ pub fn hash_key(secret: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn normalized_rate_limit(value: Option<i64>) -> Result<Option<i64>> {
+pub(crate) fn normalized_rate_limit(value: Option<i64>) -> Result<Option<i64>> {
     match value {
         None => Ok(None),
         Some(value) if value <= 0 => Err(Error::BadRequest(
@@ -108,7 +128,7 @@ fn normalized_rate_limit(value: Option<i64>) -> Result<Option<i64>> {
     }
 }
 
-fn normalized_budget(value: Option<f64>) -> Result<Option<f64>> {
+pub(crate) fn normalized_budget(value: Option<f64>) -> Result<Option<f64>> {
     match value {
         None => Ok(None),
         Some(value) if !value.is_finite() || value <= 0.0 => Err(Error::BadRequest(
@@ -118,20 +138,64 @@ fn normalized_budget(value: Option<f64>) -> Result<Option<f64>> {
     }
 }
 
-fn normalized_budget_mode(value: Option<&str>) -> Result<BudgetMode> {
+pub(crate) fn normalized_budget_mode(value: Option<&str>) -> Result<BudgetMode> {
     match value {
         Some(value) => BudgetMode::parse(value),
         None => Ok(BudgetMode::Off),
     }
 }
 
-fn validate_budget_pair(budget: Option<f64>, mode: BudgetMode) -> Result<()> {
+pub(crate) fn validate_budget_pair(budget: Option<f64>, mode: BudgetMode) -> Result<()> {
     if mode != BudgetMode::Off && budget.is_none() {
         return Err(Error::BadRequest(
             "monthly_budget_usd is required when budget_mode is warn or block".to_string(),
         ));
     }
     Ok(())
+}
+
+/// Trims, drops blanks and de-dupes model patterns; an empty result clears the
+/// allowlist entirely (`None` means "any model").
+pub(crate) fn normalize_allowed_models(value: Option<Vec<String>>) -> Result<Option<Vec<String>>> {
+    let Some(models) = value else {
+        return Ok(None);
+    };
+
+    let mut normalized: Vec<String> = Vec::new();
+    for model in models {
+        let model = model.trim();
+        if model.is_empty() || normalized.iter().any(|existing| existing == model) {
+            continue;
+        }
+        normalized.push(model.to_string());
+    }
+
+    Ok((!normalized.is_empty()).then_some(normalized))
+}
+
+/// Rejects a blank plan id and verifies the plan exists.
+pub(crate) async fn validate_plan(
+    pool: &SqlitePool,
+    plan_id: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(plan_id) = plan_id else {
+        return Ok(None);
+    };
+
+    let plan_id = plan_id.trim();
+    if plan_id.is_empty() {
+        return Err(Error::BadRequest("plan_id must not be blank".to_string()));
+    }
+
+    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM key_plans WHERE id = ?")
+        .bind(plan_id)
+        .fetch_optional(pool)
+        .await?;
+    if exists.is_none() {
+        return Err(Error::NotFound(format!("plan '{plan_id}' not found")));
+    }
+
+    Ok(Some(plan_id.to_string()))
 }
 
 pub struct ApiKeyRepository {
@@ -168,6 +232,8 @@ impl ApiKeyRepository {
         let budget = normalized_budget(input.monthly_budget_usd)?;
         let budget_mode = normalized_budget_mode(input.budget_mode.as_deref())?;
         validate_budget_pair(budget, budget_mode)?;
+        let plan_id = validate_plan(&self.pool, input.plan_id.as_deref()).await?;
+        let allowed_models = normalize_allowed_models(input.allowed_models)?;
 
         let secret = format!("{KEY_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let id = uuid::Uuid::new_v4().to_string();
@@ -176,8 +242,8 @@ impl ApiKeyRepository {
 
         sqlx::query(
             "INSERT INTO api_keys
-                (id, name, key_hash, prefix, enabled, rate_limit_per_minute, monthly_budget_usd, budget_mode, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, name, key_hash, prefix, enabled, rate_limit_per_minute, monthly_budget_usd, budget_mode, plan_id, allowed_models, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -187,6 +253,8 @@ impl ApiKeyRepository {
         .bind(rate_limit)
         .bind(budget)
         .bind(budget_mode.as_str())
+        .bind(plan_id)
+        .bind(allowed_models.map(Json))
         .bind(now)
         .execute(&self.pool)
         .await?;
@@ -230,9 +298,21 @@ impl ApiKeyRepository {
         };
         validate_budget_pair(budget, budget_mode)?;
 
+        let plan_id = match &input.plan_id {
+            Some(value) => validate_plan(&self.pool, value.as_deref()).await?,
+            None => existing.plan_id.clone(),
+        };
+        let allowed_models = match &input.allowed_models {
+            Some(value) => normalize_allowed_models(value.clone())?,
+            None => existing
+                .allowed_models
+                .as_ref()
+                .map(|models| models.0.clone()),
+        };
+
         sqlx::query(
             "UPDATE api_keys
-             SET name = ?, enabled = ?, rate_limit_per_minute = ?, monthly_budget_usd = ?, budget_mode = ?
+             SET name = ?, enabled = ?, rate_limit_per_minute = ?, monthly_budget_usd = ?, budget_mode = ?, plan_id = ?, allowed_models = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -240,6 +320,8 @@ impl ApiKeyRepository {
         .bind(rate_limit)
         .bind(budget)
         .bind(budget_mode.as_str())
+        .bind(plan_id)
+        .bind(allowed_models.map(Json))
         .bind(id)
         .execute(&self.pool)
         .await?;

@@ -16,10 +16,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import TierInput from '@/components/combos/TierInput.vue';
 import { ApiError, api } from '@/lib/api';
-import type { ComboWithEntries } from '@/types/api';
+import type { Alias, ComboWithEntries } from '@/types/api';
 
-const props = defineProps<{ open: boolean; combo: ComboWithEntries | null }>();
+const props = defineProps<{
+  open: boolean;
+  combo: ComboWithEntries | null;
+  aliases: Alias[];
+  combos: ComboWithEntries[];
+}>();
 const emit = defineEmits<{ 'update:open': [boolean]; saved: [] }>();
 
 const name = ref('');
@@ -136,9 +142,12 @@ async function save(): Promise<void> {
           </div>
           <div v-for="(entry, index) in entries" :key="index" class="flex items-center gap-2">
             <span class="w-6 shrink-0 text-center text-sm text-muted-foreground">{{ index + 1 }}</span>
-            <Input
+            <TierInput
               v-model="entries[index]"
-              placeholder="oa/gpt-4o-mini or another combo name"
+              :aliases="aliases"
+              :combos="combos"
+              :taken="entries.filter((_, other) => other !== index)"
+              :exclude-combo-id="combo?.combo.id ?? null"
               class="flex-1"
             />
             <Button
@@ -172,7 +181,8 @@ async function save(): Promise<void> {
             </Button>
           </div>
           <p class="text-xs text-muted-foreground">
-            References may be <code>prefix/model</code>, a bare model, or another combo name.
+            Search and pick an alias or another combo, or type any reference —
+            <code>prefix/model</code>, a bare model, or a combo name.
           </p>
         </div>
       </div>

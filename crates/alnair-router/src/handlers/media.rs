@@ -2,6 +2,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
+use axum::Extension;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -10,9 +11,18 @@ use axum::response::Response;
 use serde_json::json;
 
 use crate::error::{Error, Result};
+use crate::middleware::AuthenticatedKey;
 use crate::model::{ResolvedTarget, Resolver};
 use crate::state::AppState;
 use crate::upstream::media::MediaProxy;
+
+/// Rejects requests whose model is outside the key's allowlist.
+fn ensure_model_allowed(key: &Option<AuthenticatedKey>, model: Option<&str>) -> Result<()> {
+    match (key.as_ref(), model) {
+        (Some(auth), Some(model)) if !model.trim().is_empty() => auth.policy.ensure_model(model),
+        _ => Ok(()),
+    }
+}
 
 /// Resolves a single target for a proxied call, preferring the request's model
 /// when it names one and falling back to the router's default connection.
@@ -53,12 +63,14 @@ async fn resolve_model_reference(state: &AppState, model: &str) -> Result<Resolv
 /// `POST /v1/embeddings` — forwarded to the resolved connection's `/embeddings`.
 pub async fn embeddings(
     State(state): State<AppState>,
+    Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(mut body): Json<serde_json::Value>,
 ) -> Result<Response> {
     let model = body
         .get("model")
         .and_then(|value| value.as_str())
         .map(str::to_string);
+    ensure_model_allowed(&key, model.as_deref())?;
 
     let target = match &model {
         Some(model) if model.contains('/') => resolve_model_reference(&state, model).await?,
@@ -76,9 +88,10 @@ pub async fn embeddings(
 /// `POST /v1/images/generations` — OpenAI-compatible image proxy.
 pub async fn image_generations(
     State(state): State<AppState>,
+    Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response> {
-    let target = target_for_body(&state, &body).await?;
+    let target = target_for_body(&state, &key, &body).await?;
     let body = rewrite_model(&body, &target);
     forward_json(state, &target, "/images/generations", body).await
 }
@@ -86,9 +99,10 @@ pub async fn image_generations(
 /// `POST /v1/audio/speech` — text-to-speech proxy.
 pub async fn audio_speech(
     State(state): State<AppState>,
+    Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response> {
-    let target = target_for_body(&state, &body).await?;
+    let target = target_for_body(&state, &key, &body).await?;
     let body = rewrite_model(&body, &target);
     forward_json(state, &target, "/audio/speech", body).await
 }
@@ -110,9 +124,10 @@ pub async fn audio_transcriptions(
 /// `POST /v1/videos/generations` — async video job creation.
 pub async fn video_generations(
     State(state): State<AppState>,
+    Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response> {
-    let target = target_for_body(&state, &body).await?;
+    let target = target_for_body(&state, &key, &body).await?;
     let body = rewrite_model(&body, &target);
     forward_json(state, &target, "/videos/generations", body).await
 }
@@ -130,11 +145,16 @@ pub async fn video_status(
 }
 
 /// Picks the target named by the body's `model`, else the default connection.
-async fn target_for_body(state: &AppState, body: &serde_json::Value) -> Result<ResolvedTarget> {
+async fn target_for_body(
+    state: &AppState,
+    key: &Option<AuthenticatedKey>,
+    body: &serde_json::Value,
+) -> Result<ResolvedTarget> {
     let model = body
         .get("model")
         .and_then(|value| value.as_str())
         .map(str::to_string);
+    ensure_model_allowed(key, model.as_deref())?;
 
     match model {
         Some(model) if model.contains('/') => resolve_model_reference(state, &model).await,

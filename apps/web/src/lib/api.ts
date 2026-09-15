@@ -16,6 +16,8 @@ import type {
   HealthResponse,
   ID,
   InitState,
+  KeyPlan,
+  KeyPlanInput,
   UpstreamModelsResponse,
   UsageRecord,
   UsageSummary,
@@ -148,6 +150,12 @@ export const api = {
   updateKey: (id: ID, body: Partial<ApiKeyInput>) =>
     request<ApiKey>('PATCH', `/api/keys/${id}`, { body }),
   deleteKey: (id: ID) => request<void>('DELETE', `/api/keys/${id}`),
+
+  listPlans: () => request<KeyPlan[]>('GET', '/api/plans'),
+  createPlan: (body: KeyPlanInput) => request<KeyPlan>('POST', '/api/plans', { body }),
+  updatePlan: (id: ID, body: Partial<KeyPlanInput>) =>
+    request<KeyPlan>('PATCH', `/api/plans/${id}`, { body }),
+  deletePlan: (id: ID) => request<void>('DELETE', `/api/plans/${id}`),
 
   listUsage: (limit: number, offset: number) =>
     request<UsageRecord[]>('GET', '/api/usage', { query: { limit, offset } }),

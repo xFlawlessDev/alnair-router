@@ -287,6 +287,25 @@ suite should tell you.
     discarded. The dashboard opener also spawns `cmd` with `CREATE_NO_WINDOW`,
     otherwise `cmd` would allocate a console just to launch the browser.
 
+21. **Key rules are one policy, merged key-first.** `policy.rs` resolves an
+    `ApiKey` plus its optional `KeyPlan` into a `KeyPolicy`: any field the key
+    sets wins, the plan fills the rest, and a key budget always travels with its
+    own mode (a key amount with `mode = off` disables the plan cap). The model
+    allowlist matches case-insensitively with `*` (everything) and `prefix/*`
+    (the prefix's children only); an empty list allows any model. Enforcement
+    happens in the handlers right after the model is read — chat, messages
+    (incl. count_tokens), responses, embeddings, images, audio and video — and
+    fails with `403 permission_error`. Rate limiting runs before the allowlist,
+    so a denied request still consumes a token. `/v1/models` is not filtered by
+    the allowlist yet. (`policy.rs`, `middleware.rs`, `handlers/*`)
+
+22. **Plans are reusable rule sets with one clear blast radius.** Deleting a
+    plan detaches it from every key (`UPDATE api_keys SET plan_id = NULL`) and
+    the keys fall back to their own fields and the server defaults. Duplicate
+    plan names are rejected with a 400 before SQLite sees them, and attaching a
+    key to an unknown plan is a 404, not a dangling reference. Wire shapes live
+    in `db/repos/key_plans.rs` and mirror the dashboard types.
+
 ---
 
 ## 5. The `alnair-llm` crate — read this

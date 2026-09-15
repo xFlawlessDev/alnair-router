@@ -46,6 +46,8 @@ async fn mint_key(db: &Db, name: &str) -> String {
             rate_limit_per_minute: None,
             monthly_budget_usd: None,
             budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("mint key")
@@ -418,6 +420,8 @@ async fn api_key_auth_is_enforced_when_required() {
             rate_limit_per_minute: None,
             monthly_budget_usd: None,
             budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("mint key");
@@ -672,6 +676,8 @@ async fn budget_block_mode_returns_402() {
             rate_limit_per_minute: None,
             monthly_budget_usd: Some(0.001),
             budget_mode: Some("block".to_string()),
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("key");
@@ -703,6 +709,8 @@ async fn budget_warn_mode_passes_with_a_warning_header() {
             rate_limit_per_minute: None,
             monthly_budget_usd: Some(0.001),
             budget_mode: Some("warn".to_string()),
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("key");
@@ -734,6 +742,8 @@ async fn key_patch_updates_limits_and_enabled_state() {
             rate_limit_per_minute: None,
             monthly_budget_usd: None,
             budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("key");
@@ -1431,5 +1441,284 @@ async fn activity_endpoint_reports_attempts_and_connections() {
             .iter()
             .any(|event| event["kind"] == "request" && event["status"] == 200),
         "expected the HTTP request event: {events:?}"
+    );
+}
+
+// ------------------------------------------------------- key plans and rules
+
+#[tokio::test]
+async fn plan_crud_round_trip() {
+    let (app, _db) = app(false).await;
+
+    let (status, created) = json_request(
+        &app,
+        "POST",
+        "/api/plans",
+        serde_json::json!({
+            "name": "team-free",
+            "description": "shared rules",
+            "allowed_models": ["openai/*", "openai/*", " gpt-4o-mini "],
+            "rate_limit_per_minute": 60,
+            "monthly_budget_usd": 10.0,
+            "budget_mode": "warn",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {created}");
+    assert_eq!(
+        created["allowed_models"],
+        serde_json::json!(["openai/*", "gpt-4o-mini"]),
+        "patterns should be trimmed and de-duplicated"
+    );
+    assert_eq!(created["budget_mode"], "warn");
+
+    let plan_id = created["id"].as_str().expect("plan id").to_string();
+
+    let (status, list) = get(&app, "/api/plans").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list.as_array().map(Vec::len), Some(1));
+
+    let (status, updated) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/plans/{plan_id}"),
+        serde_json::json!({ "allowed_models": [], "budget_mode": "off", "monthly_budget_usd": null }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["allowed_models"], serde_json::json!([]));
+    assert_eq!(updated["monthly_budget_usd"], serde_json::Value::Null);
+
+    let response =
+        raw_request_with_auth(&app, "DELETE", &format!("/api/plans/{plan_id}"), None, None).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let (_, list) = get(&app, "/api/plans").await;
+    assert!(list.as_array().expect("array").is_empty());
+}
+
+#[tokio::test]
+async fn duplicate_plan_names_are_rejected() {
+    let (app, _db) = app(false).await;
+    let body = serde_json::json!({ "name": "dup" });
+
+    let (status, _) = json_request(&app, "POST", "/api/plans", body.clone()).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, error) = json_request(&app, "POST", "/api/plans", body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("already exists")
+    );
+}
+
+#[tokio::test]
+async fn key_allowlist_blocks_models_outside_the_list() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "restricted".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: Some(vec!["openai/gpt-4o".to_string()]),
+        })
+        .await
+        .expect("key");
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "anthropic/claude",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+        Some(&created.secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["type"], "permission_error");
+
+    // Allowed models pass the allowlist and then fail on the unknown reference.
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "openai/gpt-4o",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+        Some(&created.secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unexpected body: {body}");
+}
+
+#[tokio::test]
+async fn plan_rules_apply_to_attached_keys() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, _db) = app_with_config(config).await;
+
+    let (status, plan) = json_request(
+        &app,
+        "POST",
+        "/api/plans",
+        serde_json::json!({
+            "name": "template",
+            "allowed_models": ["openai/*"],
+            "rate_limit_per_minute": 2,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {plan}");
+
+    let (status, created) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "from-plan", "plan_id": plan["id"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {created}");
+    assert_eq!(created["key"]["plan_id"], plan["id"]);
+    let secret = created["secret"].as_str().expect("secret").to_string();
+
+    // The plan's allowlist applies to the key.
+    let (status, _) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "anthropic/claude",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+        Some(&secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // The plan's rate limit applies too: rate limiting runs before the
+    // allowlist, so the denied request above and this one use up the two
+    // tokens of the minute and the next request is throttled.
+    let (status, _) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "openai/gpt-4o",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+        Some(&secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "openai/gpt-4o",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+        Some(&secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(body["error"]["type"], "rate_limit_error");
+}
+
+#[tokio::test]
+async fn deleting_a_plan_detaches_it_from_keys() {
+    let (app, _db) = app(false).await;
+
+    let (_, plan) = json_request(
+        &app,
+        "POST",
+        "/api/plans",
+        serde_json::json!({ "name": "temporary" }),
+    )
+    .await;
+    let plan_id = plan["id"].as_str().expect("plan id").to_string();
+
+    let (_, created) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "attached", "plan_id": plan_id }),
+    )
+    .await;
+    assert_eq!(created["key"]["plan_id"], plan["id"]);
+
+    let response =
+        raw_request_with_auth(&app, "DELETE", &format!("/api/plans/{plan_id}"), None, None).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let (_, keys) = get(&app, "/api/keys").await;
+    assert_eq!(keys[0]["plan_id"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn key_plan_and_allowlist_can_be_cleared() {
+    let (app, _db) = app(false).await;
+
+    let (_, plan) = json_request(
+        &app,
+        "POST",
+        "/api/plans",
+        serde_json::json!({ "name": "p" }),
+    )
+    .await;
+    let plan_id = plan["id"].as_str().expect("plan id").to_string();
+
+    let (_, created) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "k", "plan_id": plan_id, "allowed_models": ["openai/*"] }),
+    )
+    .await;
+    let key_id = created["key"]["id"].as_str().expect("key id").to_string();
+
+    let (status, updated) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/keys/{key_id}"),
+        serde_json::json!({ "plan_id": null, "allowed_models": null }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["plan_id"], serde_json::Value::Null);
+    assert_eq!(updated["allowed_models"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn key_with_an_unknown_plan_is_rejected() {
+    let (app, _db) = app(false).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "orphan", "plan_id": "does-not-exist" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("plan")
     );
 }

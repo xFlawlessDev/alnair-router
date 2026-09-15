@@ -82,7 +82,10 @@ pub async fn responses(
     Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(request): Json<ResponsesRequest>,
 ) -> Result<Json<ResponsesResponse>> {
-    let api_key_id = key.map(|k| k.0.id);
+    let api_key_id = key.as_ref().map(|auth| auth.key.id.clone());
+    if let Some(auth) = &key {
+        auth.policy.ensure_model(&request.model)?;
+    }
 
     let mut messages = Vec::new();
     if let Some(instructions) = &request.instructions

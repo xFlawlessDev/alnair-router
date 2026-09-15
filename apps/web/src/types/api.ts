@@ -155,11 +155,15 @@ export interface ApiKey {
   name: string;
   prefix: string;
   enabled: number;
-  /** Per-key requests-per-minute override; null inherits the default. */
+  /** Per-key requests-per-minute override; null inherits the plan or default. */
   rate_limit_per_minute: number | null;
-  /** Monthly spend cap in USD; null is uncapped. */
+  /** Monthly spend cap in USD; null inherits the plan or is uncapped. */
   monthly_budget_usd: number | null;
   budget_mode: BudgetMode;
+  /** Plan whose rules fill the fields this key leaves empty. */
+  plan_id: ID | null;
+  /** Model allowlist patterns on the key itself; null inherits the plan. */
+  allowed_models: string[] | null;
   created_at: string;
   last_used_at: string | null;
 }
@@ -169,6 +173,31 @@ export type BudgetMode = 'off' | 'warn' | 'block';
 export interface ApiKeyInput {
   name: string;
   enabled?: boolean;
+  rate_limit_per_minute?: number | null;
+  monthly_budget_usd?: number | null;
+  budget_mode?: BudgetMode;
+  plan_id?: string | null;
+  allowed_models?: string[] | null;
+}
+
+/** Reusable rule set: model allowlist plus limits, applied to any key. */
+export interface KeyPlan {
+  id: ID;
+  name: string;
+  description: string;
+  /** Model patterns; empty allows any model. `*` and `prefix/*` wildcards work. */
+  allowed_models: string[];
+  rate_limit_per_minute: number | null;
+  monthly_budget_usd: number | null;
+  budget_mode: BudgetMode;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KeyPlanInput {
+  name: string;
+  description?: string;
+  allowed_models?: string[];
   rate_limit_per_minute?: number | null;
   monthly_budget_usd?: number | null;
   budget_mode?: BudgetMode;

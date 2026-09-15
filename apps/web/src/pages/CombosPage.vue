@@ -22,9 +22,10 @@ import {
 } from '@/components/ui/table';
 import { ApiError, api } from '@/lib/api';
 import { formatDateTime, isEnabled } from '@/lib/format';
-import type { ComboWithEntries } from '@/types/api';
+import type { Alias, ComboWithEntries } from '@/types/api';
 
 const combos = ref<ComboWithEntries[]>([]);
+const aliases = ref<Alias[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
@@ -36,7 +37,9 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    combos.value = await api.listCombos();
+    const [comboList, aliasList] = await Promise.all([api.listCombos(), api.listAliases()]);
+    combos.value = comboList;
+    aliases.value = aliasList;
   } catch (caught) {
     error.value = caught instanceof ApiError ? caught.message : 'Failed to load combos';
   } finally {
@@ -184,7 +187,13 @@ onMounted(load);
       </Table>
     </Card>
 
-    <ComboFormDialog v-model:open="formOpen" :combo="editing" @saved="load" />
+    <ComboFormDialog
+      v-model:open="formOpen"
+      :combo="editing"
+      :aliases="aliases"
+      :combos="combos"
+      @saved="load"
+    />
 
     <ConfirmDialog
       :open="deleting !== null"

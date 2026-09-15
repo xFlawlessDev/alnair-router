@@ -152,10 +152,11 @@ docker run --rm -p 7878:7878 \
 | `POST /v1/messages/count_tokens` | Heuristic estimate (no tokenizer dependency). |
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
-`/api/aliases`, `/api/combos`, `/api/keys`, `/api/usage`, `/api/usage/summary`,
-`/api/metrics`, `/api/activity`. `PATCH /api/keys/{id}` edits a key's name,
-enabled state, rate limit, and monthly budget. Upstream diagnostics used by the
-dashboard:
+`/api/aliases`, `/api/combos`, `/api/keys`, `/api/plans`, `/api/usage`,
+`/api/usage/summary`, `/api/metrics`, `/api/activity`. `PATCH /api/keys/{id}`
+edits a key's name, enabled state, rate limit, monthly budget, model allowlist
+and plan; `/api/plans` manages the reusable rule sets. Upstream diagnostics used
+by the dashboard:
 `GET /api/connections/{id}/models` lists the models an upstream offers,
 `POST /api/connections/{id}/test` checks connectivity, and
 `POST /api/aliases/{id}/test` verifies an alias' connection and model override;
@@ -196,6 +197,12 @@ Key settings:
 - `rate_limit.requests_per_minute` — default per-key token bucket (0 = off);
   keys can override it, and can carry a monthly budget with `off`/`warn`/`block`
   enforcement.
+- Key **rules** — each key can restrict the models it may call (exact names or
+  `openai/*` / `*` wildcards, enforced with `403` on every `/v1` endpoint that
+  carries a model). Rules set on a key win over its plan; bundle allowlist,
+  rate limit and budget into a reusable **plan** and apply it to any key from
+  the dashboard's API Keys page (`/api/plans`), where the allowlist editor
+  searches the available aliases and combos.
 - `router.catalog_ttl_ms` (default 1000) — routing-catalog cache; admin writes
   invalidate it immediately.
 - `router.connect_timeout_ms` / `router.idle_timeout_ms` — default upstream

@@ -8,14 +8,19 @@ use chrono::Datelike;
 use crate::db::repos::api_keys::ApiKey;
 use crate::error::{Error, Result};
 use crate::limits::BudgetMode;
+use crate::policy::KeyPolicy;
 use crate::state::AppState;
 
 /// Response header set on requests that exceed a soft budget.
 const BUDGET_WARNING_HEADER: &str = "x-router-budget-warning";
 
-/// The API key that authenticated the current request.
+/// The API key that authenticated the current request, with its effective
+/// rules (its own fields merged with the attached plan, if any).
 #[derive(Debug, Clone)]
-pub struct AuthenticatedKey(pub crate::db::repos::api_keys::ApiKey);
+pub struct AuthenticatedKey {
+    pub key: crate::db::repos::api_keys::ApiKey,
+    pub policy: KeyPolicy,
+}
 
 /// Authenticates router-issued API keys.
 ///
@@ -77,8 +82,17 @@ pub async fn require_api_key(
 
     state.api_keys().touch(&key.id).await?;
 
+    let plan = match &key.plan_id {
+        Some(plan_id) => state.key_plans().get(plan_id).await?,
+        None => None,
+    };
+    let policy = KeyPolicy::resolve(&key, plan.as_ref());
+
     // Cheap in-memory check first, then the budget rollup.
-    if let Err(error) = state.rate_limiter.check(&key.id, key.rate_limit()) {
+    if let Err(error) = state
+        .rate_limiter
+        .check(&key.id, policy.rate_limit_per_minute)
+    {
         state.metrics.record_rate_limited();
         state.telemetry.record(
             "warn",
@@ -91,9 +105,11 @@ pub async fn require_api_key(
         );
         return Err(error);
     }
-    let budget_warning = check_budget(&state, &key).await?;
+    let budget_warning = check_budget(&state, &key, &policy).await?;
 
-    request.extensions_mut().insert(Some(AuthenticatedKey(key)));
+    request
+        .extensions_mut()
+        .insert(Some(AuthenticatedKey { key, policy }));
 
     let mut response = next.run(request).await;
     if let Some(warning) = budget_warning
@@ -139,11 +155,15 @@ fn record_http(
 ///
 /// `warn` mode lets the request through and reports the overspend via a
 /// response header; `block` mode fails it with `402 Payment Required`.
-async fn check_budget(state: &AppState, key: &ApiKey) -> Result<Option<String>> {
-    let Some(limit) = key.budget_usd() else {
+async fn check_budget(
+    state: &AppState,
+    key: &ApiKey,
+    policy: &KeyPolicy,
+) -> Result<Option<String>> {
+    let Some(limit) = policy.monthly_budget_usd else {
         return Ok(None);
     };
-    let mode = key.budget_mode();
+    let mode = policy.budget_mode;
     if mode == BudgetMode::Off {
         return Ok(None);
     }

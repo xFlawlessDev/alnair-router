@@ -11,6 +11,7 @@ use crate::db::repos::aliases::{CreateAlias, UpdateAlias};
 use crate::db::repos::api_keys::{CreateApiKey, UpdateApiKey};
 use crate::db::repos::combos::{CreateCombo, UpdateCombo};
 use crate::db::repos::connections::{CreateConnection, UpdateConnection};
+use crate::db::repos::key_plans::{CreateKeyPlan, UpdateKeyPlan};
 use crate::db::repos::usage::NewUsageRecord;
 use crate::error::{Error, Result};
 use crate::state::AppState;
@@ -193,6 +194,38 @@ pub async fn delete_key(
 ) -> Result<impl IntoResponse> {
     if !state.api_keys().delete(&id).await? {
         return Err(Error::NotFound(format!("api key '{id}' not found")));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ----------------------------------------------------------------- key plans
+
+pub async fn list_plans(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    Ok(Json(state.key_plans().list().await?))
+}
+
+pub async fn create_plan(
+    State(state): State<AppState>,
+    Json(input): Json<CreateKeyPlan>,
+) -> Result<impl IntoResponse> {
+    let plan = state.key_plans().create(input).await?;
+    Ok((StatusCode::CREATED, Json(plan)))
+}
+
+pub async fn update_plan(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateKeyPlan>,
+) -> Result<impl IntoResponse> {
+    Ok(Json(state.key_plans().update(&id, input).await?))
+}
+
+pub async fn delete_plan(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse> {
+    if !state.key_plans().delete(&id).await? {
+        return Err(Error::NotFound(format!("plan '{id}' not found")));
     }
     Ok(StatusCode::NO_CONTENT)
 }

@@ -448,6 +448,8 @@ async fn api_key_lookup_by_secret_only_matches_enabled() {
             rate_limit_per_minute: None,
             monthly_budget_usd: None,
             budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("key");
@@ -480,6 +482,8 @@ async fn api_key_secret_is_never_stored_plaintext() {
             rate_limit_per_minute: None,
             monthly_budget_usd: None,
             budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("key");
@@ -576,6 +580,8 @@ async fn api_key_limits_and_budget_round_trip() {
             rate_limit_per_minute: Some(30),
             monthly_budget_usd: Some(5.0),
             budget_mode: Some("warn".to_string()),
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect("create");
@@ -616,6 +622,8 @@ async fn api_key_budget_mode_requires_a_budget() {
             rate_limit_per_minute: None,
             monthly_budget_usd: None,
             budget_mode: Some("block".to_string()),
+            plan_id: None,
+            allowed_models: None,
         })
         .await
         .expect_err("budget mode without a budget must be refused");
@@ -635,6 +643,8 @@ async fn usage_spend_since_sums_only_the_matching_key() {
         rate_limit_per_minute: None,
         monthly_budget_usd: None,
         budget_mode: None,
+        plan_id: None,
+        allowed_models: None,
     };
 
     let key = keys.create(create_key("metered")).await.expect("key");

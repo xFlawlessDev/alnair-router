@@ -18,6 +18,9 @@ pub enum Error {
     #[error("unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     #[error("rate limited: {message}")]
     RateLimited {
         message: String,
@@ -58,6 +61,7 @@ impl Error {
         match self {
             Error::BadRequest(_) | Error::UnsupportedProviderType(_) => StatusCode::BAD_REQUEST,
             Error::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Error::Forbidden(_) => StatusCode::FORBIDDEN,
             Error::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Error::BudgetExceeded { .. } => StatusCode::PAYMENT_REQUIRED,
             // An unresolvable model reference is reported as 404 so callers can
@@ -77,6 +81,7 @@ impl Error {
         match self {
             Error::BadRequest(_) | Error::UnsupportedProviderType(_) => "invalid_request_error",
             Error::Unauthorized(_) => "authentication_error",
+            Error::Forbidden(_) => "permission_error",
             Error::RateLimited { .. } => "rate_limit_error",
             Error::BudgetExceeded { .. } => "insufficient_quota",
             Error::UnknownModel(_) | Error::NotFound(_) => "not_found_error",

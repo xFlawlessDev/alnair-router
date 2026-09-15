@@ -11,6 +11,7 @@ use crate::db::repos::aliases::AliasRepository;
 use crate::db::repos::api_keys::ApiKeyRepository;
 use crate::db::repos::combos::ComboRepository;
 use crate::db::repos::connections::ConnectionRepository;
+use crate::db::repos::key_plans::KeyPlanRepository;
 use crate::db::repos::usage::UsageRepository;
 use crate::error::Result;
 use crate::limits::{RateLimiter, UpstreamLimiter};
@@ -91,6 +92,10 @@ impl AppState {
 
     pub fn api_keys(&self) -> ApiKeyRepository {
         ApiKeyRepository::new(self.pool.clone())
+    }
+
+    pub fn key_plans(&self) -> KeyPlanRepository {
+        KeyPlanRepository::new(self.pool.clone())
     }
 
     pub fn usage(&self) -> UsageRepository {

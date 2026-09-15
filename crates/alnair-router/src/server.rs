@@ -67,6 +67,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/keys/{id}",
             delete(handlers::admin::delete_key).patch(handlers::admin::update_key),
         )
+        .route(
+            "/api/plans",
+            get(handlers::admin::list_plans).post(handlers::admin::create_plan),
+        )
+        .route(
+            "/api/plans/{id}",
+            delete(handlers::admin::delete_plan).patch(handlers::admin::update_plan),
+        )
         .route("/api/usage", get(handlers::admin::list_usage))
         .route("/api/usage/summary", get(handlers::admin::usage_summary))
         .route("/api/activity", get(handlers::admin::activity))

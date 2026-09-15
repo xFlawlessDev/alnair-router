@@ -25,9 +25,12 @@ pub async fn chat_completions(
     axum::Extension(key): axum::Extension<Option<AuthenticatedKey>>,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Result<Response> {
-    let api_key_id = key.map(|k| k.0.id);
+    let api_key_id = key.as_ref().map(|auth| auth.key.id.clone());
 
     let requested_model = request.model.clone();
+    if let Some(auth) = &key {
+        auth.policy.ensure_model(&requested_model)?;
+    }
     let stream_requested = request.stream;
     let options = request.generation_options();
     let tools = request.tools.clone();

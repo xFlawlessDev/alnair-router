@@ -6,6 +6,7 @@ pub mod aliases;
 pub mod api_keys;
 pub mod combos;
 pub mod connections;
+pub mod key_plans;
 pub mod usage;
 
 /// Deserializes a present-but-null field as `Some(None)`, so PATCH bodies can

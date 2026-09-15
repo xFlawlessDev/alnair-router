@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, Trash2, TriangleAlert } from '@lucide/vue';
-import { onMounted, ref } from 'vue';
+import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from '@lucide/vue';
+import { computed, onMounted, ref } from 'vue';
 import { toast } from 'vue-sonner';
 
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
@@ -8,6 +8,8 @@ import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import KeyFormDialog from '@/components/keys/KeyFormDialog.vue';
+import PlanFormDialog from '@/components/keys/PlanFormDialog.vue';
+import PlansCard from '@/components/keys/PlansCard.vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -20,6 +22,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Table,
   TableBody,
   TableCell,
@@ -29,9 +38,15 @@ import {
 } from '@/components/ui/table';
 import { ApiError, api } from '@/lib/api';
 import { formatDateTime, formatCost, isEnabled } from '@/lib/format';
-import type { ApiKey } from '@/types/api';
+import type { Alias, ApiKey, ComboWithEntries, KeyPlan } from '@/types/api';
+
+/** Sentinel because Select values cannot be empty strings. */
+const NO_PLAN = '__no_plan__';
 
 const keys = ref<ApiKey[]>([]);
+const plans = ref<KeyPlan[]>([]);
+const aliases = ref<Alias[]>([]);
+const combos = ref<ComboWithEntries[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
@@ -40,12 +55,27 @@ const secret = ref<string | null>(null);
 const copied = ref(false);
 const deleting = ref<ApiKey | null>(null);
 const deletingBusy = ref(false);
+const planFormOpen = ref(false);
+const editingPlan = ref<KeyPlan | null>(null);
+const deletingPlan = ref<KeyPlan | null>(null);
+const deletingPlanBusy = ref(false);
+
+const plansById = computed(() => new Map(plans.value.map((plan) => [plan.id, plan])));
 
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    keys.value = await api.listKeys();
+    const [keyList, planList, aliasList, comboList] = await Promise.all([
+      api.listKeys(),
+      api.listPlans(),
+      api.listAliases(),
+      api.listCombos(),
+    ]);
+    keys.value = keyList;
+    plans.value = planList;
+    aliases.value = aliasList;
+    combos.value = comboList;
   } catch (caught) {
     error.value = caught instanceof ApiError ? caught.message : 'Failed to load API keys';
   } finally {
@@ -63,12 +93,55 @@ function openEdit(key: ApiKey): void {
   formOpen.value = true;
 }
 
+function openCreatePlan(): void {
+  editingPlan.value = null;
+  planFormOpen.value = true;
+}
+
+function openEditPlan(plan: KeyPlan): void {
+  editingPlan.value = plan;
+  planFormOpen.value = true;
+}
+
 function handleSaved(createdSecret?: string): void {
   if (createdSecret) {
     secret.value = createdSecret;
     copied.value = false;
   }
   load();
+}
+
+/** Applies (or detaches) a plan straight from the key row. */
+async function applyPlanValue(key: ApiKey, value: unknown): Promise<void> {
+  const planId = typeof value === 'string' && value !== NO_PLAN ? value : null;
+  if (planId === key.plan_id) return;
+
+  const plan = planId ? plansById.value.get(planId) : null;
+  try {
+    await api.updateKey(key.id, { plan_id: planId });
+    toast.success(
+      plan ? `Plan “${plan.name}” applied to “${key.name}”` : `Plan detached from “${key.name}”`,
+    );
+    await load();
+  } catch (caught) {
+    toast.error(caught instanceof ApiError ? caught.message : 'Failed to update the key');
+  }
+}
+
+async function confirmDeletePlan(): Promise<void> {
+  if (!deletingPlan.value) return;
+  deletingPlanBusy.value = true;
+  const name = deletingPlan.value.name;
+  try {
+    await api.deletePlan(deletingPlan.value.id);
+    toast.success(`Plan “${name}” deleted`);
+    deletingPlan.value = null;
+    await load();
+  } catch (caught) {
+    toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete the plan');
+  } finally {
+    deletingPlanBusy.value = false;
+  }
 }
 
 async function copySecret(): Promise<void> {
@@ -138,6 +211,7 @@ onMounted(load);
           <TableRow>
             <TableHead>Name</TableHead>
             <TableHead>Prefix</TableHead>
+            <TableHead>Rules</TableHead>
             <TableHead>Limits</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Created</TableHead>
@@ -150,6 +224,35 @@ onMounted(load);
             <TableCell class="font-medium">{{ key.name }}</TableCell>
             <TableCell>
               <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{{ key.prefix }}…</code>
+            </TableCell>
+            <TableCell>
+              <div class="grid gap-1">
+                <Select
+                  :model-value="key.plan_id ?? NO_PLAN"
+                  @update:model-value="applyPlanValue(key, $event)"
+                >
+                  <SelectTrigger class="h-7 w-36 text-xs" :aria-label="`Plan for ${key.name}`">
+                    <SelectValue placeholder="No plan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="NO_PLAN">No plan</SelectItem>
+                    <SelectItem v-for="plan in plans" :key="plan.id" :value="plan.id">
+                      {{ plan.name }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Badge v-if="key.allowed_models?.length" variant="secondary" class="w-fit gap-1">
+                  <ShieldCheck class="size-3" />
+                  {{ key.allowed_models.length }}
+                  model{{ key.allowed_models.length > 1 ? 's' : '' }}
+                </Badge>
+                <span
+                  v-else-if="!key.plan_id"
+                  class="text-xs text-muted-foreground"
+                >
+                  Any model
+                </span>
+              </div>
             </TableCell>
             <TableCell>
               <div class="flex flex-wrap items-center gap-1">
@@ -203,7 +306,29 @@ onMounted(load);
       </Table>
     </Card>
 
-    <KeyFormDialog v-model:open="formOpen" :api-key="editing" @saved="handleSaved" />
+    <PlansCard
+      :plans="plans"
+      @create="openCreatePlan"
+      @edit="openEditPlan"
+      @remove="deletingPlan = $event"
+    />
+
+    <KeyFormDialog
+      v-model:open="formOpen"
+      :api-key="editing"
+      :plans="plans"
+      :aliases="aliases"
+      :combos="combos"
+      @saved="handleSaved"
+    />
+
+    <PlanFormDialog
+      v-model:open="planFormOpen"
+      :plan="editingPlan"
+      :aliases="aliases"
+      :combos="combos"
+      @saved="load"
+    />
 
     <Dialog :open="secret !== null" @update:open="secret = null">
       <DialogContent>
@@ -236,6 +361,15 @@ onMounted(load);
       :pending="deletingBusy"
       @update:open="deleting = $event ? deleting : null"
       @confirm="confirmDelete"
+    />
+
+    <ConfirmDialog
+      :open="deletingPlan !== null"
+      title="Delete plan?"
+      :description="`Keys using “${deletingPlan?.name}” keep their own rules and fall back to the server defaults.`"
+      :pending="deletingPlanBusy"
+      @update:open="deletingPlan = $event ? deletingPlan : null"
+      @confirm="confirmDeletePlan"
     />
   </div>
 </template>

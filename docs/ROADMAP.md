@@ -43,6 +43,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Configurable retry contract with exponential backoff (`router.max_retries_per_tier`, `router.max_retry_delay_ms`)
 - [x] Global and per-connection upstream concurrency caps (`limits.*`), held for the stream lifetime
 - [x] Per-key rate limiting and monthly budgets (`off`/`warn`/`block`) with 429/402 enforcement
+- [x] Key rules: per-key model allowlist (exact + `prefix/*`/`*` wildcards) and reusable `key_plans` ("set the rules once") merged into effective key policy
 - [x] Anthropic non-streaming (`stream: false`) provider path; tool calls surfaced on all non-streaming endpoints
 - [x] Own SQLite schema, migrations embedded via `sqlx::migrate!`
 - [x] Provider stack extracted to the `crates/alnair-llm` crate with a one-file seam
