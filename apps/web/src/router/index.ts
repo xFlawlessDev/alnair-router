@@ -10,12 +10,15 @@ import ModelsPage from '@/pages/ModelsPage.vue';
 import NotFoundPage from '@/pages/NotFoundPage.vue';
 import OverviewPage from '@/pages/OverviewPage.vue';
 import PricingPage from '@/pages/PricingPage.vue';
+import PublicUsagePage from '@/pages/PublicUsagePage.vue';
 import SettingsPage from '@/pages/SettingsPage.vue';
 import UsagePage from '@/pages/UsagePage.vue';
 
 declare module 'vue-router' {
   interface RouteMeta {
     title?: string;
+    /** Renders the minimal public shell instead of the admin dashboard. */
+    public?: boolean;
   }
 }
 
@@ -38,6 +41,12 @@ export const router = createRouter({
     { path: '/usage', name: 'usage', component: UsagePage, meta: { title: 'Usage' } },
     { path: '/logs', name: 'console', component: ConsolePage, meta: { title: 'Console' } },
     { path: '/guide', name: 'guide', component: GuidePage, meta: { title: 'API Guide' } },
+    {
+      path: '/me',
+      name: 'my-usage',
+      component: PublicUsagePage,
+      meta: { title: 'My Usage', public: true },
+    },
     {
       path: '/:pathMatch(.*)*',
       name: 'not-found',

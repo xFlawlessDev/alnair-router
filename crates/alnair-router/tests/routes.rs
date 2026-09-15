@@ -61,10 +61,18 @@ async fn mint_key(db: &Db, name: &str) -> String {
             name: name.to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: None,
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect("mint key")
@@ -461,10 +469,18 @@ async fn api_key_auth_is_enforced_when_required() {
             name: "test".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: None,
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect("mint key");
@@ -717,10 +733,18 @@ async fn budget_block_mode_returns_402() {
             name: "budgeted".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: Some(0.001),
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: Some("block".to_string()),
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect("key");
@@ -750,10 +774,18 @@ async fn budget_warn_mode_passes_with_a_warning_header() {
             name: "warned".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: Some(0.001),
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: Some("warn".to_string()),
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect("key");
@@ -776,6 +808,288 @@ async fn budget_warn_mode_passes_with_a_warning_header() {
 }
 
 #[tokio::test]
+async fn daily_budget_block_mode_returns_402() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "daily-capped".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: Some(0.001),
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: Some("block".to_string()),
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("key");
+    record_usage(&db, &created.key.id, 1.0).await;
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({ "model": "nope/nothing", "messages": [] }),
+        Some(&created.secret),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(body["error"]["type"], "insufficient_quota");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("daily budget"),
+        "the exhausted window should be named: {body}"
+    );
+}
+
+#[tokio::test]
+async fn lifetime_budget_block_mode_returns_402() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "lifetime-capped".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: Some(0.001),
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: Some("block".to_string()),
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("key");
+    record_usage(&db, &created.key.id, 1.0).await;
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({ "model": "nope/nothing", "messages": [] }),
+        Some(&created.secret),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("lifetime budget"),
+        "the exhausted window should be named: {body}"
+    );
+}
+
+#[tokio::test]
+async fn token_limit_block_mode_returns_402() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "token-capped".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: Some(1),
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: Some("block".to_string()),
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("key");
+    // The recorded row counts 1 prompt + 1 completion token.
+    record_usage(&db, &created.key.id, 0.0).await;
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({ "model": "nope/nothing", "messages": [] }),
+        Some(&created.secret),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("daily token limit"),
+        "the exhausted token window should be named: {body}"
+    );
+}
+
+#[tokio::test]
+async fn key_spend_endpoint_reports_window_totals() {
+    let (app, db) = app(false).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "monitored".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("key");
+    record_usage(&db, &created.key.id, 1.25).await;
+
+    let (status, body) = get(&app, "/api/usage/keys").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+
+    let rows = body.as_array().expect("array");
+    assert_eq!(
+        rows.len(),
+        1,
+        "only keys with usage rows are reported: {body}"
+    );
+    assert_eq!(rows[0]["api_key_id"], created.key.id);
+    assert_eq!(rows[0]["daily_usd"], 1.25);
+    assert_eq!(rows[0]["weekly_usd"], 1.25);
+    assert_eq!(rows[0]["monthly_usd"], 1.25);
+    assert_eq!(rows[0]["lifetime_usd"], 1.25);
+    assert_eq!(rows[0]["daily_tokens"], 2);
+    assert_eq!(rows[0]["lifetime_tokens"], 2);
+}
+
+#[tokio::test]
+async fn expired_key_is_rejected_with_401() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "stale".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: Some(chrono::Utc::now() - chrono::Duration::minutes(1)),
+        })
+        .await
+        .expect("key");
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({ "model": "nope/nothing", "messages": [] }),
+        Some(&created.secret),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["type"], "authentication_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("expired"),
+        "the rejection should name the expiry: {body}"
+    );
+}
+
+#[tokio::test]
+async fn expired_plan_fails_closed_for_attached_keys() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, _db) = app_with_config(config).await;
+
+    let (status, plan) = json_request(
+        &app,
+        "POST",
+        "/api/plans",
+        serde_json::json!({
+            "name": "trial",
+            "expires_at": "2020-01-01T00:00:00Z"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {plan}");
+
+    let (status, created) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "trial-key", "plan_id": plan["id"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {created}");
+    let secret = created["secret"].as_str().expect("secret").to_string();
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({ "model": "nope/nothing", "messages": [] }),
+        Some(&secret),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["type"], "permission_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("plan"),
+        "the rejection should name the plan: {body}"
+    );
+}
+
+#[tokio::test]
 async fn key_patch_updates_limits_and_enabled_state() {
     let (app, db) = app(false).await;
     let created = ApiKeyRepository::new(db.pool.clone())
@@ -783,10 +1097,18 @@ async fn key_patch_updates_limits_and_enabled_state() {
             name: "editable".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: None,
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect("key");
@@ -798,8 +1120,14 @@ async fn key_patch_updates_limits_and_enabled_state() {
         serde_json::json!({
             "enabled": false,
             "rate_limit_per_minute": 10,
+            "daily_budget_usd": 1.0,
+            "weekly_budget_usd": 5.0,
             "monthly_budget_usd": 2.5,
-            "budget_mode": "block"
+            "lifetime_budget_usd": 50.0,
+            "daily_token_limit": 100000,
+            "lifetime_token_limit": 10000000,
+            "budget_mode": "block",
+            "expires_at": "2030-01-01T00:00:00Z"
         }),
     )
     .await;
@@ -807,8 +1135,35 @@ async fn key_patch_updates_limits_and_enabled_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["enabled"], 0);
     assert_eq!(body["rate_limit_per_minute"], 10);
+    assert_eq!(body["daily_budget_usd"], 1.0);
+    assert_eq!(body["weekly_budget_usd"], 5.0);
     assert_eq!(body["monthly_budget_usd"], 2.5);
+    assert_eq!(body["lifetime_budget_usd"], 50.0);
+    assert_eq!(body["daily_token_limit"], 100000);
+    assert_eq!(body["lifetime_token_limit"], 10000000);
     assert_eq!(body["budget_mode"], "block");
+    assert_eq!(body["expires_at"], "2030-01-01T00:00:00Z");
+
+    // `null` clears a single window and the expiry without touching the rest.
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/keys/{}", created.key.id),
+        serde_json::json!({
+            "daily_budget_usd": null,
+            "lifetime_budget_usd": null,
+            "daily_token_limit": null,
+            "expires_at": null,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["daily_budget_usd"].is_null());
+    assert!(body["lifetime_budget_usd"].is_null());
+    assert!(body["daily_token_limit"].is_null());
+    assert!(body["expires_at"].is_null());
+    assert_eq!(body["weekly_budget_usd"], 5.0);
+    assert_eq!(body["lifetime_token_limit"], 10000000);
 }
 
 #[tokio::test]
@@ -1606,8 +1961,14 @@ async fn plan_crud_round_trip() {
             "description": "shared rules",
             "allowed_models": ["openai/*", "openai/*", " gpt-4o-mini "],
             "rate_limit_per_minute": 60,
+            "daily_budget_usd": 1.0,
+            "weekly_budget_usd": 5.0,
             "monthly_budget_usd": 10.0,
+            "lifetime_budget_usd": 100.0,
+            "daily_token_limit": 250000,
+            "monthly_token_limit": 5000000,
             "budget_mode": "warn",
+            "expires_at": "2030-06-01T00:00:00Z",
         }),
     )
     .await;
@@ -1618,6 +1979,11 @@ async fn plan_crud_round_trip() {
         "patterns should be trimmed and de-duplicated"
     );
     assert_eq!(created["budget_mode"], "warn");
+    assert_eq!(created["daily_budget_usd"], 1.0);
+    assert_eq!(created["lifetime_budget_usd"], 100.0);
+    assert_eq!(created["daily_token_limit"], 250000);
+    assert_eq!(created["monthly_token_limit"], 5000000);
+    assert_eq!(created["expires_at"], "2030-06-01T00:00:00Z");
 
     let plan_id = created["id"].as_str().expect("plan id").to_string();
 
@@ -1629,12 +1995,26 @@ async fn plan_crud_round_trip() {
         &app,
         "PATCH",
         &format!("/api/plans/{plan_id}"),
-        serde_json::json!({ "allowed_models": [], "budget_mode": "off", "monthly_budget_usd": null }),
+        serde_json::json!({
+            "allowed_models": [],
+            "budget_mode": "off",
+            "daily_budget_usd": null,
+            "monthly_budget_usd": null,
+            "lifetime_budget_usd": null,
+            "daily_token_limit": null,
+            "expires_at": null,
+        }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(updated["allowed_models"], serde_json::json!([]));
+    assert!(updated["daily_budget_usd"].is_null());
     assert_eq!(updated["monthly_budget_usd"], serde_json::Value::Null);
+    assert!(updated["lifetime_budget_usd"].is_null());
+    assert!(updated["daily_token_limit"].is_null());
+    assert!(updated["expires_at"].is_null());
+    assert_eq!(updated["weekly_budget_usd"], 5.0);
+    assert_eq!(updated["monthly_token_limit"], 5000000);
 
     let response =
         raw_request_with_auth(&app, "DELETE", &format!("/api/plans/{plan_id}"), None, None).await;
@@ -1673,10 +2053,18 @@ async fn key_allowlist_blocks_models_outside_the_list() {
             name: "restricted".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: None,
             plan_id: None,
             allowed_models: Some(vec!["openai/gpt-4o".to_string()]),
+            expires_at: None,
         })
         .await
         .expect("key");
@@ -2252,4 +2640,120 @@ async fn model_catalog_lists_providers_and_prices() {
     assert_eq!(tiers[1]["tier"], 2);
     assert_eq!(tiers[1]["upstream_model"], "gpt-4o-mini");
     assert!(tiers[1]["price"].is_null());
+}
+
+#[tokio::test]
+async fn public_usage_is_scoped_to_the_calling_key() {
+    let (app, db) = app(false).await;
+
+    let repository = ApiKeyRepository::new(db.pool.clone());
+    let first = repository
+        .create(CreateApiKey {
+            name: "first".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("first key");
+    let second = repository
+        .create(CreateApiKey {
+            name: "second".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("second key");
+
+    record_usage(&db, &first.key.id, 1.5).await;
+    record_usage(&db, &first.key.id, 0.5).await;
+    record_usage(&db, &second.key.id, 9.0).await;
+
+    let (status, body) = get_with_auth(&app, "/api/public/usage", Some(&first.secret)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["key"]["name"], "first");
+    assert_eq!(body["summary"]["requests"], 2);
+    assert_eq!(body["summary"]["cost_usd"], 2.0);
+    let models = body["models"].as_array().expect("models");
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["model"], "metered");
+    assert_eq!(models[0]["requests"], 2);
+
+    // The trend defaults to day buckets and only sees this key's rows.
+    assert_eq!(body["bucket"], "day");
+    let series = body["timeseries"].as_array().expect("timeseries");
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0]["model"], "metered");
+    assert_eq!(series[0]["requests"], 2);
+
+    let (status, _) =
+        get_with_auth(&app, "/api/public/usage?bucket=week", Some(&first.secret)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A future `since` yields an empty window.
+    let (status, body) = get_with_auth(
+        &app,
+        "/api/public/usage?since=2999-01-01T00:00:00Z",
+        Some(&first.secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["summary"]["requests"], 0);
+    assert!(body["models"].as_array().expect("models").is_empty());
+
+    // A past `until` excludes everything too.
+    let (status, body) = get_with_auth(
+        &app,
+        "/api/public/usage?until=2000-01-01T00:00:00Z",
+        Some(&first.secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["summary"]["requests"], 0);
+}
+
+#[tokio::test]
+async fn public_usage_requires_a_valid_key() {
+    let (app, _db) = app(false).await;
+
+    let (status, _) = get(&app, "/api/public/usage").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, _) = get_with_auth(&app, "/api/public/usage", Some("sk-router-nope")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn public_usage_can_be_disabled() {
+    let mut config = RouterConfig::default();
+    config.server.public_usage = false;
+    let (app, db) = app_with_config(config).await;
+    let secret = mint_key(&db, "metered").await;
+
+    let (status, body) = get_with_auth(&app, "/api/public/usage", Some(&secret)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["type"], "permission_error");
 }

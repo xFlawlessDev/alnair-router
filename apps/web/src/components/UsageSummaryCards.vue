@@ -5,15 +5,19 @@ import UsageBreakdownPopover, {
   type BreakdownRow,
 } from '@/components/usage/UsageBreakdownPopover.vue';
 import { formatCompact, formatCost, formatLatency, formatNumber, successRate } from '@/lib/format';
-import type { UsageSummary } from '@/types/api';
+import type { PublicModelUsage, UsageSummary } from '@/types/api';
 
-const props = defineProps<{ summary: UsageSummary | null }>();
+const props = defineProps<{ summary: UsageSummary | null; models?: PublicModelUsage[] }>();
+
+/** Model rows past this many are folded into one "Other" line. */
+const MAX_MODEL_ROWS = 6;
 
 interface SummaryBreakdown {
   title: string;
   total: number;
   totalFormat: 'tokens' | 'cost';
   rows: BreakdownRow[];
+  byModel?: BreakdownRow[];
 }
 
 interface SummaryItem {
@@ -21,6 +25,36 @@ interface SummaryItem {
   value: string;
   hint: string;
   breakdown?: SummaryBreakdown;
+}
+
+/** Ranks models by the chosen metric and folds the tail into "Other". */
+function modelRows(
+  pick: (model: PublicModelUsage) => number,
+  format: 'tokens' | 'cost',
+  hint: (model: PublicModelUsage) => string,
+): BreakdownRow[] {
+  const models = props.models ?? [];
+  if (!models.length) return [];
+
+  const ranked = [...models].sort((a, b) => pick(b) - pick(a));
+  const rows: BreakdownRow[] = ranked.slice(0, MAX_MODEL_ROWS).map((model) => ({
+    label: model.model,
+    value: pick(model),
+    format,
+    hint: hint(model),
+  }));
+
+  const rest = ranked.slice(MAX_MODEL_ROWS);
+  if (rest.length) {
+    rows.push({
+      label: `Other (${rest.length})`,
+      value: rest.reduce((sum, model) => sum + pick(model), 0),
+      format,
+      hint: 'Remaining models',
+    });
+  }
+
+  return rows;
 }
 
 const items = computed<SummaryItem[]>(() => {
@@ -80,6 +114,12 @@ const items = computed<SummaryItem[]>(() => {
         total: summary.prompt_tokens + summary.completion_tokens,
         totalFormat: 'tokens',
         rows: tokenRows,
+        byModel: modelRows(
+          (model) => model.prompt_tokens + model.completion_tokens,
+          'tokens',
+          (model) =>
+            `${formatNumber(model.prompt_tokens)} prompt · ${formatNumber(model.completion_tokens)} completion`,
+        ),
       },
     },
     {
@@ -91,6 +131,11 @@ const items = computed<SummaryItem[]>(() => {
         total: summary.cost_usd,
         totalFormat: 'cost',
         rows: costRows,
+        byModel: modelRows(
+          (model) => model.cost_usd,
+          'cost',
+          (model) => `${formatNumber(model.requests)} requests`,
+        ),
       },
     },
     { label: 'Avg latency', value: formatLatency(summary.avg_latency_ms), hint: 'Across all attempts' },
@@ -112,6 +157,7 @@ const items = computed<SummaryItem[]>(() => {
             :total="item.breakdown.total"
             :total-format="item.breakdown.totalFormat"
             :rows="item.breakdown.rows"
+            :by-model="item.breakdown.byModel"
           >
             {{ item.value }}
           </UsageBreakdownPopover>

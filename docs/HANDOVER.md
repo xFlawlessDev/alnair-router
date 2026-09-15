@@ -134,7 +134,7 @@ crates/alnair-router/
 │   │   ├── probe.rs         # admin model listing / connection tests
 │   │   └── media.rs         # HTTP proxying for non-chat endpoints
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
-│   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, web
+│   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, public, web
 └── tests/                   # resolve, storage, fallback, routes, e2e_real
 ```
 
@@ -203,6 +203,31 @@ and pricing caches are invalidated afterwards. Note: `VACUUM INTO` is a no-op on
 in-memory SQLite, so snapshots require the file-backed database the router
 normally runs on.
 
+### Public usage
+
+`GET /api/public/usage` sits outside the admin-token guard. The caller
+authenticates with a router-issued client key (the same bearer used on `/v1`)
+via `handlers/public.rs::authorize`, which resolves the key without touching
+rate limits, budgets or `last_used_at`. The response contains only that key's
+rows: `UsageRepository::summary`, `UsageRepository::models` (a per-model
+rollup) and `UsageRepository::timeseries` — one row per (bucket, model) so the
+chart can stack models within the same bucket (`?bucket=hour|day`, defaulting
+to `day`), optionally narrowed by `since`/`until` (`until` backs the month
+selector). Buckets are the fixed-width RFC 3339 prefix of `created_at` rather
+than `strftime`, so no date parsing of fractional seconds is involved.
+`server.public_usage` (default true) gates the endpoint; disabled requests fail
+with `403`. The dashboard exposes it as the self-service page at `/me`, which
+renders the minimal public shell (`route.meta.public`), keeps the pasted key in
+`sessionStorage` (not `localStorage`) and lazy-loads the Unovis trend chart so
+the chart library stays out of the main bundle. The chart fills empty buckets
+across the selected window (capped at 400) so a month renders as a full month,
+stacks by model with a top-six plus "Other" legend and palette, and a month
+selector pins an exact calendar window. The page polls every 30 seconds and on
+tab focus (paused while hidden) so clients never refresh by hand. The Tokens
+and Cost summary popovers add a "Share by model" section with percentages, and
+the By model table's Tokens/Cost cells open the same breakdown popover for a
+single model rather than printing raw columns.
+
 ---
 
 ## 4. Behaviours worth knowing before you change anything
@@ -262,9 +287,14 @@ suite should tell you.
 
 12. **Rate limit and budget checks run after authentication.**
     `require_api_key` checks the token bucket first (in-memory) and then the
-    month-to-date spend (one rollup query, only for keys that carry a budget).
-    `null` on `rate_limit_per_minute` / `monthly_budget_usd` in a PATCH body
-    clears the field; an absent field leaves it alone (`repos::double_option`).
+    spend rollup for every configured budget window (daily/weekly/monthly
+    calendar windows plus a lifetime cap with no reset) and every token window
+    (prompt + completion tokens). An expired key is
+    rejected with 401; a key whose plan has expired fails closed with 403
+    instead of falling back to its own fields. `null` on
+    `rate_limit_per_minute`, any `*_budget_usd`, any `*_token_limit` or
+    `expires_at` in a PATCH body clears the field; an absent field leaves it
+    alone (`repos::double_option`).
 
 13. **Non-streaming still flows through the chunk pipeline.** Handlers pass the
     client's `stream` flag to `Executor::stream` → `chat_backend::stream`, which
@@ -329,8 +359,11 @@ suite should tell you.
 
 21. **Key rules are one policy, merged key-first.** `policy.rs` resolves an
     `ApiKey` plus its optional `KeyPlan` into a `KeyPolicy`: any field the key
-    sets wins, the plan fills the rest, and a key budget always travels with its
-    own mode (a key amount with `mode = off` disables the plan cap). The model
+    sets wins, the plan fills the rest, and budgets merge per window (a key can
+    add a daily cap on top of the plan's monthly one). The budget mode travels
+    with the key's own budgets: once the key sets any amount, its mode decides,
+    and a key amount with `mode = off` disables every cap, including the
+    plan's. The model
     allowlist matches case-insensitively with `*` (everything) and `prefix/*`
     (the prefix's children only); an empty list allows any model. Enforcement
     happens in the handlers right after the model is read — chat, messages

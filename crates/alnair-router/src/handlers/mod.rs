@@ -7,6 +7,7 @@ pub mod chat;
 pub mod media;
 pub mod messages;
 pub mod models;
+pub mod public;
 pub mod responses;
 pub mod settings;
 pub mod shared;

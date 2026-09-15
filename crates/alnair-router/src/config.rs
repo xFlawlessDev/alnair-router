@@ -49,6 +49,9 @@ pub struct ServerConfig {
     pub cors_origins: Vec<String>,
     /// Include best-effort upstream TCP reachability in `/api/ready`.
     pub readiness_upstream_checks: bool,
+    /// Expose the self-service usage page and its per-key API. Clients read
+    /// their own rollup with their router-issued key.
+    pub public_usage: bool,
     /// Serve the embedded dashboard at `/` (disable when a reverse proxy owns it).
     pub serve_dashboard: bool,
     /// Show a system tray icon (Open dashboard / Quit) while serving. Windows
@@ -154,6 +157,7 @@ impl Default for ServerConfig {
             allow_unauthenticated_admin: false,
             cors_origins: Vec::new(),
             readiness_upstream_checks: false,
+            public_usage: true,
             serve_dashboard: true,
             tray: true,
         }

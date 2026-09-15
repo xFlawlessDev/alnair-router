@@ -7,7 +7,7 @@ use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
 
 use crate::error::{Error, Result};
-use crate::limits::BudgetMode;
+use crate::limits::{BudgetMode, BudgetWindows, TokenWindows};
 
 const KEY_PREFIX: &str = "sk-router-";
 
@@ -21,8 +21,22 @@ pub struct ApiKey {
     pub enabled: i64,
     /// Per-key requests-per-minute override; `None` inherits the global default.
     pub rate_limit_per_minute: Option<i64>,
+    /// Daily spend cap in USD; `None` is uncapped.
+    pub daily_budget_usd: Option<f64>,
+    /// Weekly spend cap in USD; `None` is uncapped.
+    pub weekly_budget_usd: Option<f64>,
     /// Monthly spend cap in USD; `None` is uncapped.
     pub monthly_budget_usd: Option<f64>,
+    /// Lifetime spend cap in USD with no reset; `None` is uncapped.
+    pub lifetime_budget_usd: Option<f64>,
+    /// Daily token cap (prompt + completion); `None` is uncapped.
+    pub daily_token_limit: Option<i64>,
+    /// Weekly token cap (prompt + completion); `None` is uncapped.
+    pub weekly_token_limit: Option<i64>,
+    /// Monthly token cap (prompt + completion); `None` is uncapped.
+    pub monthly_token_limit: Option<i64>,
+    /// Lifetime token cap (prompt + completion); `None` is uncapped.
+    pub lifetime_token_limit: Option<i64>,
     /// `off`, `warn`, or `block`.
     pub budget_mode: String,
     /// Optional plan whose rules fill the fields this key leaves empty.
@@ -31,6 +45,8 @@ pub struct ApiKey {
     pub allowed_models: Option<Json<Vec<String>>>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
+    /// When the key stops authenticating; `None` never expires.
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 impl ApiKey {
@@ -57,9 +73,29 @@ impl ApiKey {
         BudgetMode::parse(&self.budget_mode).unwrap_or_default()
     }
 
-    /// Effective budget, ignoring non-positive values.
-    pub fn budget_usd(&self) -> Option<f64> {
-        self.monthly_budget_usd.filter(|value| *value > 0.0)
+    /// Effective budget caps, ignoring non-positive values.
+    pub fn budget_windows(&self) -> BudgetWindows {
+        BudgetWindows::from_parts(
+            self.daily_budget_usd,
+            self.weekly_budget_usd,
+            self.monthly_budget_usd,
+            self.lifetime_budget_usd,
+        )
+    }
+
+    /// Effective token caps, ignoring non-positive values.
+    pub fn token_windows(&self) -> TokenWindows {
+        TokenWindows::from_parts(
+            self.daily_token_limit,
+            self.weekly_token_limit,
+            self.monthly_token_limit,
+            self.lifetime_token_limit,
+        )
+    }
+
+    /// True when the key is past its expiry; a key without one never expires.
+    pub fn is_expired(&self) -> bool {
+        self.expires_at.is_some_and(|at| at <= Utc::now())
     }
 }
 
@@ -79,13 +115,29 @@ pub struct CreateApiKey {
     #[serde(default)]
     pub rate_limit_per_minute: Option<i64>,
     #[serde(default)]
+    pub daily_budget_usd: Option<f64>,
+    #[serde(default)]
+    pub weekly_budget_usd: Option<f64>,
+    #[serde(default)]
     pub monthly_budget_usd: Option<f64>,
+    #[serde(default)]
+    pub lifetime_budget_usd: Option<f64>,
+    #[serde(default)]
+    pub daily_token_limit: Option<i64>,
+    #[serde(default)]
+    pub weekly_token_limit: Option<i64>,
+    #[serde(default)]
+    pub monthly_token_limit: Option<i64>,
+    #[serde(default)]
+    pub lifetime_token_limit: Option<i64>,
     #[serde(default)]
     pub budget_mode: Option<String>,
     #[serde(default)]
     pub plan_id: Option<String>,
     #[serde(default)]
     pub allowed_models: Option<Vec<String>>,
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Partial update. `null` clears nullable fields; absence leaves them unchanged.
@@ -98,13 +150,29 @@ pub struct UpdateApiKey {
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub rate_limit_per_minute: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub daily_budget_usd: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub weekly_budget_usd: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub monthly_budget_usd: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub lifetime_budget_usd: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub daily_token_limit: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub weekly_token_limit: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub monthly_token_limit: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub lifetime_token_limit: Option<Option<i64>>,
     #[serde(default)]
     pub budget_mode: Option<String>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub plan_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub allowed_models: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub expires_at: Option<Option<DateTime<Utc>>>,
 }
 
 fn default_true() -> bool {
@@ -128,12 +196,22 @@ pub(crate) fn normalized_rate_limit(value: Option<i64>) -> Result<Option<i64>> {
     }
 }
 
-pub(crate) fn normalized_budget(value: Option<f64>) -> Result<Option<f64>> {
+pub(crate) fn normalized_budget(value: Option<f64>, field: &str) -> Result<Option<f64>> {
     match value {
         None => Ok(None),
-        Some(value) if !value.is_finite() || value <= 0.0 => Err(Error::BadRequest(
-            "monthly_budget_usd must be a positive number".to_string(),
-        )),
+        Some(value) if !value.is_finite() || value <= 0.0 => Err(Error::BadRequest(format!(
+            "{field} must be a positive number"
+        ))),
+        Some(value) => Ok(Some(value)),
+    }
+}
+
+pub(crate) fn normalized_token_limit(value: Option<i64>, field: &str) -> Result<Option<i64>> {
+    match value {
+        None => Ok(None),
+        Some(value) if value <= 0 => Err(Error::BadRequest(format!(
+            "{field} must be a positive whole number of tokens"
+        ))),
         Some(value) => Ok(Some(value)),
     }
 }
@@ -145,10 +223,15 @@ pub(crate) fn normalized_budget_mode(value: Option<&str>) -> Result<BudgetMode> 
     }
 }
 
-pub(crate) fn validate_budget_pair(budget: Option<f64>, mode: BudgetMode) -> Result<()> {
-    if mode != BudgetMode::Off && budget.is_none() {
+pub(crate) fn validate_budget_pair(
+    budgets: &BudgetWindows,
+    tokens: &TokenWindows,
+    mode: BudgetMode,
+) -> Result<()> {
+    if mode != BudgetMode::Off && budgets.is_empty() && tokens.is_empty() {
         return Err(Error::BadRequest(
-            "monthly_budget_usd is required when budget_mode is warn or block".to_string(),
+            "at least one budget or token limit is required when budget_mode is warn or block"
+                .to_string(),
         ));
     }
     Ok(())
@@ -229,9 +312,20 @@ impl ApiKeyRepository {
         }
 
         let rate_limit = normalized_rate_limit(input.rate_limit_per_minute)?;
-        let budget = normalized_budget(input.monthly_budget_usd)?;
+        let budgets = BudgetWindows::from_parts(
+            normalized_budget(input.daily_budget_usd, "daily_budget_usd")?,
+            normalized_budget(input.weekly_budget_usd, "weekly_budget_usd")?,
+            normalized_budget(input.monthly_budget_usd, "monthly_budget_usd")?,
+            normalized_budget(input.lifetime_budget_usd, "lifetime_budget_usd")?,
+        );
+        let tokens = TokenWindows::from_parts(
+            normalized_token_limit(input.daily_token_limit, "daily_token_limit")?,
+            normalized_token_limit(input.weekly_token_limit, "weekly_token_limit")?,
+            normalized_token_limit(input.monthly_token_limit, "monthly_token_limit")?,
+            normalized_token_limit(input.lifetime_token_limit, "lifetime_token_limit")?,
+        );
         let budget_mode = normalized_budget_mode(input.budget_mode.as_deref())?;
-        validate_budget_pair(budget, budget_mode)?;
+        validate_budget_pair(&budgets, &tokens, budget_mode)?;
         let plan_id = validate_plan(&self.pool, input.plan_id.as_deref()).await?;
         let allowed_models = normalize_allowed_models(input.allowed_models)?;
 
@@ -242,8 +336,11 @@ impl ApiKeyRepository {
 
         sqlx::query(
             "INSERT INTO api_keys
-                (id, name, key_hash, prefix, enabled, rate_limit_per_minute, monthly_budget_usd, budget_mode, plan_id, allowed_models, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, name, key_hash, prefix, enabled, rate_limit_per_minute, daily_budget_usd,
+                 weekly_budget_usd, monthly_budget_usd, lifetime_budget_usd, daily_token_limit,
+                 weekly_token_limit, monthly_token_limit, lifetime_token_limit, budget_mode,
+                 plan_id, allowed_models, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -251,11 +348,19 @@ impl ApiKeyRepository {
         .bind(&prefix)
         .bind(i64::from(input.enabled))
         .bind(rate_limit)
-        .bind(budget)
+        .bind(budgets.daily)
+        .bind(budgets.weekly)
+        .bind(budgets.monthly)
+        .bind(budgets.lifetime)
+        .bind(tokens.daily)
+        .bind(tokens.weekly)
+        .bind(tokens.monthly)
+        .bind(tokens.lifetime)
         .bind(budget_mode.as_str())
         .bind(plan_id)
         .bind(allowed_models.map(Json))
         .bind(now)
+        .bind(input.expires_at)
         .execute(&self.pool)
         .await?;
 
@@ -288,15 +393,47 @@ impl ApiKeyRepository {
             Some(value) => normalized_rate_limit(*value)?,
             None => existing.rate_limit_per_minute,
         };
-        let budget = match &input.monthly_budget_usd {
-            Some(value) => normalized_budget(*value)?,
-            None => existing.monthly_budget_usd,
-        };
+        let budgets = BudgetWindows::from_parts(
+            match &input.daily_budget_usd {
+                Some(value) => normalized_budget(*value, "daily_budget_usd")?,
+                None => existing.daily_budget_usd,
+            },
+            match &input.weekly_budget_usd {
+                Some(value) => normalized_budget(*value, "weekly_budget_usd")?,
+                None => existing.weekly_budget_usd,
+            },
+            match &input.monthly_budget_usd {
+                Some(value) => normalized_budget(*value, "monthly_budget_usd")?,
+                None => existing.monthly_budget_usd,
+            },
+            match &input.lifetime_budget_usd {
+                Some(value) => normalized_budget(*value, "lifetime_budget_usd")?,
+                None => existing.lifetime_budget_usd,
+            },
+        );
+        let tokens = TokenWindows::from_parts(
+            match &input.daily_token_limit {
+                Some(value) => normalized_token_limit(*value, "daily_token_limit")?,
+                None => existing.daily_token_limit,
+            },
+            match &input.weekly_token_limit {
+                Some(value) => normalized_token_limit(*value, "weekly_token_limit")?,
+                None => existing.weekly_token_limit,
+            },
+            match &input.monthly_token_limit {
+                Some(value) => normalized_token_limit(*value, "monthly_token_limit")?,
+                None => existing.monthly_token_limit,
+            },
+            match &input.lifetime_token_limit {
+                Some(value) => normalized_token_limit(*value, "lifetime_token_limit")?,
+                None => existing.lifetime_token_limit,
+            },
+        );
         let budget_mode = match &input.budget_mode {
             Some(value) => normalized_budget_mode(Some(value))?,
             None => existing.budget_mode(),
         };
-        validate_budget_pair(budget, budget_mode)?;
+        validate_budget_pair(&budgets, &tokens, budget_mode)?;
 
         let plan_id = match &input.plan_id {
             Some(value) => validate_plan(&self.pool, value.as_deref()).await?,
@@ -309,19 +446,35 @@ impl ApiKeyRepository {
                 .as_ref()
                 .map(|models| models.0.clone()),
         };
+        let expires_at = match &input.expires_at {
+            Some(value) => *value,
+            None => existing.expires_at,
+        };
 
         sqlx::query(
             "UPDATE api_keys
-             SET name = ?, enabled = ?, rate_limit_per_minute = ?, monthly_budget_usd = ?, budget_mode = ?, plan_id = ?, allowed_models = ?
+             SET name = ?, enabled = ?, rate_limit_per_minute = ?, daily_budget_usd = ?,
+                 weekly_budget_usd = ?, monthly_budget_usd = ?, lifetime_budget_usd = ?,
+                 daily_token_limit = ?, weekly_token_limit = ?, monthly_token_limit = ?,
+                 lifetime_token_limit = ?, budget_mode = ?, plan_id = ?, allowed_models = ?,
+                 expires_at = ?
              WHERE id = ?",
         )
         .bind(name)
         .bind(i64::from(enabled))
         .bind(rate_limit)
-        .bind(budget)
+        .bind(budgets.daily)
+        .bind(budgets.weekly)
+        .bind(budgets.monthly)
+        .bind(budgets.lifetime)
+        .bind(tokens.daily)
+        .bind(tokens.weekly)
+        .bind(tokens.monthly)
+        .bind(tokens.lifetime)
         .bind(budget_mode.as_str())
         .bind(plan_id)
         .bind(allowed_models.map(Json))
+        .bind(expires_at)
         .bind(id)
         .execute(&self.pool)
         .await?;

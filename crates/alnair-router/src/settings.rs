@@ -28,6 +28,8 @@ pub struct SettingsOverrides {
     pub admin_token: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readiness_upstream_checks: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_usage: Option<bool>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::db::repos::double_option"
@@ -74,6 +76,9 @@ impl SettingsOverrides {
         }
         if let Some(value) = self.readiness_upstream_checks {
             config.server.readiness_upstream_checks = value;
+        }
+        if let Some(value) = self.public_usage {
+            config.server.public_usage = value;
         }
         if let Some(value) = &self.default_connection {
             config.router.default_connection = value.clone();
@@ -146,6 +151,9 @@ impl SettingsOverrides {
         }
         if self.readiness_upstream_checks.is_some() {
             keys.push("server.readiness_upstream_checks");
+        }
+        if self.public_usage.is_some() {
+            keys.push("server.public_usage");
         }
         if self.default_connection.is_some() {
             keys.push("router.default_connection");

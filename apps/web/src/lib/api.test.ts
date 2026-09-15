@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setAdminToken } from './adminToken';
 import { ApiError, api, buildUrl } from './api';
+import { setClientKey } from './clientKey';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -26,6 +27,7 @@ describe('api', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     setAdminToken('');
+    setClientKey('');
   });
 
   it('returns the parsed payload on success', async () => {
@@ -193,5 +195,21 @@ describe('api', () => {
     expect(init.method).toBe('POST');
     expect(init.body).toBe(file);
     expect(init.headers).toMatchObject({ 'content-type': 'application/octet-stream' });
+  });
+
+  it('sends the client key on the public usage call', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ key: { name: 'laptop', prefix: 'sk-router-ab' }, since: null, models: [] }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    setClientKey('sk-router-test');
+
+    await api.myUsage('2026-01-01T00:00:00Z', 'hour');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/public/usage?since=2026-01-01T00%3A00%3A00Z&bucket=hour');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer sk-router-test' });
   });
 });

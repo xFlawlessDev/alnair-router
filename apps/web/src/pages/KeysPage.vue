@@ -7,6 +7,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
+import BudgetUsage from '@/components/keys/BudgetUsage.vue';
 import KeyFormDialog from '@/components/keys/KeyFormDialog.vue';
 import PlanFormDialog from '@/components/keys/PlanFormDialog.vue';
 import PlansCard from '@/components/keys/PlansCard.vue';
@@ -38,7 +39,8 @@ import {
 } from '@/components/ui/table';
 import { ApiError, api } from '@/lib/api';
 import { formatDateTime, formatCost, isEnabled } from '@/lib/format';
-import type { Alias, ApiKey, ComboWithEntries, KeyPlan } from '@/types/api';
+import { configuredCaps, effectiveCaps, effectiveTokenCaps, isExpired } from '@/lib/limits';
+import type { Alias, ApiKey, ComboWithEntries, KeyPlan, KeySpend } from '@/types/api';
 
 /** Sentinel because Select values cannot be empty strings. */
 const NO_PLAN = '__no_plan__';
@@ -47,6 +49,7 @@ const keys = ref<ApiKey[]>([]);
 const plans = ref<KeyPlan[]>([]);
 const aliases = ref<Alias[]>([]);
 const combos = ref<ComboWithEntries[]>([]);
+const spends = ref<KeySpend[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
@@ -61,21 +64,29 @@ const deletingPlan = ref<KeyPlan | null>(null);
 const deletingPlanBusy = ref(false);
 
 const plansById = computed(() => new Map(plans.value.map((plan) => [plan.id, plan])));
+const spendsById = computed(() => new Map(spends.value.map((spend) => [spend.api_key_id, spend])));
+
+/** The plan supplying caps a key leaves empty, if any. */
+function planFor(key: ApiKey): KeyPlan | undefined {
+  return key.plan_id ? plansById.value.get(key.plan_id) : undefined;
+}
 
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const [keyList, planList, aliasList, comboList] = await Promise.all([
+    const [keyList, planList, aliasList, comboList, spendList] = await Promise.all([
       api.listKeys(),
       api.listPlans(),
       api.listAliases(),
       api.listCombos(),
+      api.usageByKey(),
     ]);
     keys.value = keyList;
     plans.value = planList;
     aliases.value = aliasList;
     combos.value = comboList;
+    spends.value = spendList;
   } catch (caught) {
     error.value = caught instanceof ApiError ? caught.message : 'Failed to load API keys';
   } finally {
@@ -155,6 +166,16 @@ async function copySecret(): Promise<void> {
   }
 }
 
+/** The plaintext secret is never stored, so only the prefix can be copied later. */
+async function copyPrefix(key: ApiKey): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(key.prefix);
+    toast.success(`Prefix for “${key.name}” copied`);
+  } catch {
+    toast.error('Clipboard is unavailable');
+  }
+}
+
 async function confirmDelete(): Promise<void> {
   if (!deleting.value) return;
   deletingBusy.value = true;
@@ -213,7 +234,9 @@ onMounted(load);
             <TableHead>Prefix</TableHead>
             <TableHead>Rules</TableHead>
             <TableHead>Limits</TableHead>
+            <TableHead>Usage</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Expires</TableHead>
             <TableHead>Created</TableHead>
             <TableHead>Last used</TableHead>
             <TableHead class="text-right">Actions</TableHead>
@@ -223,7 +246,17 @@ onMounted(load);
           <TableRow v-for="key in keys" :key="key.id">
             <TableCell class="font-medium">{{ key.name }}</TableCell>
             <TableCell>
-              <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{{ key.prefix }}…</code>
+              <div class="flex items-center gap-1">
+                <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{{ key.prefix }}…</code>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :aria-label="`Copy prefix for ${key.name}`"
+                  @click="copyPrefix(key)"
+                >
+                  <Copy class="size-3" />
+                </Button>
+              </div>
             </TableCell>
             <TableCell>
               <div class="grid gap-1">
@@ -246,6 +279,13 @@ onMounted(load);
                   {{ key.allowed_models.length }}
                   model{{ key.allowed_models.length > 1 ? 's' : '' }}
                 </Badge>
+                <Badge
+                  v-if="key.plan_id && isExpired(planFor(key)?.expires_at)"
+                  variant="destructive"
+                  class="w-fit"
+                >
+                  Plan expired — key rejected
+                </Badge>
                 <span
                   v-else-if="!key.plan_id"
                   class="text-xs text-muted-foreground"
@@ -260,20 +300,37 @@ onMounted(load);
                   {{ key.rate_limit_per_minute }}/min
                 </Badge>
                 <Badge
-                  v-if="key.monthly_budget_usd && key.budget_mode !== 'off'"
+                  v-for="{ cap, amount } in configuredCaps(key)"
+                  :key="cap.field"
                   :variant="key.budget_mode === 'block' ? 'destructive' : 'outline'"
                 >
-                  {{ formatCost(key.monthly_budget_usd) }} · {{ key.budget_mode }}
+                  {{ formatCost(amount) }}/{{ cap.suffix }}
+                </Badge>
+                <Badge v-if="configuredCaps(key).length" variant="secondary">
+                  {{ key.budget_mode }}
                 </Badge>
                 <span
-                  v-if="!key.rate_limit_per_minute && (!key.monthly_budget_usd || key.budget_mode === 'off')"
+                  v-if="!key.rate_limit_per_minute && !configuredCaps(key).length"
                   class="text-muted-foreground"
                 >
                   Default
                 </span>
               </div>
             </TableCell>
+            <TableCell>
+              <BudgetUsage
+                :spend="spendsById.get(key.id) ?? null"
+                :caps="effectiveCaps(key, planFor(key))"
+                :token-caps="effectiveTokenCaps(key, planFor(key))"
+              />
+            </TableCell>
             <TableCell><StatusBadge :enabled="isEnabled(key.enabled)" /></TableCell>
+            <TableCell class="text-xs">
+              <Badge v-if="isExpired(key.expires_at)" variant="destructive">Expired</Badge>
+              <span v-else class="text-muted-foreground">
+                {{ formatDateTime(key.expires_at) }}
+              </span>
+            </TableCell>
             <TableCell class="text-xs text-muted-foreground">
               {{ formatDateTime(key.created_at) }}
             </TableCell>

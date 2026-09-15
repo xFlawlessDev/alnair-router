@@ -74,6 +74,28 @@ pub struct UsageSummary {
     pub avg_latency_ms: f64,
 }
 
+/// Spend for one API key, split by budget window.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct KeySpend {
+    pub api_key_id: String,
+    /// Spend since the start of the current UTC day.
+    pub daily_usd: f64,
+    /// Spend since the start of the current UTC week.
+    pub weekly_usd: f64,
+    /// Spend since the start of the current UTC month.
+    pub monthly_usd: f64,
+    /// All recorded spend; the lifetime window.
+    pub lifetime_usd: f64,
+    /// Prompt + completion tokens since the start of the current UTC day.
+    pub daily_tokens: i64,
+    /// Prompt + completion tokens since the start of the current UTC week.
+    pub weekly_tokens: i64,
+    /// Prompt + completion tokens since the start of the current UTC month.
+    pub monthly_tokens: i64,
+    /// All recorded prompt + completion tokens; the lifetime window.
+    pub lifetime_tokens: i64,
+}
+
 /// Distinct values seen in usage rows, for filter pickers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageFacets {
@@ -82,6 +104,67 @@ pub struct UsageFacets {
     pub providers: Vec<String>,
     /// Connection names that served requests, most used first.
     pub connections: Vec<String>,
+}
+
+/// Per-model rollup over a filtered set, used by the self-service page.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ModelUsage {
+    pub model: String,
+    pub requests: i64,
+    pub error_requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost_usd: f64,
+}
+
+/// Bucket width for the usage trend rollup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bucket {
+    Hour,
+    Day,
+}
+
+impl Bucket {
+    /// Parses a `bucket` query value; absent or blank means `day`.
+    pub fn parse(value: Option<&str>) -> Result<Self> {
+        match value.map(str::trim) {
+            None | Some("") | Some("day") => Ok(Bucket::Day),
+            Some("hour") => Ok(Bucket::Hour),
+            Some(other) => Err(crate::error::Error::BadRequest(format!(
+                "bucket must be 'hour' or 'day' (got '{other}')"
+            ))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Bucket::Hour => "hour",
+            Bucket::Day => "day",
+        }
+    }
+
+    /// `created_at` is stored as RFC 3339, so the bucket start is a fixed-width
+    /// prefix. Substrings avoid SQLite date parsing of fractional seconds.
+    fn expression(self) -> &'static str {
+        match self {
+            Bucket::Hour => "substr(created_at, 1, 13) || ':00:00Z'",
+            Bucket::Day => "substr(created_at, 1, 10)",
+        }
+    }
+}
+
+/// One (bucket, model) cell of the usage trend, oldest bucket first.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UsageBucket {
+    /// RFC 3339 bucket start for `hour`, `YYYY-MM-DD` for `day`.
+    pub bucket: String,
+    /// Requested model reference, so the dashboard can stack by model.
+    pub model: String,
+    pub requests: i64,
+    pub error_requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost_usd: f64,
 }
 
 /// Optional usage filters. Blank strings count as "no filter"; the model is a
@@ -93,6 +176,8 @@ pub struct UsageFilter {
     pub provider: Option<String>,
     pub connection: Option<String>,
     pub since: Option<DateTime<Utc>>,
+    /// Inclusive upper bound, used by the month selector.
+    pub until: Option<DateTime<Utc>>,
 }
 
 impl UsageFilter {
@@ -109,6 +194,7 @@ impl UsageFilter {
             provider: normalized(provider),
             connection: normalized(connection),
             since,
+            until: None,
         }
     }
 
@@ -181,14 +267,16 @@ impl UsageRepository {
                AND (?3 IS NULL OR resolved_provider = ?3)
                AND (?4 IS NULL OR connection_name = ?4)
                AND (?5 IS NULL OR created_at >= ?5)
+               AND (?6 IS NULL OR created_at <= ?6)
              ORDER BY created_at DESC
-             LIMIT ?6 OFFSET ?7",
+             LIMIT ?7 OFFSET ?8",
         )
         .bind(&filter.api_key_id)
         .bind(filter.model_pattern())
         .bind(&filter.provider)
         .bind(&filter.connection)
         .bind(filter.since)
+        .bind(filter.until)
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
@@ -217,16 +305,90 @@ impl UsageRepository {
                AND (?2 IS NULL OR lower(requested_model) LIKE ?2)
                AND (?3 IS NULL OR resolved_provider = ?3)
                AND (?4 IS NULL OR connection_name = ?4)
-               AND (?5 IS NULL OR created_at >= ?5)",
+               AND (?5 IS NULL OR created_at >= ?5)
+               AND (?6 IS NULL OR created_at <= ?6)",
         )
         .bind(&filter.api_key_id)
         .bind(filter.model_pattern())
         .bind(&filter.provider)
         .bind(&filter.connection)
         .bind(filter.since)
+        .bind(filter.until)
         .fetch_one(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    /// Per-model rollup over the filtered set, priciest model first.
+    pub async fn models(&self, filter: &UsageFilter) -> Result<Vec<ModelUsage>> {
+        let rows = sqlx::query_as::<_, ModelUsage>(
+            "SELECT
+                requested_model AS model,
+                COUNT(*) AS requests,
+                COALESCE(SUM(CASE WHEN status = 'ok' THEN 0 ELSE 1 END), 0) AS error_requests,
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cost_usd), 0.0) AS cost_usd
+             FROM usage_records
+             WHERE (?1 IS NULL OR api_key_id = ?1)
+               AND (?2 IS NULL OR lower(requested_model) LIKE ?2)
+               AND (?3 IS NULL OR resolved_provider = ?3)
+               AND (?4 IS NULL OR connection_name = ?4)
+               AND (?5 IS NULL OR created_at >= ?5)
+               AND (?6 IS NULL OR created_at <= ?6)
+             GROUP BY requested_model
+             ORDER BY cost_usd DESC, requests DESC, requested_model
+             LIMIT 200",
+        )
+        .bind(&filter.api_key_id)
+        .bind(filter.model_pattern())
+        .bind(&filter.provider)
+        .bind(&filter.connection)
+        .bind(filter.since)
+        .bind(filter.until)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Time-bucketed rollup per model over the filtered set, oldest first.
+    pub async fn timeseries(
+        &self,
+        filter: &UsageFilter,
+        bucket: Bucket,
+    ) -> Result<Vec<UsageBucket>> {
+        let sql = format!(
+            "SELECT
+                {} AS bucket,
+                requested_model AS model,
+                COUNT(*) AS requests,
+                COALESCE(SUM(CASE WHEN status = 'ok' THEN 0 ELSE 1 END), 0) AS error_requests,
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cost_usd), 0.0) AS cost_usd
+             FROM usage_records
+             WHERE (?1 IS NULL OR api_key_id = ?1)
+               AND (?2 IS NULL OR lower(requested_model) LIKE ?2)
+               AND (?3 IS NULL OR resolved_provider = ?3)
+               AND (?4 IS NULL OR connection_name = ?4)
+               AND (?5 IS NULL OR created_at >= ?5)
+               AND (?6 IS NULL OR created_at <= ?6)
+             GROUP BY bucket, model
+             ORDER BY bucket, model
+             LIMIT 5000",
+            bucket.expression()
+        );
+
+        let rows = sqlx::query_as::<_, UsageBucket>(&sql)
+            .bind(&filter.api_key_id)
+            .bind(filter.model_pattern())
+            .bind(&filter.provider)
+            .bind(&filter.connection)
+            .bind(filter.since)
+            .bind(filter.until)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows)
     }
 
     /// Distinct models, providers and connections seen so far, for filter
@@ -285,5 +447,115 @@ impl UsageRepository {
         .fetch_one(&self.pool)
         .await?;
         Ok(total)
+    }
+
+    /// Prompt + completion tokens for one key since `since`, used for token
+    /// limit checks.
+    pub async fn tokens_since(&self, api_key_id: &str, since: DateTime<Utc>) -> Result<i64> {
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0)
+             FROM usage_records
+             WHERE api_key_id = ? AND created_at >= ?",
+        )
+        .bind(api_key_id)
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(total)
+    }
+
+    /// Spend and tokens for every key that has usage rows, split by the budget
+    /// windows. Rows without a key (unauthenticated `/v1` calls) are skipped.
+    pub async fn spend_by_key(
+        &self,
+        daily_since: DateTime<Utc>,
+        weekly_since: DateTime<Utc>,
+        monthly_since: DateTime<Utc>,
+    ) -> Result<Vec<KeySpend>> {
+        let rows = sqlx::query_as::<_, KeySpend>(
+            "SELECT api_key_id,
+                    COALESCE(SUM(CASE WHEN created_at >= ?1 THEN cost_usd ELSE 0 END), 0.0) AS daily_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?2 THEN cost_usd ELSE 0 END), 0.0) AS weekly_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?3 THEN cost_usd ELSE 0 END), 0.0) AS monthly_usd,
+                    COALESCE(SUM(cost_usd), 0.0) AS lifetime_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?1 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS daily_tokens,
+                    COALESCE(SUM(CASE WHEN created_at >= ?2 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS weekly_tokens,
+                    COALESCE(SUM(CASE WHEN created_at >= ?3 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS monthly_tokens,
+                    COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS lifetime_tokens
+             FROM usage_records
+             WHERE api_key_id IS NOT NULL
+             GROUP BY api_key_id",
+        )
+        .bind(daily_since)
+        .bind(weekly_since)
+        .bind(monthly_since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+
+    fn record(model: &str, cost: f64) -> NewUsageRecord {
+        NewUsageRecord {
+            api_key_id: None,
+            requested_model: model.to_string(),
+            resolved_provider: None,
+            resolved_model: None,
+            connection_name: None,
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 2,
+            completion_tokens: 3,
+            cached_tokens: 0,
+            reasoning_tokens: 0,
+            cost_usd: cost,
+            cost_input_usd: cost,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
+            latency_ms: 5,
+        }
+    }
+
+    #[test]
+    fn bucket_parses_and_defaults_to_day() {
+        assert_eq!(Bucket::parse(None).expect("default"), Bucket::Day);
+        assert_eq!(Bucket::parse(Some("")).expect("blank"), Bucket::Day);
+        assert_eq!(Bucket::parse(Some("hour")).expect("hour"), Bucket::Hour);
+        assert_eq!(Bucket::parse(Some(" day ")).expect("day"), Bucket::Day);
+        assert!(Bucket::parse(Some("week")).is_err());
+    }
+
+    #[tokio::test]
+    async fn timeseries_groups_records_per_bucket_and_model() {
+        let db = Db::connect_in_memory().await.expect("db");
+        let repository = UsageRepository::new(db.pool.clone());
+        repository.record(record("a", 1.0)).await.expect("first");
+        repository.record(record("a", 0.5)).await.expect("second");
+        repository
+            .record(record("b", 2.0))
+            .await
+            .expect("other model");
+
+        let buckets = repository
+            .timeseries(&UsageFilter::default(), Bucket::Hour)
+            .await
+            .expect("series");
+
+        assert_eq!(buckets.len(), 2, "one row per (bucket, model)");
+        assert_eq!(buckets[0].model, "a");
+        assert_eq!(buckets[0].requests, 2);
+        assert_eq!(buckets[0].cost_usd, 1.5);
+        assert_eq!(buckets[0].prompt_tokens, 4);
+        assert_eq!(buckets[1].model, "b");
+        assert_eq!(buckets[1].requests, 1);
+        assert!(
+            buckets.iter().all(|row| row.bucket.ends_with(":00:00Z")),
+            "records written together share an hour: {buckets:?}"
+        );
     }
 }

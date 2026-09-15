@@ -36,6 +36,7 @@ const form = reactive({
   admin_token_enabled: false,
   admin_token: '',
   readiness_upstream_checks: false,
+  public_usage: true,
   default_connection: '',
   max_attempts: 5,
   max_retries_per_tier: 2,
@@ -67,6 +68,7 @@ function hydrate(response: SettingsResponse): void {
   form.admin_token_enabled = response.server.admin_token_set;
   form.admin_token = '';
   form.readiness_upstream_checks = response.server.readiness_upstream_checks;
+  form.public_usage = response.server.public_usage;
   form.default_connection = response.router.default_connection ?? '';
   form.max_attempts = response.router.max_attempts;
   form.max_retries_per_tier = response.router.max_retries_per_tier;
@@ -118,6 +120,9 @@ function buildPatch(): SettingsPatch {
   }
   if (form.readiness_upstream_checks !== current.server.readiness_upstream_checks) {
     patch.readiness_upstream_checks = form.readiness_upstream_checks;
+  }
+  if (form.public_usage !== current.server.public_usage) {
+    patch.public_usage = form.public_usage;
   }
 
   const connection = form.default_connection.trim();
@@ -359,6 +364,17 @@ onMounted(load);
               </p>
             </div>
             <Switch id="setting-readiness-checks" v-model="form.readiness_upstream_checks" />
+          </div>
+
+          <div class="flex items-start justify-between gap-4 rounded-md border p-4">
+            <div class="space-y-1">
+              <Label for="setting-public-usage">Self-service usage page</Label>
+              <p class="text-xs text-muted-foreground">
+                Exposes <code>/me</code> and <code>/api/public/usage</code>, where a client reads its
+                own rollup with a router-issued API key. No key, no data.
+              </p>
+            </div>
+            <Switch id="setting-public-usage" v-model="form.public_usage" />
           </div>
         </CardContent>
       </Card>

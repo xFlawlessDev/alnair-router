@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Datelike, Utc};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::config::{LimitsConfig, RateLimitConfig};
@@ -155,7 +156,7 @@ fn limiter_closed() -> Error {
     Error::Internal("upstream limiter was closed".to_string())
 }
 
-/// How a key's monthly budget behaves once exhausted.
+/// How a key's budget behaves once any window is exhausted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BudgetMode {
     #[default]
@@ -182,6 +183,121 @@ impl BudgetMode {
                 "budget_mode must be one of off, warn, block (got '{other}')"
             ))),
         }
+    }
+}
+
+/// One budget window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetWindow {
+    Daily,
+    Weekly,
+    Monthly,
+    /// No reset: every recorded request counts.
+    Lifetime,
+}
+
+impl BudgetWindow {
+    /// Every window, shortest first.
+    pub const ALL: [BudgetWindow; 4] = [Self::Daily, Self::Weekly, Self::Monthly, Self::Lifetime];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BudgetWindow::Daily => "daily",
+            BudgetWindow::Weekly => "weekly",
+            BudgetWindow::Monthly => "monthly",
+            BudgetWindow::Lifetime => "lifetime",
+        }
+    }
+
+    /// Start of the window containing `now`: midnight UTC for the day, Monday
+    /// midnight UTC for the week, and the 1st at midnight UTC for the month.
+    /// The lifetime window starts at the Unix epoch, so it never resets.
+    pub fn start(self, now: DateTime<Utc>) -> DateTime<Utc> {
+        let date = now.date_naive();
+        let start = match self {
+            BudgetWindow::Daily => date,
+            BudgetWindow::Weekly => {
+                date - chrono::Duration::days(i64::from(date.weekday().num_days_from_monday()))
+            }
+            BudgetWindow::Monthly => date.with_day(1).unwrap_or(date),
+            BudgetWindow::Lifetime => return DateTime::UNIX_EPOCH,
+        };
+        start
+            .and_hms_opt(0, 0, 0)
+            .map(|naive| naive.and_utc())
+            .unwrap_or(now)
+    }
+}
+
+/// An amount usable as a spend cap: USD (`f64`) or tokens (`i64`).
+pub trait CapAmount: Copy + PartialOrd + Default {
+    /// True for values that make sense as a cap (positive; finite for floats).
+    fn is_positive(self) -> bool;
+}
+
+impl CapAmount for f64 {
+    fn is_positive(self) -> bool {
+        self.is_finite() && self > 0.0
+    }
+}
+
+impl CapAmount for i64 {
+    fn is_positive(self) -> bool {
+        self > 0
+    }
+}
+
+/// Spend caps per window; `None` means uncapped. Windows are checked
+/// independently, so a key can carry a daily, a monthly and a lifetime cap at
+/// once. `T` is the amount: `f64` for USD, `i64` for tokens.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BudgetWindows<T = f64> {
+    pub daily: Option<T>,
+    pub weekly: Option<T>,
+    pub monthly: Option<T>,
+    pub lifetime: Option<T>,
+}
+
+/// Token caps per window, checked against prompt + completion tokens.
+pub type TokenWindows = BudgetWindows<i64>;
+
+impl<T: CapAmount> BudgetWindows<T> {
+    /// Keeps only positive caps.
+    pub fn from_parts(
+        daily: Option<T>,
+        weekly: Option<T>,
+        monthly: Option<T>,
+        lifetime: Option<T>,
+    ) -> Self {
+        Self {
+            daily: daily.filter(|value| value.is_positive()),
+            weekly: weekly.filter(|value| value.is_positive()),
+            monthly: monthly.filter(|value| value.is_positive()),
+            lifetime: lifetime.filter(|value| value.is_positive()),
+        }
+    }
+
+    pub fn get(&self, window: BudgetWindow) -> Option<T> {
+        match window {
+            BudgetWindow::Daily => self.daily,
+            BudgetWindow::Weekly => self.weekly,
+            BudgetWindow::Monthly => self.monthly,
+            BudgetWindow::Lifetime => self.lifetime,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.daily.is_none()
+            && self.weekly.is_none()
+            && self.monthly.is_none()
+            && self.lifetime.is_none()
+    }
+
+    /// Configured caps in window order.
+    pub fn iter(&self) -> impl Iterator<Item = (BudgetWindow, T)> + '_ {
+        BudgetWindow::ALL
+            .into_iter()
+            .filter_map(|window| self.get(window).map(|limit| (window, limit)))
     }
 }
 
@@ -367,5 +483,61 @@ mod tests {
             BudgetMode::Block
         );
         assert!(BudgetMode::parse("nope").is_err());
+    }
+
+    #[test]
+    fn budget_windows_start_at_calendar_boundaries() {
+        // 2026-09-16 is a Wednesday; its week starts Monday 2026-09-14.
+        let now = DateTime::parse_from_rfc3339("2026-09-16T13:45:30Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+
+        assert_eq!(
+            BudgetWindow::Daily.start(now).to_rfc3339(),
+            "2026-09-16T00:00:00+00:00"
+        );
+        assert_eq!(
+            BudgetWindow::Weekly.start(now).to_rfc3339(),
+            "2026-09-14T00:00:00+00:00"
+        );
+        assert_eq!(
+            BudgetWindow::Monthly.start(now).to_rfc3339(),
+            "2026-09-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            BudgetWindow::Lifetime.start(now).to_rfc3339(),
+            "1970-01-01T00:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn budget_windows_drop_non_positive_caps() {
+        let budgets = BudgetWindows::from_parts(Some(5.0), Some(0.0), Some(-1.0), Some(100.0));
+
+        assert_eq!(budgets.daily, Some(5.0));
+        assert_eq!(budgets.weekly, None);
+        assert_eq!(budgets.monthly, None);
+        assert_eq!(budgets.lifetime, Some(100.0));
+        assert_eq!(
+            budgets.iter().collect::<Vec<_>>(),
+            vec![(BudgetWindow::Daily, 5.0), (BudgetWindow::Lifetime, 100.0)]
+        );
+
+        let empty: BudgetWindows = BudgetWindows::default();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn token_windows_keep_only_positive_limits() {
+        let windows = TokenWindows::from_parts(Some(1_000), Some(0), Some(-5), None);
+
+        assert_eq!(windows.daily, Some(1_000));
+        assert_eq!(windows.weekly, None);
+        assert_eq!(windows.monthly, None);
+        assert_eq!(windows.lifetime, None);
+        assert_eq!(
+            windows.iter().collect::<Vec<_>>(),
+            vec![(BudgetWindow::Daily, 1_000)]
+        );
     }
 }

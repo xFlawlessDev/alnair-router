@@ -21,8 +21,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import LimitFields from '@/components/keys/LimitFields.vue';
 import ModelAllowlistInput from '@/components/keys/ModelAllowlistInput.vue';
 import { ApiError, api } from '@/lib/api';
+import { fromLocalDateTime, parsePositive, parsePositiveInt, toLocalDateTime } from '@/lib/limits';
 import type { Alias, ApiKey, BudgetMode, ComboWithEntries, KeyPlan } from '@/types/api';
 
 const props = defineProps<{
@@ -37,17 +39,19 @@ const emit = defineEmits<{ 'update:open': [boolean]; saved: [secret?: string] }>
 /** Sentinel because Select values cannot be empty strings. */
 const NO_PLAN = '__no_plan__';
 
-const BUDGET_MODES: { value: BudgetMode; label: string }[] = [
-  { value: 'off', label: 'Off — no cap' },
-  { value: 'warn', label: 'Warn — allow, flag the overspend' },
-  { value: 'block', label: 'Block — reject once exhausted' },
-];
-
 const name = ref('');
 const enabled = ref(true);
 const rateLimit = ref('');
-const budget = ref('');
+const daily = ref('');
+const weekly = ref('');
+const monthly = ref('');
+const lifetime = ref('');
+const dailyTokens = ref('');
+const weeklyTokens = ref('');
+const monthlyTokens = ref('');
+const lifetimeTokens = ref('');
 const budgetMode = ref<BudgetMode>('off');
+const expires = ref('');
 const planId = ref(NO_PLAN);
 const models = ref<string[]>([]);
 const saving = ref(false);
@@ -63,19 +67,21 @@ watch(
     enabled.value = key ? key.enabled !== 0 : true;
     rateLimit.value =
       key?.rate_limit_per_minute != null ? String(key.rate_limit_per_minute) : '';
-    budget.value = key?.monthly_budget_usd != null ? String(key.monthly_budget_usd) : '';
+    daily.value = key?.daily_budget_usd != null ? String(key.daily_budget_usd) : '';
+    weekly.value = key?.weekly_budget_usd != null ? String(key.weekly_budget_usd) : '';
+    monthly.value = key?.monthly_budget_usd != null ? String(key.monthly_budget_usd) : '';
+    lifetime.value = key?.lifetime_budget_usd != null ? String(key.lifetime_budget_usd) : '';
+    dailyTokens.value = key?.daily_token_limit != null ? String(key.daily_token_limit) : '';
+    weeklyTokens.value = key?.weekly_token_limit != null ? String(key.weekly_token_limit) : '';
+    monthlyTokens.value = key?.monthly_token_limit != null ? String(key.monthly_token_limit) : '';
+    lifetimeTokens.value =
+      key?.lifetime_token_limit != null ? String(key.lifetime_token_limit) : '';
     budgetMode.value = key?.budget_mode ?? 'off';
+    expires.value = toLocalDateTime(key?.expires_at);
     planId.value = key?.plan_id ?? NO_PLAN;
     models.value = key?.allowed_models ? [...key.allowed_models] : [];
   },
 );
-
-function parsePositive(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
 
 async function save(): Promise<void> {
   if (!name.value.trim()) {
@@ -86,15 +92,52 @@ async function save(): Promise<void> {
     toast.error('Rate limit must be a positive number');
     return;
   }
-  if (budget.value.trim() && parsePositive(budget.value) === null) {
-    toast.error('Budget must be a positive number');
-    return;
+
+  for (const [label, value] of [
+    ['Daily', daily.value],
+    ['Weekly', weekly.value],
+    ['Monthly', monthly.value],
+    ['Lifetime', lifetime.value],
+  ] as const) {
+    if (value.trim() && parsePositive(value) === null) {
+      toast.error(`${label} budget must be a positive number`);
+      return;
+    }
+  }
+
+  for (const [label, value] of [
+    ['Daily', dailyTokens.value],
+    ['Weekly', weeklyTokens.value],
+    ['Monthly', monthlyTokens.value],
+    ['Lifetime', lifetimeTokens.value],
+  ] as const) {
+    if (value.trim() && parsePositiveInt(value) === null) {
+      toast.error(`${label} token limit must be a positive whole number`);
+      return;
+    }
   }
 
   const rpm = parsePositive(rateLimit.value);
-  const usd = parsePositive(budget.value);
-  if (budgetMode.value !== 'off' && usd === null) {
-    toast.error('Set a monthly budget before choosing warn or block');
+  const dailyUsd = parsePositive(daily.value);
+  const weeklyUsd = parsePositive(weekly.value);
+  const monthlyUsd = parsePositive(monthly.value);
+  const lifetimeUsd = parsePositive(lifetime.value);
+  const dailyTok = parsePositiveInt(dailyTokens.value);
+  const weeklyTok = parsePositiveInt(weeklyTokens.value);
+  const monthlyTok = parsePositiveInt(monthlyTokens.value);
+  const lifetimeTok = parsePositiveInt(lifetimeTokens.value);
+  if (
+    budgetMode.value !== 'off' &&
+    dailyUsd === null &&
+    weeklyUsd === null &&
+    monthlyUsd === null &&
+    lifetimeUsd === null &&
+    dailyTok === null &&
+    weeklyTok === null &&
+    monthlyTok === null &&
+    lifetimeTok === null
+  ) {
+    toast.error('Set at least one budget or token limit before choosing warn or block');
     return;
   }
 
@@ -102,10 +145,18 @@ async function save(): Promise<void> {
     name: name.value.trim(),
     enabled: enabled.value,
     rate_limit_per_minute: rpm,
-    monthly_budget_usd: usd,
+    daily_budget_usd: dailyUsd,
+    weekly_budget_usd: weeklyUsd,
+    monthly_budget_usd: monthlyUsd,
+    lifetime_budget_usd: lifetimeUsd,
+    daily_token_limit: dailyTok,
+    weekly_token_limit: weeklyTok,
+    monthly_token_limit: monthlyTok,
+    lifetime_token_limit: lifetimeTok,
     budget_mode: budgetMode.value,
     plan_id: planId.value === NO_PLAN ? null : planId.value,
     allowed_models: models.value.length ? models.value : null,
+    expires_at: fromLocalDateTime(expires.value),
   };
 
   saving.value = true;
@@ -155,43 +206,21 @@ async function save(): Promise<void> {
           <Switch id="key-enabled" v-model="enabled" />
         </div>
 
-        <div class="grid gap-2">
-          <Label for="key-rate-limit">Rate limit (requests/minute)</Label>
-          <Input
-            id="key-rate-limit"
-            v-model="rateLimit"
-            type="number"
-            min="1"
-            placeholder="Blank inherits the plan or server default"
-          />
-        </div>
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="grid gap-2">
-            <Label for="key-budget">Monthly budget (USD)</Label>
-            <Input
-              id="key-budget"
-              v-model="budget"
-              type="number"
-              min="0.01"
-              step="0.01"
-              placeholder="Blank is uncapped"
-            />
-          </div>
-          <div class="grid gap-2">
-            <Label>Budget mode</Label>
-            <Select v-model="budgetMode">
-              <SelectTrigger class="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="mode in BUDGET_MODES" :key="mode.value" :value="mode.value">
-                  {{ mode.label }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <LimitFields
+          id-prefix="key"
+          scope="key"
+          v-model:rate-limit="rateLimit"
+          v-model:daily="daily"
+          v-model:weekly="weekly"
+          v-model:monthly="monthly"
+          v-model:lifetime="lifetime"
+          v-model:daily-tokens="dailyTokens"
+          v-model:weekly-tokens="weeklyTokens"
+          v-model:monthly-tokens="monthlyTokens"
+          v-model:lifetime-tokens="lifetimeTokens"
+          v-model:budget-mode="budgetMode"
+          v-model:expires="expires"
+        />
 
         <div class="grid gap-2">
           <Label>Plan</Label>

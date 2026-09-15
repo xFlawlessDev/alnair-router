@@ -50,10 +50,10 @@ const responseHeaders = [
 ];
 
 const errors = [
-  ['401', 'authentication_error', 'Missing, unknown or disabled router key.'],
-  ['403', 'permission_error', "The model is not in the key's allowlist."],
+  ['401', 'authentication_error', 'Missing, unknown, disabled or expired router key.'],
+  ['403', 'permission_error', "Model outside the key's allowlist, or the plan has expired."],
   ['404', 'not_found_error', 'The model reference resolves to nothing.'],
-  ['402', 'insufficient_quota', 'Monthly budget reached with budget_mode = block.'],
+  ['402', 'insufficient_quota', 'A budget or token window (daily/weekly/monthly/lifetime) is exhausted in block mode.'],
   ['429', 'rate_limit_error', 'Token bucket or concurrency cap; honors Retry-After.'],
   ['502', 'upstream_error', 'Every tier failed; the last upstream error is reported.'],
 ];

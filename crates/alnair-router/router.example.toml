@@ -26,6 +26,9 @@ require_api_key = false
 allow_unauthenticated_admin = false
 # Include best-effort upstream TCP reachability in /api/ready.
 readiness_upstream_checks = false
+# Expose the self-service usage page (/me) and GET /api/public/usage, where a
+# client reads its own rollup with a router-issued API key.
+public_usage = true
 # Serve the embedded dashboard at / (disable when a reverse proxy owns it).
 serve_dashboard = true
 # Show a system tray icon with "Open dashboard" and "Quit" while serving.

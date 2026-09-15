@@ -1,4 +1,5 @@
 import { getAdminToken } from '@/lib/adminToken';
+import { getClientKey } from '@/lib/clientKey';
 import type {
   ActivitySnapshot,
   Alias,
@@ -18,9 +19,11 @@ import type {
   InitState,
   KeyPlan,
   KeyPlanInput,
+  KeySpend,
   ModelCatalogResponse,
   ModelPrice,
   ModelPriceInput,
+  MyUsageResponse,
   PriceMatch,
   PricingSyncStatus,
   RestoreSummary,
@@ -122,11 +125,14 @@ async function request<T>(method: string, path: string, options: RequestOptions 
 }
 
 /** Sends a non-JSON request (binary backup download/upload). */
-async function rawRequest(path: string, init: RequestInit = {}): Promise<Response> {
+async function rawRequest(
+  path: string,
+  init: RequestInit = {},
+  token = getAdminToken(),
+): Promise<Response> {
   const headers: Record<string, string> = {
     ...((init.headers as Record<string, string> | undefined) ?? {}),
   };
-  const token = getAdminToken();
   if (token) headers.authorization = `Bearer ${token}`;
 
   let response: Response;
@@ -194,6 +200,7 @@ export const api = {
   updateKey: (id: ID, body: Partial<ApiKeyInput>) =>
     request<ApiKey>('PATCH', `/api/keys/${id}`, { body }),
   deleteKey: (id: ID) => request<void>('DELETE', `/api/keys/${id}`),
+  usageByKey: () => request<KeySpend[]>('GET', '/api/usage/keys'),
 
   listPlans: () => request<KeyPlan[]>('GET', '/api/plans'),
   createPlan: (body: KeyPlanInput) => request<KeyPlan>('POST', '/api/plans', { body }),
@@ -256,5 +263,18 @@ export const api = {
       body: file,
     });
     return (await response.json()) as RestoreSummary;
+  },
+
+  myUsage: async (
+    since?: string | null,
+    bucket?: 'hour' | 'day',
+    until?: string | null,
+  ): Promise<MyUsageResponse> => {
+    const response = await rawRequest(
+      buildUrl('/api/public/usage', { since, until, bucket }),
+      {},
+      getClientKey(),
+    );
+    return (await response.json()) as MyUsageResponse;
   },
 };

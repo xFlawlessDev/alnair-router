@@ -4,7 +4,8 @@ import { Pencil, Plus, Sparkles, Trash2 } from '@lucide/vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatCost } from '@/lib/format';
+import { formatCost, formatDateTime } from '@/lib/format';
+import { configuredCaps, isExpired } from '@/lib/limits';
 import type { KeyPlan } from '@/types/api';
 
 defineProps<{ plans: KeyPlan[] }>();
@@ -41,11 +42,19 @@ const emit = defineEmits<{ create: []; edit: [plan: KeyPlan]; remove: [plan: Key
                 {{ plan.rate_limit_per_minute }}/min
               </Badge>
               <Badge
-                v-if="plan.monthly_budget_usd && plan.budget_mode !== 'off'"
+                v-for="{ cap, amount } in configuredCaps(plan)"
+                :key="cap.field"
                 :variant="plan.budget_mode === 'block' ? 'destructive' : 'outline'"
               >
-                {{ formatCost(plan.monthly_budget_usd) }} · {{ plan.budget_mode }}
+                {{ formatCost(amount) }}/{{ cap.suffix }}
               </Badge>
+              <Badge v-if="configuredCaps(plan).length" variant="secondary">
+                {{ plan.budget_mode }}
+              </Badge>
+              <Badge v-if="isExpired(plan.expires_at)" variant="destructive">Expired</Badge>
+              <span v-else-if="plan.expires_at" class="text-xs text-muted-foreground">
+                expires {{ formatDateTime(plan.expires_at) }}
+              </span>
             </div>
             <p v-if="plan.description" class="text-xs text-muted-foreground">
               {{ plan.description }}

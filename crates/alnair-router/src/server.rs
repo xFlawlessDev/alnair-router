@@ -17,6 +17,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(handlers::admin::health))
         .route("/api/ready", get(handlers::admin::ready));
 
+    // Read-only surfaces that identify the caller with a client key instead of
+    // the admin token.
+    let public = Router::new().route("/api/public/usage", get(handlers::public::usage));
+
     // Admin and management routes are unauthenticated on loopback; when
     // `server.admin_token` is configured the token is enforced on all of them.
     let admin = Router::new()
@@ -78,6 +82,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/usage", get(handlers::admin::list_usage))
         .route("/api/usage/summary", get(handlers::admin::usage_summary))
         .route("/api/usage/facets", get(handlers::admin::usage_facets))
+        .route("/api/usage/keys", get(handlers::admin::usage_by_key))
         .route("/api/models", get(handlers::catalog::models_catalog))
         .route(
             "/api/pricing",
@@ -142,7 +147,11 @@ pub fn build_router(state: AppState) -> Router {
             middleware::require_api_key,
         ));
 
-    let mut app = Router::new().merge(probes).merge(admin).merge(v1);
+    let mut app = Router::new()
+        .merge(probes)
+        .merge(public)
+        .merge(admin)
+        .merge(v1);
     let serve_dashboard = state
         .config
         .read()

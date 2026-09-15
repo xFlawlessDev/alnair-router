@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@internationalized/date':
+        specifier: ^3.12.4
+        version: 3.12.4
       '@lucide/vue':
         specifier: ^1.41.0
         version: 1.41.0(vue@3.5.42(typescript@6.0.3))

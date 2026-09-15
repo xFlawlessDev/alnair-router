@@ -3,7 +3,6 @@
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use chrono::Datelike;
 
 use crate::db::repos::api_keys::ApiKey;
 use crate::error::{Error, Result};
@@ -86,12 +85,49 @@ pub async fn require_api_key(
         }
     };
 
+    if key.is_expired() {
+        state.telemetry.record(
+            "warn",
+            "auth.denied",
+            None,
+            None,
+            format!("{method} {path} — API key '{}' has expired", key.name),
+            None,
+            Some(401),
+        );
+        return Err(Error::Unauthorized(format!(
+            "API key '{}' has expired",
+            key.name
+        )));
+    }
+
     state.api_keys().touch(&key.id).await?;
 
     let plan = match &key.plan_id {
         Some(plan_id) => state.key_plans().get(plan_id).await?,
         None => None,
     };
+
+    // An expired plan fails closed: keys attached to it stop working instead of
+    // silently falling back to their own fields or the server defaults.
+    if let Some(plan) = plan.as_ref()
+        && plan.is_expired()
+    {
+        state.telemetry.record(
+            "warn",
+            "auth.denied",
+            None,
+            None,
+            format!("{method} {path} — plan '{}' has expired", plan.name),
+            None,
+            Some(403),
+        );
+        return Err(Error::Forbidden(format!(
+            "the plan '{}' attached to this API key has expired",
+            plan.name
+        )));
+    }
+
     let policy = KeyPolicy::resolve(&key, plan.as_ref());
 
     // Cheap in-memory check first, then the budget rollup.
@@ -157,63 +193,82 @@ fn record_http(
     );
 }
 
-/// Enforces a key's monthly budget.
+/// Enforces a key's spend caps, one window at a time, in USD and tokens.
 ///
-/// `warn` mode lets the request through and reports the overspend via a
-/// response header; `block` mode fails it with `402 Payment Required`.
+/// `warn` mode lets the request through and reports every exhausted window via
+/// a response header; `block` mode fails it with `402 Payment Required`.
 async fn check_budget(
     state: &AppState,
     key: &ApiKey,
     policy: &KeyPolicy,
 ) -> Result<Option<String>> {
-    let Some(limit) = policy.monthly_budget_usd else {
-        return Ok(None);
-    };
     let mode = policy.budget_mode;
-    if mode == BudgetMode::Off {
+    if mode == BudgetMode::Off || (policy.budgets.is_empty() && policy.token_limits.is_empty()) {
         return Ok(None);
     }
 
-    let spent = state.usage().spend_since(&key.id, month_start()).await?;
-    if spent < limit {
+    let now = chrono::Utc::now();
+    let mut details: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    for (window, limit) in policy.budgets.iter() {
+        let spent = state
+            .usage()
+            .spend_since(&key.id, window.start(now))
+            .await?;
+        if spent >= limit {
+            details.push(format!(
+                "{} budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
+                window.as_str(),
+                key.name
+            ));
+            warnings.push(format!(
+                "{} spent ${spent:.2} of ${limit:.2}",
+                window.as_str()
+            ));
+        }
+    }
+
+    for (window, limit) in policy.token_limits.iter() {
+        let spent = state
+            .usage()
+            .tokens_since(&key.id, window.start(now))
+            .await?;
+        if spent >= limit {
+            details.push(format!(
+                "{} token limit of {limit} tokens exhausted for key '{}' (spent {spent} tokens)",
+                window.as_str(),
+                key.name
+            ));
+            warnings.push(format!(
+                "{} spent {spent} of {limit} tokens",
+                window.as_str()
+            ));
+        }
+    }
+
+    if details.is_empty() {
         return Ok(None);
     }
 
     match mode {
         BudgetMode::Block => {
+            let message = details.join("; ");
             state.metrics.record_budget_blocked();
             state.telemetry.record(
                 "warn",
                 "budget.blocked",
                 None,
                 None,
-                format!(
-                    "monthly budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
-                    key.name
-                ),
+                message.clone(),
                 None,
                 Some(402),
             );
-            Err(Error::BudgetExceeded {
-                message: format!(
-                    "monthly budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
-                    key.name
-                ),
-            })
+            Err(Error::BudgetExceeded { message })
         }
-        BudgetMode::Warn => Ok(Some(format!("spent ${spent:.2} of ${limit:.2}"))),
+        BudgetMode::Warn => Ok(Some(warnings.join("; "))),
         BudgetMode::Off => Ok(None),
     }
-}
-
-/// Start of the current UTC calendar month.
-fn month_start() -> chrono::DateTime<chrono::Utc> {
-    let now = chrono::Utc::now();
-    now.date_naive()
-        .with_day(1)
-        .and_then(|first| first.and_hms_opt(0, 0, 0))
-        .map(|naive| naive.and_utc())
-        .unwrap_or(now)
 }
 
 /// Guards the `/api/*` admin routes with `server.admin_token`.
@@ -266,7 +321,7 @@ fn tokens_match(provided: &str, expected: &str) -> bool {
 }
 
 /// Extracts the bearer token from an `Authorization` header.
-fn extract_bearer(headers: &http::HeaderMap) -> Option<String> {
+pub(crate) fn extract_bearer(headers: &http::HeaderMap) -> Option<String> {
     let value = headers.get(http::header::AUTHORIZATION)?.to_str().ok()?;
     let (scheme, token) = value.split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("bearer") {

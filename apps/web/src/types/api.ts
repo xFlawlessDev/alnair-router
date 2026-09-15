@@ -176,8 +176,22 @@ export interface ApiKey {
   enabled: number;
   /** Per-key requests-per-minute override; null inherits the plan or default. */
   rate_limit_per_minute: number | null;
+  /** Daily spend cap in USD; null inherits the plan or is uncapped. */
+  daily_budget_usd: number | null;
+  /** Weekly spend cap in USD; null inherits the plan or is uncapped. */
+  weekly_budget_usd: number | null;
   /** Monthly spend cap in USD; null inherits the plan or is uncapped. */
   monthly_budget_usd: number | null;
+  /** Lifetime spend cap in USD with no reset; null inherits the plan or is uncapped. */
+  lifetime_budget_usd: number | null;
+  /** Daily token cap (prompt + completion); null inherits the plan or is uncapped. */
+  daily_token_limit: number | null;
+  /** Weekly token cap (prompt + completion); null inherits the plan or is uncapped. */
+  weekly_token_limit: number | null;
+  /** Monthly token cap (prompt + completion); null inherits the plan or is uncapped. */
+  monthly_token_limit: number | null;
+  /** Lifetime token cap (prompt + completion); null inherits the plan or is uncapped. */
+  lifetime_token_limit: number | null;
   budget_mode: BudgetMode;
   /** Plan whose rules fill the fields this key leaves empty. */
   plan_id: ID | null;
@@ -185,6 +199,8 @@ export interface ApiKey {
   allowed_models: string[] | null;
   created_at: string;
   last_used_at: string | null;
+  /** When the key stops authenticating; null never expires. */
+  expires_at: string | null;
 }
 
 export type BudgetMode = 'off' | 'warn' | 'block';
@@ -193,10 +209,18 @@ export interface ApiKeyInput {
   name: string;
   enabled?: boolean;
   rate_limit_per_minute?: number | null;
+  daily_budget_usd?: number | null;
+  weekly_budget_usd?: number | null;
   monthly_budget_usd?: number | null;
+  lifetime_budget_usd?: number | null;
+  daily_token_limit?: number | null;
+  weekly_token_limit?: number | null;
+  monthly_token_limit?: number | null;
+  lifetime_token_limit?: number | null;
   budget_mode?: BudgetMode;
   plan_id?: string | null;
   allowed_models?: string[] | null;
+  expires_at?: string | null;
 }
 
 /** Reusable rule set: model allowlist plus limits, applied to any key. */
@@ -207,10 +231,27 @@ export interface KeyPlan {
   /** Model patterns; empty allows any model. `*` and `prefix/*` wildcards work. */
   allowed_models: string[];
   rate_limit_per_minute: number | null;
+  /** Daily spend cap in USD; null is uncapped. */
+  daily_budget_usd: number | null;
+  /** Weekly spend cap in USD; null is uncapped. */
+  weekly_budget_usd: number | null;
+  /** Monthly spend cap in USD; null is uncapped. */
   monthly_budget_usd: number | null;
+  /** Lifetime spend cap in USD with no reset; null is uncapped. */
+  lifetime_budget_usd: number | null;
+  /** Daily token cap (prompt + completion); null is uncapped. */
+  daily_token_limit: number | null;
+  /** Weekly token cap (prompt + completion); null is uncapped. */
+  weekly_token_limit: number | null;
+  /** Monthly token cap (prompt + completion); null is uncapped. */
+  monthly_token_limit: number | null;
+  /** Lifetime token cap (prompt + completion); null is uncapped. */
+  lifetime_token_limit: number | null;
   budget_mode: BudgetMode;
   created_at: string;
   updated_at: string;
+  /** When the plan stops applying; attached keys are rejected after this. */
+  expires_at: string | null;
 }
 
 export interface KeyPlanInput {
@@ -218,8 +259,16 @@ export interface KeyPlanInput {
   description?: string;
   allowed_models?: string[];
   rate_limit_per_minute?: number | null;
+  daily_budget_usd?: number | null;
+  weekly_budget_usd?: number | null;
   monthly_budget_usd?: number | null;
+  lifetime_budget_usd?: number | null;
+  daily_token_limit?: number | null;
+  weekly_token_limit?: number | null;
+  monthly_token_limit?: number | null;
+  lifetime_token_limit?: number | null;
   budget_mode?: BudgetMode;
+  expires_at?: string | null;
 }
 
 export interface CreatedApiKey {
@@ -307,6 +356,27 @@ export interface UsageFacets {
   connections: string[];
 }
 
+/** Spend for one API key, split by budget window. */
+export interface KeySpend {
+  api_key_id: ID;
+  /** Spend since the start of the current UTC day. */
+  daily_usd: number;
+  /** Spend since the start of the current UTC week. */
+  weekly_usd: number;
+  /** Spend since the start of the current UTC month. */
+  monthly_usd: number;
+  /** All recorded spend; the lifetime window. */
+  lifetime_usd: number;
+  /** Prompt + completion tokens since the start of the current UTC day. */
+  daily_tokens: number;
+  /** Prompt + completion tokens since the start of the current UTC week. */
+  weekly_tokens: number;
+  /** Prompt + completion tokens since the start of the current UTC month. */
+  monthly_tokens: number;
+  /** All recorded prompt + completion tokens; the lifetime window. */
+  lifetime_tokens: number;
+}
+
 /** Usage filters; `model` is a case-insensitive substring match. */
 export interface UsageFilter {
   since?: string | null;
@@ -360,6 +430,7 @@ export interface ActivitySnapshot {
 export interface ServerSettings {
   require_api_key: boolean;
   readiness_upstream_checks: boolean;
+  public_usage: boolean;
   /** Whether an admin token is configured; the value itself is write-only. */
   admin_token_set: boolean;
 }
@@ -450,6 +521,42 @@ export interface ModelCatalogResponse {
   data: ModelCatalogEntry[];
 }
 
+/** Per-model rollup on the self-service usage page. */
+export interface PublicModelUsage {
+  model: string;
+  requests: number;
+  error_requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+}
+
+export type UsageBucketSize = 'hour' | 'day';
+
+/** One (bucket, model) cell of the usage trend. */
+export interface UsageBucket {
+  /** RFC 3339 bucket start for `hour`, `YYYY-MM-DD` for `day`. */
+  bucket: string;
+  /** Requested model reference, so charts can stack by model. */
+  model: string;
+  requests: number;
+  error_requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+}
+
+/** `GET /api/public/usage` response for the connected client key. */
+export interface MyUsageResponse {
+  key: { name: string; prefix: string };
+  since: string | null;
+  until: string | null;
+  bucket: UsageBucketSize;
+  summary: UsageSummary;
+  models: PublicModelUsage[];
+  timeseries: UsageBucket[];
+}
+
 /**
  * `PATCH /api/settings` body: absent fields stay untouched. A `null` or blank
  * `admin_token` forces "no admin token", and a `null` `default_connection`
@@ -459,6 +566,7 @@ export interface SettingsPatch {
   require_api_key?: boolean;
   admin_token?: string | null;
   readiness_upstream_checks?: boolean;
+  public_usage?: boolean;
   default_connection?: string | null;
   max_attempts?: number;
   max_retries_per_tier?: number;

@@ -14,7 +14,9 @@ use crate::db::repos::connections::{CreateConnection, UpdateConnection};
 use crate::db::repos::key_plans::{CreateKeyPlan, UpdateKeyPlan};
 use crate::db::repos::usage::NewUsageRecord;
 use crate::error::{Error, Result};
+use crate::limits::BudgetWindow;
 use crate::state::AppState;
+
 use crate::upstream::chat_backend;
 
 #[derive(Debug, Deserialize)]
@@ -292,6 +294,20 @@ pub async fn usage_summary(
 /// `GET /api/usage/facets` — distinct models and providers for the filter bar.
 pub async fn usage_facets(State(state): State<AppState>) -> Result<impl IntoResponse> {
     Ok(Json(state.usage().facets().await?))
+}
+
+/// Spend per key for the dashboard's budget monitor.
+pub async fn usage_by_key(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    let now = chrono::Utc::now();
+    let rows = state
+        .usage()
+        .spend_by_key(
+            BudgetWindow::Daily.start(now),
+            BudgetWindow::Weekly.start(now),
+            BudgetWindow::Monthly.start(now),
+        )
+        .await?;
+    Ok(Json(rows))
 }
 
 // ------------------------------------------------------------------ pricing

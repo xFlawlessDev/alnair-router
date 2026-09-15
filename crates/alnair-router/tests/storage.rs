@@ -9,7 +9,7 @@ use alnair_router::db::repos::connections::{
     ConnectionRepository, CreateConnection, UpdateConnection,
 };
 use alnair_router::db::repos::usage::{NewUsageRecord, UsageFilter, UsageRepository};
-use alnair_router::limits::BudgetMode;
+use alnair_router::limits::{BudgetMode, BudgetWindow};
 use alnair_router::pricing::{
     FetchedPrice, Price, PriceInput, PricingCache, PricingRepository, PricingSyncStatus,
 };
@@ -452,10 +452,18 @@ async fn api_key_lookup_by_secret_only_matches_enabled() {
             name: "laptop".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: None,
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect("key");
@@ -486,10 +494,18 @@ async fn api_key_secret_is_never_stored_plaintext() {
             name: "k".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: None,
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect("key");
@@ -693,22 +709,40 @@ async fn api_key_limits_and_budget_round_trip() {
     let db = db().await;
     let repo = ApiKeyRepository::new(db.pool.clone());
 
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
     let created = repo
         .create(CreateApiKey {
             name: "metered".to_string(),
             enabled: true,
             rate_limit_per_minute: Some(30),
+            daily_budget_usd: Some(1.5),
+            weekly_budget_usd: Some(7.0),
             monthly_budget_usd: Some(5.0),
+            lifetime_budget_usd: Some(50.0),
+            daily_token_limit: Some(1_000_000),
+            weekly_token_limit: Some(5_000_000),
+            monthly_token_limit: Some(20_000_000),
+            lifetime_token_limit: Some(200_000_000),
             budget_mode: Some("warn".to_string()),
             plan_id: None,
             allowed_models: None,
+            expires_at: Some(expires_at),
         })
         .await
         .expect("create");
 
     assert_eq!(created.key.rate_limit(), Some(30));
-    assert_eq!(created.key.budget_usd(), Some(5.0));
+    assert_eq!(created.key.budget_windows().daily, Some(1.5));
+    assert_eq!(created.key.budget_windows().weekly, Some(7.0));
+    assert_eq!(created.key.budget_windows().monthly, Some(5.0));
+    assert_eq!(created.key.budget_windows().lifetime, Some(50.0));
+    assert_eq!(created.key.token_windows().daily, Some(1_000_000));
+    assert_eq!(created.key.token_windows().weekly, Some(5_000_000));
+    assert_eq!(created.key.token_windows().monthly, Some(20_000_000));
+    assert_eq!(created.key.token_windows().lifetime, Some(200_000_000));
     assert_eq!(created.key.budget_mode(), BudgetMode::Warn);
+    assert_eq!(created.key.expires_at, Some(expires_at));
+    assert!(!created.key.is_expired());
 
     let updated = repo
         .update(
@@ -716,8 +750,16 @@ async fn api_key_limits_and_budget_round_trip() {
             UpdateApiKey {
                 enabled: Some(false),
                 rate_limit_per_minute: Some(None),
+                daily_budget_usd: Some(None),
+                weekly_budget_usd: Some(None),
                 monthly_budget_usd: Some(None),
+                lifetime_budget_usd: Some(None),
+                daily_token_limit: Some(None),
+                weekly_token_limit: Some(None),
+                monthly_token_limit: Some(None),
+                lifetime_token_limit: Some(None),
                 budget_mode: Some("off".to_string()),
+                expires_at: Some(None),
                 ..Default::default()
             },
         )
@@ -726,8 +768,39 @@ async fn api_key_limits_and_budget_round_trip() {
 
     assert!(!updated.is_enabled());
     assert_eq!(updated.rate_limit(), None);
-    assert_eq!(updated.budget_usd(), None);
+    assert!(updated.budget_windows().is_empty());
+    assert!(updated.token_windows().is_empty());
     assert_eq!(updated.budget_mode(), BudgetMode::Off);
+    assert_eq!(updated.expires_at, None);
+}
+
+#[tokio::test]
+async fn expired_keys_are_detected() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone());
+
+    let expired = repo
+        .create(CreateApiKey {
+            name: "stale".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: Some(chrono::Utc::now() - chrono::Duration::seconds(1)),
+        })
+        .await
+        .expect("create");
+
+    assert!(expired.key.is_expired());
 }
 
 #[tokio::test]
@@ -740,15 +813,53 @@ async fn api_key_budget_mode_requires_a_budget() {
             name: "bad".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
             monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
             budget_mode: Some("block".to_string()),
             plan_id: None,
             allowed_models: None,
+            expires_at: None,
         })
         .await
         .expect_err("budget mode without a budget must be refused");
 
     assert!(matches!(error, Error::BadRequest(_)));
+}
+
+#[tokio::test]
+async fn a_single_window_satisfies_the_budget_mode_pair() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone());
+
+    let created = repo
+        .create(CreateApiKey {
+            name: "daily-only".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: Some(2.0),
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: Some("block".to_string()),
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("a daily cap alone is enough for warn or block");
+
+    assert_eq!(created.key.budget_windows().daily, Some(2.0));
+    assert_eq!(created.key.budget_windows().monthly, None);
 }
 
 #[tokio::test]
@@ -761,10 +872,18 @@ async fn usage_spend_since_sums_only_the_matching_key() {
         name: name.to_string(),
         enabled: true,
         rate_limit_per_minute: None,
+        daily_budget_usd: None,
+        weekly_budget_usd: None,
         monthly_budget_usd: None,
+        lifetime_budget_usd: None,
+        daily_token_limit: None,
+        weekly_token_limit: None,
+        monthly_token_limit: None,
+        lifetime_token_limit: None,
         budget_mode: None,
         plan_id: None,
         allowed_models: None,
+        expires_at: None,
     };
 
     let key = keys.create(create_key("metered")).await.expect("key");
@@ -801,6 +920,108 @@ async fn usage_spend_since_sums_only_the_matching_key() {
     let spent = usage.spend_since(&key.key.id, since).await.expect("spend");
 
     assert!((spent - 1.5).abs() < 1e-9, "unexpected spend: {spent}");
+}
+
+#[tokio::test]
+async fn spend_by_key_splits_windows_and_skips_null_keys() {
+    let db = db().await;
+    let usage = UsageRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone());
+
+    let create_key = |name: &str| CreateApiKey {
+        name: name.to_string(),
+        enabled: true,
+        rate_limit_per_minute: None,
+        daily_budget_usd: None,
+        weekly_budget_usd: None,
+        monthly_budget_usd: None,
+        lifetime_budget_usd: None,
+        daily_token_limit: None,
+        weekly_token_limit: None,
+        monthly_token_limit: None,
+        lifetime_token_limit: None,
+        budget_mode: None,
+        plan_id: None,
+        allowed_models: None,
+        expires_at: None,
+    };
+
+    let key = keys.create(create_key("metered")).await.expect("key");
+    let other = keys.create(create_key("other")).await.expect("key");
+
+    for (api_key_id, cost) in [
+        (Some(key.key.id.clone()), 1.0),
+        (Some(other.key.id.clone()), 2.0),
+        (None, 5.0),
+    ] {
+        usage
+            .record(NewUsageRecord {
+                api_key_id,
+                requested_model: "m".to_string(),
+                resolved_provider: None,
+                resolved_model: None,
+                connection_name: None,
+                attempt: 1,
+                status: "ok".to_string(),
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                cached_tokens: 0,
+                reasoning_tokens: 0,
+                cost_usd: cost,
+                cost_input_usd: 0.0,
+                cost_output_usd: 0.0,
+                cost_reasoning_usd: 0.0,
+                latency_ms: 10,
+            })
+            .await
+            .expect("record");
+    }
+
+    // A row from a previous month counts toward the lifetime total only.
+    let old = chrono::Utc::now() - chrono::Duration::days(40);
+    sqlx::query(
+        "INSERT INTO usage_records (id, created_at, api_key_id, requested_model, status, cost_usd)
+         VALUES (?, ?, ?, 'old', 'ok', 3.0)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(old)
+    .bind(&key.key.id)
+    .execute(&db.pool)
+    .await
+    .expect("insert old row");
+
+    let now = chrono::Utc::now();
+    let rows = usage
+        .spend_by_key(
+            BudgetWindow::Daily.start(now),
+            BudgetWindow::Weekly.start(now),
+            BudgetWindow::Monthly.start(now),
+        )
+        .await
+        .expect("spend");
+
+    assert_eq!(rows.len(), 2, "null-key rows are skipped: {rows:?}");
+
+    let first = rows
+        .iter()
+        .find(|row| row.api_key_id == key.key.id)
+        .expect("key row");
+    assert!((first.daily_usd - 1.0).abs() < 1e-9);
+    assert!((first.weekly_usd - 1.0).abs() < 1e-9);
+    assert!((first.monthly_usd - 1.0).abs() < 1e-9);
+    assert!((first.lifetime_usd - 4.0).abs() < 1e-9);
+    // Each recorded row carries 1 prompt + 1 completion token.
+    assert_eq!(first.daily_tokens, 2);
+    assert_eq!(first.weekly_tokens, 2);
+    assert_eq!(first.monthly_tokens, 2);
+    assert_eq!(first.lifetime_tokens, 2);
+
+    let second = rows
+        .iter()
+        .find(|row| row.api_key_id == other.key.id)
+        .expect("other row");
+    assert!((second.lifetime_usd - 2.0).abs() < 1e-9);
+    assert_eq!(second.lifetime_tokens, 2);
 }
 
 #[tokio::test]

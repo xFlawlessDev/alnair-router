@@ -14,6 +14,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
+    "@internationalized/date": "^3.12.4",
     "@lucide/vue": "^1.41.0",
     "@unovis/ts": "^1.6.7",
     "@unovis/vue": "^1.6.7",

@@ -144,7 +144,10 @@ onMounted(load);
             >
               <TableCell>
                 <div class="flex items-center gap-2">
-                  <code class="rounded bg-muted px-1.5 py-0.5 text-xs">
+                  <code
+                    class="inline-block max-w-[14rem] truncate rounded bg-muted px-1.5 py-0.5 align-middle text-xs"
+                    :title="copyValue(entry)"
+                  >
                     {{ isOpenAlias(entry) ? `${entry.id}/…` : entry.id }}
                   </code>
                   <Button
@@ -166,7 +169,13 @@ onMounted(load);
                 <p class="text-xs text-muted-foreground">{{ entry.provider_type }}</p>
               </TableCell>
               <TableCell>
-                <code v-if="entry.upstream_model" class="text-xs">{{ entry.upstream_model }}</code>
+                <code
+                  v-if="entry.upstream_model"
+                  class="inline-block max-w-[14rem] truncate align-middle text-xs"
+                  :title="entry.upstream_model"
+                >
+                  {{ entry.upstream_model }}
+                </code>
                 <span v-else class="text-xs text-muted-foreground">any model</span>
               </TableCell>
               <TableCell :title="priceTitle(entry)">

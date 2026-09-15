@@ -154,11 +154,14 @@ docker run --rm -p 7878:7878 \
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/plans`, `/api/usage`,
-`/api/usage/summary`, `/api/usage/facets`, `/api/models` (provider + model +
-price catalog), `/api/pricing`, `/api/pricing/sync`, `/api/settings`,
-`/api/backup`, `/api/restore`, `/api/metrics`, `/api/activity`.
-`PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit, monthly
-budget, model allowlist and plan; `/api/plans` manages the reusable rule sets.
+`/api/usage/summary`, `/api/usage/facets`, `/api/usage/keys` (spend per key,
+split by budget window, for the dashboard's budget monitor), `/api/models`
+(provider + model + price catalog), `/api/pricing`, `/api/pricing/sync`,
+`/api/settings`, `/api/backup`, `/api/restore`, `/api/metrics`,
+`/api/activity`.
+`PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit,
+daily/weekly/monthly/lifetime budgets, model allowlist, plan and expiry;
+`/api/plans` manages the reusable rule sets.
 Usage reads accept `api_key_id`, `model` (case-insensitive substring),
 `provider` (the wire protocol: `openai-compatible` / `anthropic-native`),
 `connection` (the upstream that served the attempt) and `since`, and
@@ -177,6 +180,15 @@ the dashboard:
 `GET /api/activity` is the in-memory live feed (in-flight attempts,
 per-connection counters, recent events) behind the Usage live panel and the
 Console page.
+
+**Public (client key):** `GET /api/public/usage` — outside the admin-token
+guard. The caller authenticates with a router-issued key
+(`Authorization: Bearer sk-router-…`) and receives only its own rollup: the
+summary, a per-model breakdown and a per-(bucket, model) time series
+(`?bucket=hour|day`, default `day`, plus optional `since`/`until`). It backs the
+self-service page at `/me`, which stacks models in one bar chart, offers quick
+ranges and a month selector, and refreshes itself every 30 seconds. Disabled
+with `server.public_usage = false`.
 
 > Admin routes are open on loopback by default, because they mint the keys that
 > authenticate `/v1/*`. Set `server.admin_token` to require
@@ -208,14 +220,18 @@ Key settings:
   concurrency caps; a request that cannot get a slot in time gets `429` with
   `Retry-After`.
 - `rate_limit.requests_per_minute` — default per-key token bucket (0 = off);
-  keys can override it, and can carry a monthly budget with `off`/`warn`/`block`
-  enforcement.
+  keys can override it, and can carry daily, weekly, monthly and lifetime
+  budgets in USD and token limits (calendar windows, UTC; lifetime never
+  resets) with `off`/`warn`/`block` enforcement. Token limits count prompt +
+  completion tokens.
 - Key **rules** — each key can restrict the models it may call (exact names or
   `openai/*` / `*` wildcards, enforced with `403` on every `/v1` endpoint that
   carries a model). Rules set on a key win over its plan; bundle allowlist,
   rate limit and budget into a reusable **plan** and apply it to any key from
   the dashboard's API Keys page (`/api/plans`), where the allowlist editor
-  searches the available aliases and combos.
+  searches the available aliases and combos. Keys and plans can also carry an
+  `expires_at`: an expired key is rejected with `401`, and keys attached to an
+  expired plan fail closed with `403` until the plan is extended.
 - `router.catalog_ttl_ms` (default 1000) — routing-catalog cache; admin writes
   invalidate it immediately.
 - `router.connect_timeout_ms` / `router.idle_timeout_ms` — default upstream
@@ -223,6 +239,9 @@ Key settings:
   them (`0`).
 - `server.readiness_upstream_checks` — makes `/api/ready` report TCP
   reachability counts for enabled connections.
+- `server.public_usage` (default true) — exposes the self-service page at `/me`
+  and `GET /api/public/usage`, where a client reads its own rollup (summary
+  plus per-model totals) with a router-issued API key.
 - `server.tray` (default true) — system tray icon with **Open dashboard** and
   **Quit** on Windows and macOS; `alnair-router --no-tray` disables it for one
   run.

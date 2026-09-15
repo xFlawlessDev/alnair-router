@@ -19,6 +19,7 @@ pub struct SettingsPatch {
     #[serde(deserialize_with = "crate::db::repos::double_option")]
     pub admin_token: Option<Option<String>>,
     pub readiness_upstream_checks: Option<bool>,
+    pub public_usage: Option<bool>,
     #[serde(deserialize_with = "crate::db::repos::double_option")]
     pub default_connection: Option<Option<String>>,
     pub max_attempts: Option<usize>,
@@ -56,6 +57,7 @@ impl SettingsPatch {
             &mut overrides.readiness_upstream_checks,
             self.readiness_upstream_checks,
         );
+        set(&mut overrides.public_usage, self.public_usage);
         if let Some(connection) = self.default_connection {
             overrides.default_connection = Some(non_blank(connection));
         }
@@ -119,6 +121,7 @@ fn non_blank(value: Option<String>) -> Option<String> {
 pub struct ServerSettingsView {
     pub require_api_key: bool,
     pub readiness_upstream_checks: bool,
+    pub public_usage: bool,
     pub admin_token_set: bool,
 }
 
@@ -185,6 +188,7 @@ impl SettingsResponse {
             server: ServerSettingsView {
                 require_api_key: config.server.require_api_key,
                 readiness_upstream_checks: config.server.readiness_upstream_checks,
+                public_usage: config.server.public_usage,
                 admin_token_set: config.server.requires_admin_token(),
             },
             router: RouterSettingsView {

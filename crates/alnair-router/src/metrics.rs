@@ -65,7 +65,7 @@ impl Metrics {
         self.rate_limited_total.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Records a request rejected by a monthly budget.
+    /// Records a request rejected by a budget cap.
     pub fn record_budget_blocked(&self) {
         self.budget_blocked_total.fetch_add(1, Ordering::Relaxed);
     }
@@ -132,7 +132,7 @@ impl Metrics {
         );
         counter(
             "alnair_router_budget_blocked_total",
-            "Requests rejected by a monthly budget",
+            "Requests rejected by a budget cap",
             self.budget_blocked_total.load(Ordering::Relaxed),
         );
 
