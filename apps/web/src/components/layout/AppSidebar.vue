@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Info, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Waypoints } from '@lucide/vue';
+import { Info, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Terminal, Waypoints } from '@lucide/vue';
 import type { Component } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
@@ -26,6 +26,7 @@ interface NavItem {
 const monitorItems: NavItem[] = [
   { label: 'Overview', to: '/', icon: LayoutDashboard },
   { label: 'Usage', to: '/usage', icon: ScrollText },
+  { label: 'Console', to: '/logs', icon: Terminal },
 ];
 
 const manageItems: NavItem[] = [

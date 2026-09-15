@@ -77,6 +77,11 @@ async fn complete_response(
         usage_snapshot.cached_tokens,
         usage_snapshot.cost_usd,
     );
+    state.telemetry.record_usage(
+        &target.connection_id,
+        usage_snapshot.prompt_tokens,
+        usage_snapshot.completion_tokens,
+    );
 
     if let Some(usage) = completion.usage {
         state

@@ -78,6 +78,7 @@ pub struct ExecutorSettings {
     pub limiter: UpstreamLimiter,
     pub timeouts: UpstreamTimeouts,
     pub metrics: Arc<crate::metrics::Metrics>,
+    pub telemetry: Arc<crate::telemetry::ActivityTracker>,
 }
 
 impl Default for ExecutorSettings {
@@ -87,6 +88,7 @@ impl Default for ExecutorSettings {
             limiter: UpstreamLimiter::new(&crate::config::LimitsConfig::default()),
             timeouts: UpstreamTimeouts::default(),
             metrics: Arc::new(crate::metrics::Metrics::default()),
+            telemetry: Arc::new(crate::telemetry::ActivityTracker::new()),
         }
     }
 }
@@ -144,6 +146,14 @@ impl Executor {
                 }
             };
 
+            let attempt_token = self.settings.telemetry.begin_attempt(
+                &target.connection_id,
+                &target.connection_name,
+                &target.model,
+                &target.source,
+                index + 1,
+            );
+
             let built = chat_backend::stream(
                 self.registry.clone(),
                 &target.provider_type,
@@ -161,6 +171,11 @@ impl Executor {
             let stream = match built {
                 Ok(stream) => stream,
                 Err(error) => {
+                    self.settings.telemetry.finish_attempt(
+                        attempt_token,
+                        false,
+                        &error.to_string(),
+                    );
                     // A malformed provider type is a configuration fault, not a
                     // transient upstream failure: fail loudly instead of
                     // silently walking the rest of the chain.
@@ -187,6 +202,11 @@ impl Executor {
                     let error = Error::Upstream(format!(
                         "upstream did not respond within {connect_timeout_ms} ms"
                     ));
+                    self.settings.telemetry.finish_attempt(
+                        attempt_token,
+                        false,
+                        &error.to_string(),
+                    );
                     tracing::warn!(
                         attempt = index + 1,
                         source = %target.source,
@@ -202,6 +222,11 @@ impl Executor {
 
             match first {
                 Some(Err(error)) => {
+                    self.settings.telemetry.finish_attempt(
+                        attempt_token,
+                        false,
+                        &error.to_string(),
+                    );
                     tracing::warn!(
                         attempt = index + 1,
                         source = %target.source,
@@ -213,6 +238,11 @@ impl Executor {
                     attempts.push(failed_attempt(index, target, &error, started));
                 }
                 first => {
+                    self.settings.telemetry.finish_attempt(
+                        attempt_token,
+                        true,
+                        "first chunk ready",
+                    );
                     let latency_ms = started.elapsed().as_millis() as u64;
                     attempts.push(Attempt {
                         index: index + 1,

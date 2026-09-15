@@ -4,6 +4,7 @@ import {
   formatCost,
   formatDateTime,
   formatLatency,
+  formatRelativeTime,
   isEnabled,
   maskSecret,
   parseHeaders,
@@ -76,5 +77,23 @@ describe('formatDateTime', () => {
   it('renders missing values as a dash', () => {
     expect(formatDateTime(null)).toBe('—');
     expect(formatDateTime(undefined)).toBe('—');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  it('renders recent timestamps as "just now"', () => {
+    expect(formatRelativeTime(new Date().toISOString())).toBe('just now');
+  });
+
+  it('renders minutes and hours ago', () => {
+    const minutes = new Date(Date.now() - 5 * 60_000).toISOString();
+    expect(formatRelativeTime(minutes)).toBe('5m ago');
+
+    const hours = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    expect(formatRelativeTime(hours)).toBe('3h ago');
+  });
+
+  it('renders missing values as a dash', () => {
+    expect(formatRelativeTime(null)).toBe('—');
   });
 });

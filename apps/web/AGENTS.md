@@ -19,8 +19,9 @@ Note: `pnpm-workspace.yaml` here is pnpm's settings file (single package, no `pa
 - `src/lib/api.ts` — typed client for the router's admin API; `ApiError` surfaces the server's error message.
 - `src/lib/adminToken.ts` — optional bearer token for `/api/*`, persisted in localStorage.
 - `src/types/api.ts` — wire types mirroring the Rust repositories (snake_case fields).
-- `src/pages/` — route-level views (Overview, Connections, Aliases, Combos, Keys, Usage, About).
-- `src/components/` — app components; `src/components/ui/` is the untouched shadcn-vue primitive set — preserve its API.
+- `src/pages/` — route-level views (Overview, Connections, Aliases, Combos, Keys, Usage, Console, About).
+- `src/components/` — app components; `src/components/usage/ProviderTopology.vue` is the Vue Flow graph driven by `GET /api/activity` (animated edges only for in-flight connections).
+- `src/components/ui/` is the untouched shadcn-vue primitive set — preserve its API.
 - `src/router/` — route table; page titles live in route meta.
 
 ## Rules

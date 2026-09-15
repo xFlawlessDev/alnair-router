@@ -27,7 +27,7 @@ The tiered-combo design is modelled on
 
 ## 2. Status right now
 
-- **Builds and tests standalone.** 218 tests green, `cargo clippy --workspace --all-targets` clean.
+- **Builds and tests standalone.** 223 tests green, `cargo clippy --workspace --all-targets` clean.
 - **Self-contained by construction:** no path dependencies anywhere in the
   workspace. `Cargo.lock` resolves entirely from crates.io, so `target/` can be
   deleted and `cargo build --offline` still succeeds.
@@ -114,6 +114,7 @@ crates/alnair-router/
 │   ├── crypto.rs            # AES-256-GCM credential encryption + key parsing
 │   ├── limits.rs            # concurrency semaphores + token buckets + budget mode
 │   ├── metrics.rs           # atomic counters + Prometheus text exposition
+│   ├── telemetry.rs         # in-memory activity feed (attempts, HTTP, events)
 │   ├── error.rs             # scoped Error → OpenAI-shaped JSON error body
 │   ├── state.rs             # AppState: config, pool, cipher, executor, repos
 │   ├── middleware.rs        # bearer auth + rate/budget checks for /v1/* and /api/*
@@ -256,6 +257,14 @@ suite should tell you.
     probe (`POST /api/aliases/{id}/test-chat`) runs the same resolver +
     executor path and records a usage row. (`resolver.rs`, `handlers/admin.rs`)
 
+18. **The activity feed is ephemeral and cheap.** `telemetry.rs` keeps a
+    500-event ring buffer, per-connection counters and an in-flight gauge under
+    a single mutex; the executor opens/closes an attempt, `require_api_key`
+    records every `/v1` HTTP call and every rejection, handlers add token
+    counters. `GET /api/activity` serves it to the Usage live panel and the
+    Console page. Nothing is persisted — restarting the router clears it, and
+    usage rows remain the durable record.
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -305,7 +314,7 @@ public when it stabilises.
 ```bash
 export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"   # required
 cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
-cargo test --workspace        # 218 tests, ~33s (retry backoff + provider tests)
+cargo test --workspace        # 223 tests, ~33s (retry backoff + provider tests)
 cargo clippy --workspace --all-targets
 ```
 
@@ -379,11 +388,11 @@ Response headers report the routing decision:
 | `crates/alnair-llm/src/**` (81) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff |
 | `tests/resolve.rs` (24) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names |
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
-| `tests/routes.rs` (40) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, the seam guard |
+| `tests/routes.rs` (41) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
-| `src/**` inline (45) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization |
-| `apps/web/src/**` (27) | API client error/transport handling, formatters, route table, theme store, alias prefix helpers, confirm-dialog regression |
+| `src/**` inline (49) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization, activity tracker |
+| `apps/web/src/**` (33) | API client error/transport handling, formatters, route table, theme store, alias prefix helpers, confirm-dialog regression, topology layout |
 
 ---
 

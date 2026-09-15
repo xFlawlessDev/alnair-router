@@ -1,5 +1,6 @@
 import { getAdminToken } from '@/lib/adminToken';
 import type {
+  ActivitySnapshot,
   Alias,
   AliasChatTestInput,
   AliasChatTestResult,
@@ -152,4 +153,6 @@ export const api = {
     request<UsageRecord[]>('GET', '/api/usage', { query: { limit, offset } }),
   usageSummary: (since?: string | null) =>
     request<UsageSummary>('GET', '/api/usage/summary', { query: { since } }),
+  activity: (events = 100) =>
+    request<ActivitySnapshot>('GET', '/api/activity', { query: { limit: events } }),
 };

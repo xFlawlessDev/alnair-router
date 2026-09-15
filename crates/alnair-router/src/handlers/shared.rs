@@ -71,6 +71,7 @@ pub struct StreamUsage {
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    connection_id: String,
     provider_type: String,
     model: String,
     attempt: usize,
@@ -91,6 +92,7 @@ impl StreamUsage {
             state,
             api_key_id,
             requested_model,
+            connection_id: target.connection_id.clone(),
             provider_type: target.provider_type.clone(),
             model: target.model.clone(),
             attempt,
@@ -112,6 +114,11 @@ impl StreamUsage {
             usage.completion_tokens,
             usage.cached_tokens,
             usage.cost_usd,
+        );
+        self.state.telemetry.record_usage(
+            &self.connection_id,
+            usage.prompt_tokens,
+            usage.completion_tokens,
         );
 
         let record = NewUsageRecord {

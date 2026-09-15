@@ -207,3 +207,43 @@ export interface UsageSummary {
   cost_usd: number;
   avg_latency_ms: number;
 }
+
+export interface ActiveAttempt {
+  connection_id: ID;
+  connection: string;
+  model: string;
+  source: string;
+  tier: number;
+  elapsed_ms: number;
+}
+
+export interface ConnectionActivity {
+  id: ID;
+  name: string;
+  in_flight: number;
+  requests: number;
+  failures: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_latency_ms: number;
+  last_activity?: string;
+}
+
+export interface ActivityEvent {
+  seq: number;
+  at: string;
+  level: 'info' | 'warn' | 'error';
+  kind: string;
+  connection?: string;
+  model?: string;
+  message: string;
+  latency_ms?: number;
+  status?: number;
+}
+
+export interface ActivitySnapshot {
+  uptime_ms: number;
+  active: ActiveAttempt[];
+  connections: ConnectionActivity[];
+  events: ActivityEvent[];
+}

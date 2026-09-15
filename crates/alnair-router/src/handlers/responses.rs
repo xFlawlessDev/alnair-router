@@ -120,6 +120,11 @@ pub async fn responses(
         usage.cached_tokens,
         usage.cost_usd,
     );
+    state.telemetry.record_usage(
+        &target.connection_id,
+        usage.prompt_tokens,
+        usage.completion_tokens,
+    );
 
     state
         .usage()

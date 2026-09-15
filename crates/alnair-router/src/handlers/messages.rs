@@ -78,6 +78,11 @@ async fn complete_response(
         usage.cached_tokens,
         usage.cost_usd,
     );
+    state.telemetry.record_usage(
+        &target.connection_id,
+        usage.prompt_tokens,
+        usage.completion_tokens,
+    );
 
     if let Err(error) = state
         .usage()

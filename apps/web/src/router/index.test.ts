@@ -11,6 +11,7 @@ describe('router', () => {
       'combos',
       'keys',
       'usage',
+      'console',
       'about',
       'not-found',
     ]);

@@ -352,6 +352,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
                 idle_timeout_ms: 0,
             },
             metrics: Arc::new(alnair_router::metrics::Metrics::default()),
+            telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
         },
     );
 
@@ -415,6 +416,7 @@ async fn idle_streams_error_after_the_timeout() {
                 idle_timeout_ms: 0,
             },
             metrics: Arc::new(alnair_router::metrics::Metrics::default()),
+            telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
         },
     );
 

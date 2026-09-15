@@ -69,6 +69,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/usage", get(handlers::admin::list_usage))
         .route("/api/usage/summary", get(handlers::admin::usage_summary))
+        .route("/api/activity", get(handlers::admin::activity))
         .route("/api/metrics", get(handlers::admin::metrics))
         // Enforced only when `server.admin_token` is configured; loopback
         // without a token keeps the documented frictionless posture.

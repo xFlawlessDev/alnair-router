@@ -43,7 +43,8 @@ ALNAIR_ROUTER_URL=http://192.168.1.10:7878 pnpm dev
 | **Aliases** | Prefix → connection mappings; bulk-import selected upstream models as aliases, run a real chat completion from a row, and test resolution + model override. |
 | **Combos** | Ordered fallback chains, reorderable tier by tier. |
 | **API Keys** | Mint router-issued client keys; the secret is shown once. |
-| **Usage** | Per-attempt records with filters and pagination, plus summary aggregates. |
+| **Usage** | Per-attempt records that auto-refresh (5s) alongside the summary aggregates, plus a live provider topology (Vue Flow, with zoom/fit controls): connection nodes around the router hub, animated edge on each route currently handling a request. |
+| **Console** | Live API transfer log (requests, attempts, auth/limit rejections) with level filters, follow, and pause. |
 
 Admin routes are unauthenticated on loopback. If the router binds a
 non-loopback host with `server.admin_token`, configure the same token via the

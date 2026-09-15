@@ -15,6 +15,7 @@ use crate::db::repos::usage::UsageRepository;
 use crate::error::Result;
 use crate::limits::{RateLimiter, UpstreamLimiter};
 use crate::metrics::Metrics;
+use crate::telemetry::ActivityTracker;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
 use crate::upstream::{Executor, ExecutorSettings, UpstreamTimeouts};
 
@@ -28,6 +29,7 @@ pub struct AppState {
     pub limiter: UpstreamLimiter,
     pub rate_limiter: RateLimiter,
     pub metrics: Arc<Metrics>,
+    pub telemetry: Arc<ActivityTracker>,
     catalog_cache: Arc<crate::model::CatalogCache>,
 }
 
@@ -46,6 +48,7 @@ impl AppState {
         let rate_limiter = RateLimiter::new(&config.rate_limit);
         let timeouts = UpstreamTimeouts::from_config(&config);
         let metrics = Arc::new(Metrics::default());
+        let telemetry = Arc::new(ActivityTracker::new());
         let catalog_cache = Arc::new(crate::model::CatalogCache::new(
             &config,
             db.pool.clone(),
@@ -63,11 +66,13 @@ impl AppState {
                     limiter: limiter.clone(),
                     timeouts,
                     metrics: metrics.clone(),
+                    telemetry: telemetry.clone(),
                 },
             ),
             limiter,
             rate_limiter,
             metrics,
+            telemetry,
             catalog_cache,
         })
     }

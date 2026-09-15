@@ -1386,3 +1386,50 @@ async fn bare_alias_name_works_through_chat_completions() {
     assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
     assert_eq!(body["choices"][0]["message"]["content"], "pong");
 }
+
+#[tokio::test]
+async fn activity_endpoint_reports_attempts_and_connections() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(&app, &connection_id, "live", Some("deepseek-v4.1-flash")).await;
+
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "live",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = get(&app, "/api/activity").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["uptime_ms"].is_u64());
+
+    let connections = body["connections"].as_array().expect("connections");
+    let stats = connections
+        .iter()
+        .find(|stats| stats["id"] == connection_id)
+        .expect("connection stats");
+    assert!(stats["requests"].as_u64().unwrap_or(0) >= 1);
+    assert_eq!(stats["failures"], 0);
+    assert_eq!(stats["in_flight"], 0, "attempts finished, gauge drains");
+
+    let events = body["events"].as_array().expect("events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event["kind"] == "attempt.completed"),
+        "expected an attempt event: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["kind"] == "request" && event["status"] == 200),
+        "expected the HTTP request event: {events:?}"
+    );
+}

@@ -142,12 +142,16 @@ docker run --rm -p 7878:7878 \
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/usage`, `/api/usage/summary`,
-`/api/metrics`. `PATCH /api/keys/{id}` edits a key's name, enabled state, rate
-limit, and monthly budget. Upstream diagnostics used by the dashboard:
+`/api/metrics`, `/api/activity`. `PATCH /api/keys/{id}` edits a key's name,
+enabled state, rate limit, and monthly budget. Upstream diagnostics used by the
+dashboard:
 `GET /api/connections/{id}/models` lists the models an upstream offers,
 `POST /api/connections/{id}/test` checks connectivity, and
 `POST /api/aliases/{id}/test` verifies an alias' connection and model override;
 `POST /api/aliases/{id}/test-chat` runs one real completion through the alias.
+`GET /api/activity` is the in-memory live feed (in-flight attempts,
+per-connection counters, recent events) behind the Usage live panel and the
+Console page.
 
 > Admin routes are open on loopback by default, because they mint the keys that
 > authenticate `/v1/*`. Set `server.admin_token` to require

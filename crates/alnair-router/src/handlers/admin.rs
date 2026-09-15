@@ -545,6 +545,48 @@ fn upstream_endpoint(base_url: &str) -> Option<(String, u16)> {
     Some((host, port))
 }
 
+// ------------------------------------------------------------------- activity
+
+/// `GET /api/activity` — live attempts, per-connection counters, recent events.
+///
+/// Configured connections are merged in so the topology shows every provider,
+/// idle or busy, not just the ones that already took traffic.
+pub async fn activity(
+    State(state): State<AppState>,
+    Query(pagination): Query<Pagination>,
+) -> Result<impl IntoResponse> {
+    let events = pagination.limit.clamp(1, 500) as usize;
+    let mut snapshot = state.telemetry.snapshot(events);
+
+    if let Ok(catalog) = state.catalog_snapshot().await {
+        let known: std::collections::HashSet<String> = snapshot
+            .connections
+            .iter()
+            .map(|stats| stats.id.clone())
+            .collect();
+
+        for connection in catalog
+            .catalog
+            .connections
+            .iter()
+            .filter(|connection| connection.is_enabled())
+        {
+            if !known.contains(&connection.id) {
+                snapshot
+                    .connections
+                    .push(crate::telemetry::ConnectionActivity {
+                        id: connection.id.clone(),
+                        name: connection.name.clone(),
+                        ..Default::default()
+                    });
+            }
+        }
+        snapshot.connections.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    Ok(Json(snapshot))
+}
+
 // ------------------------------------------------------------------- metrics
 
 /// Prometheus text exposition of the router's counters.

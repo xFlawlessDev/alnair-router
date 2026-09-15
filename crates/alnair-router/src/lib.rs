@@ -20,6 +20,7 @@ pub mod model;
 pub mod protocol;
 pub mod server;
 pub mod state;
+pub mod telemetry;
 pub mod upstream;
 
 pub use config::RouterConfig;

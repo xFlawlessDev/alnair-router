@@ -4,6 +4,7 @@ import AboutPage from '@/pages/AboutPage.vue';
 import AliasesPage from '@/pages/AliasesPage.vue';
 import CombosPage from '@/pages/CombosPage.vue';
 import ConnectionsPage from '@/pages/ConnectionsPage.vue';
+import ConsolePage from '@/pages/ConsolePage.vue';
 import KeysPage from '@/pages/KeysPage.vue';
 import NotFoundPage from '@/pages/NotFoundPage.vue';
 import OverviewPage from '@/pages/OverviewPage.vue';
@@ -29,6 +30,7 @@ export const router = createRouter({
     { path: '/combos', name: 'combos', component: CombosPage, meta: { title: 'Combos' } },
     { path: '/keys', name: 'keys', component: KeysPage, meta: { title: 'API Keys' } },
     { path: '/usage', name: 'usage', component: UsagePage, meta: { title: 'Usage' } },
+    { path: '/logs', name: 'console', component: ConsolePage, meta: { title: 'Console' } },
     { path: '/about', name: 'about', component: AboutPage, meta: { title: 'About' } },
     {
       path: '/:pathMatch(.*)*',

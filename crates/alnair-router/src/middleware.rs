@@ -28,26 +28,67 @@ pub async fn require_api_key(
     mut request: Request,
     next: Next,
 ) -> Result<Response, Error> {
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+    let started = std::time::Instant::now();
+
     if !state.config.server.require_api_key {
         request.extensions_mut().insert(None::<AuthenticatedKey>);
-        return Ok(next.run(request).await);
+        let response = next.run(request).await;
+        record_http(&state, &method, &path, response.status(), started);
+        return Ok(response);
     }
 
-    let secret = extract_bearer(request.headers()).ok_or_else(|| {
-        Error::Unauthorized("missing Authorization: Bearer <key> header".to_string())
-    })?;
+    let secret = match extract_bearer(request.headers()) {
+        Some(secret) => secret,
+        None => {
+            state.telemetry.record(
+                "warn",
+                "auth.denied",
+                None,
+                None,
+                format!("{method} {path} — missing Authorization header"),
+                None,
+                Some(401),
+            );
+            return Err(Error::Unauthorized(
+                "missing Authorization: Bearer <key> header".to_string(),
+            ));
+        }
+    };
 
-    let key = state
-        .api_keys()
-        .find_by_secret(&secret)
-        .await?
-        .ok_or_else(|| Error::Unauthorized("invalid or disabled API key".to_string()))?;
+    let key = match state.api_keys().find_by_secret(&secret).await? {
+        Some(key) => key,
+        None => {
+            state.telemetry.record(
+                "warn",
+                "auth.denied",
+                None,
+                None,
+                format!("{method} {path} — invalid or disabled API key"),
+                None,
+                Some(401),
+            );
+            return Err(Error::Unauthorized(
+                "invalid or disabled API key".to_string(),
+            ));
+        }
+    };
 
     state.api_keys().touch(&key.id).await?;
 
     // Cheap in-memory check first, then the budget rollup.
     if let Err(error) = state.rate_limiter.check(&key.id, key.rate_limit()) {
         state.metrics.record_rate_limited();
+        state.telemetry.record(
+            "warn",
+            "rate.limited",
+            None,
+            None,
+            format!("{method} {path} — {error}"),
+            None,
+            Some(429),
+        );
         return Err(error);
     }
     let budget_warning = check_budget(&state, &key).await?;
@@ -63,8 +104,35 @@ pub async fn require_api_key(
             value,
         );
     }
+    record_http(&state, &method, &path, response.status(), started);
 
     Ok(response)
+}
+
+/// Records one finished HTTP request in the activity feed.
+fn record_http(
+    state: &AppState,
+    method: &str,
+    path: &str,
+    status: axum::http::StatusCode,
+    started: std::time::Instant,
+) {
+    let level = if status.is_server_error() {
+        "error"
+    } else if status.is_client_error() {
+        "warn"
+    } else {
+        "info"
+    };
+    state.telemetry.record(
+        level,
+        "request",
+        None,
+        None,
+        format!("{method} {path}"),
+        Some(started.elapsed().as_millis() as u64),
+        Some(status.as_u16()),
+    );
 }
 
 /// Enforces a key's monthly budget.
@@ -88,6 +156,18 @@ async fn check_budget(state: &AppState, key: &ApiKey) -> Result<Option<String>> 
     match mode {
         BudgetMode::Block => {
             state.metrics.record_budget_blocked();
+            state.telemetry.record(
+                "warn",
+                "budget.blocked",
+                None,
+                None,
+                format!(
+                    "monthly budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
+                    key.name
+                ),
+                None,
+                Some(402),
+            );
             Err(Error::BudgetExceeded {
                 message: format!(
                     "monthly budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
