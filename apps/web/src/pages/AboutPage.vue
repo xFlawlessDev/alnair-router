@@ -63,8 +63,8 @@ const stack = ['Vue 3', 'Vite', 'TypeScript', 'Tailwind CSS v4', 'shadcn-vue (re
           Start the router (<code class="rounded bg-muted px-1.5 py-0.5">cargo run -p alnair-router</code>),
           then run this app from <code class="rounded bg-muted px-1.5 py-0.5">apps/web</code>:
         </p>
-        <pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs">npm ci
-npm run dev</pre>
+        <pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs">pnpm install
+pnpm dev</pre>
         <p class="text-xs text-muted-foreground">
           Vite proxies <code>/api</code> and <code>/v1</code> to
           <code>http://127.0.0.1:7878</code> by default; override with
