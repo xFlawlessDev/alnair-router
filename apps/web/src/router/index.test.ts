@@ -12,7 +12,7 @@ describe('router', () => {
       'keys',
       'usage',
       'console',
-      'about',
+      'guide',
       'not-found',
     ]);
   });

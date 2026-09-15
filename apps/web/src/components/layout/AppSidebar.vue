@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Info, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Terminal } from '@lucide/vue';
+import { BookOpen, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Terminal } from '@lucide/vue';
 import type { Component } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
@@ -98,10 +98,10 @@ const isActive = (path: string): boolean => route.path === path;
     <SidebarFooter>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton as-child :is-active="isActive('/about')" tooltip="About">
-            <RouterLink to="/about">
-              <Info />
-              <span>About</span>
+          <SidebarMenuButton as-child :is-active="isActive('/guide')" tooltip="API Guide">
+            <RouterLink to="/guide">
+              <BookOpen />
+              <span>API Guide</span>
             </RouterLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
