@@ -54,6 +54,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Desktop tray icon (Windows/macOS): Open dashboard + Quit, graceful shutdown, `server.tray` / `--no-tray`, icon from `assets/alnair-white.ico`
 - [x] Dashboard Settings page (`/api/settings`): runtime overrides for auth, routing, limits, rate limits and pricing; persisted in SQLite and hot-applied without a restart
 - [x] Dashboard backup/restore (`GET /api/backup`, `POST /api/restore`): streamed SQLite snapshots and validated transactional imports that leave runtime settings alone
+- [x] Dashboard model catalog (`GET /api/models`): every alias and combo tier with its provider and catalog price, copyable model ids
 - [x] MIT license, CI, multi-stage Dockerfile, opt-in real-provider e2e tests
 
 ---

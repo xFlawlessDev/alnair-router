@@ -39,6 +39,12 @@ export function formatCost(value: number): string {
   }).format(value);
 }
 
+/** Per-million-token rate, e.g. `$2.5`, `$10`, with trailing zeros trimmed. */
+export function formatRate(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  return `$${value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
 export function formatLatency(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—';
   if (ms < 1000) return `${Math.round(ms)} ms`;

@@ -88,9 +88,10 @@ curl http://127.0.0.1:7878/v1/chat/completions \
 ## Admin dashboard
 
 The Vue 3 dashboard in [`apps/web`](apps/web) manages everything the admin API
-exposes — connections, aliases, combos, API keys, and usage — and the built
-assets are **embedded into the router binary**: with a production build, open
-`http://127.0.0.1:7878/` and the dashboard is there. Set
+exposes — connections, aliases, combos, a model catalog with copyable ids and
+prices, API keys, usage, runtime settings, and database backup/restore — and the
+built assets are **embedded into the router binary**: with a production build,
+open `http://127.0.0.1:7878/` and the dashboard is there. Set
 `server.serve_dashboard = false` when a reverse proxy serves it instead.
 
 For development, run it with Vite against the live router:
@@ -153,8 +154,9 @@ docker run --rm -p 7878:7878 \
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/plans`, `/api/usage`,
-`/api/usage/summary`, `/api/usage/facets`, `/api/pricing`, `/api/pricing/sync`,
-`/api/metrics`, `/api/activity`.
+`/api/usage/summary`, `/api/usage/facets`, `/api/models` (provider + model +
+price catalog), `/api/pricing`, `/api/pricing/sync`, `/api/settings`,
+`/api/backup`, `/api/restore`, `/api/metrics`, `/api/activity`.
 `PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit, monthly
 budget, model allowlist and plan; `/api/plans` manages the reusable rule sets.
 Usage reads accept `api_key_id`, `model` (case-insensitive substring),

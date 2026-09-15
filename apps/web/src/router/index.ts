@@ -6,6 +6,7 @@ import ConnectionsPage from '@/pages/ConnectionsPage.vue';
 import ConsolePage from '@/pages/ConsolePage.vue';
 import GuidePage from '@/pages/GuidePage.vue';
 import KeysPage from '@/pages/KeysPage.vue';
+import ModelsPage from '@/pages/ModelsPage.vue';
 import NotFoundPage from '@/pages/NotFoundPage.vue';
 import OverviewPage from '@/pages/OverviewPage.vue';
 import PricingPage from '@/pages/PricingPage.vue';
@@ -30,6 +31,7 @@ export const router = createRouter({
     },
     { path: '/aliases', name: 'aliases', component: AliasesPage, meta: { title: 'Aliases' } },
     { path: '/combos', name: 'combos', component: CombosPage, meta: { title: 'Combos' } },
+    { path: '/models', name: 'models', component: ModelsPage, meta: { title: 'Models' } },
     { path: '/keys', name: 'keys', component: KeysPage, meta: { title: 'API Keys' } },
     { path: '/pricing', name: 'pricing', component: PricingPage, meta: { title: 'Pricing' } },
     { path: '/settings', name: 'settings', component: SettingsPage, meta: { title: 'Settings' } },

@@ -134,7 +134,7 @@ crates/alnair-router/
 │   │   ├── probe.rs         # admin model listing / connection tests
 │   │   └── media.rs         # HTTP proxying for non-chat endpoints
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
-│   └── handlers/            # chat, messages, responses, models, media, admin, web
+│   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, web
 └── tests/                   # resolve, storage, fallback, routes, e2e_real
 ```
 

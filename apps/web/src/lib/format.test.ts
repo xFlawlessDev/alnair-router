@@ -4,6 +4,7 @@ import {
   formatCost,
   formatDateTime,
   formatLatency,
+  formatRate,
   formatRelativeTime,
   isEnabled,
   maskSecret,
@@ -60,6 +61,19 @@ describe('formatCost', () => {
   it('keeps more precision for sub-dollar amounts', () => {
     // Locale-dependent separators: accept `0.0012` or `0,0012`.
     expect(formatCost(0.001234)).toMatch(/0[.,]0012/);
+  });
+});
+
+describe('formatRate', () => {
+  it('trims trailing zeros from per-million rates', () => {
+    expect(formatRate(2.5)).toBe('$2.5');
+    expect(formatRate(10)).toBe('$10');
+    expect(formatRate(1.25)).toBe('$1.25');
+  });
+
+  it('renders missing values as a dash', () => {
+    expect(formatRate(null)).toBe('—');
+    expect(formatRate(undefined)).toBe('—');
   });
 });
 

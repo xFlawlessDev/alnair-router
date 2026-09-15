@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod backup;
+pub mod catalog;
 pub mod chat;
 pub mod media;
 pub mod messages;

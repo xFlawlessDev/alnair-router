@@ -427,6 +427,29 @@ export interface RestoreSummary {
   total_rows: number;
 }
 
+/** One routable model reference in the admin model catalog. */
+export interface ModelCatalogEntry {
+  /** Model id to pass as `model` on /v1 calls. */
+  id: string;
+  kind: 'alias' | 'combo';
+  /** Connection that serves this row. */
+  provider: string;
+  provider_type: ProviderType;
+  /** Concrete upstream model; null when an alias accepts any model. */
+  upstream_model: string | null;
+  /** 1-based combo tier; null for aliases. */
+  tier: number | null;
+  price: PriceQuote | null;
+  /** Catalog key that answered, when it differs from the upstream model. */
+  price_matched: string | null;
+  price_source: 'override' | 'sync' | null;
+}
+
+export interface ModelCatalogResponse {
+  object: 'list';
+  data: ModelCatalogEntry[];
+}
+
 /**
  * `PATCH /api/settings` body: absent fields stay untouched. A `null` or blank
  * `admin_token` forces "no admin token", and a `null` `default_connection`

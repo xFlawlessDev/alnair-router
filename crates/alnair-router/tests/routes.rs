@@ -2163,3 +2163,93 @@ async fn restore_rejects_invalid_uploads() {
         "message should say the upload is empty: {body}"
     );
 }
+
+#[tokio::test]
+async fn model_catalog_lists_providers_and_prices() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "openai-main",
+            "provider_type": "openai-compatible",
+            "base_url": "https://example.invalid/v1"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    // A pinned alias and an open prefix that accepts any upstream model.
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": "oa",
+            "connection_id": connection_id,
+            "model_override": "gpt-4o"
+        }),
+    )
+    .await;
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({ "prefix": "any", "connection_id": connection_id }),
+    )
+    .await;
+
+    json_request(
+        &app,
+        "POST",
+        "/api/combos",
+        serde_json::json!({ "name": "smart", "entries": ["oa", "any/gpt-4o-mini"] }),
+    )
+    .await;
+
+    json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({
+            "prices": [{ "model": "gpt-4o", "input_per_million_usd": 2.5, "output_per_million_usd": 10.0 }]
+        }),
+    )
+    .await;
+
+    let (status, body) = get(&app, "/api/models").await;
+    assert_eq!(status, StatusCode::OK);
+    let data = body["data"].as_array().expect("array");
+
+    let alias = data
+        .iter()
+        .find(|row| row["id"] == "oa")
+        .expect("alias row");
+    assert_eq!(alias["kind"], "alias");
+    assert_eq!(alias["provider"], "openai-main");
+    assert_eq!(alias["provider_type"], "openai-compatible");
+    assert_eq!(alias["upstream_model"], "gpt-4o");
+    assert_eq!(alias["price"]["input_per_million_usd"], 2.5);
+    assert_eq!(alias["price_source"], "override");
+
+    // An alias without a pinned model has no concrete target or price.
+    let open = data
+        .iter()
+        .find(|row| row["id"] == "any")
+        .expect("open alias row");
+    assert!(open["upstream_model"].is_null());
+    assert!(open["price"].is_null());
+
+    // Combos expand to one row per resolved tier.
+    let tiers: Vec<&serde_json::Value> = data.iter().filter(|row| row["id"] == "smart").collect();
+    assert_eq!(tiers.len(), 2);
+    assert_eq!(tiers[0]["tier"], 1);
+    assert_eq!(tiers[0]["provider"], "openai-main");
+    assert_eq!(tiers[0]["upstream_model"], "gpt-4o");
+    assert_eq!(tiers[0]["price"]["output_per_million_usd"], 10.0);
+    assert_eq!(tiers[1]["tier"], 2);
+    assert_eq!(tiers[1]["upstream_model"], "gpt-4o-mini");
+    assert!(tiers[1]["price"].is_null());
+}

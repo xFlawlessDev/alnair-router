@@ -18,6 +18,7 @@ import type {
   InitState,
   KeyPlan,
   KeyPlanInput,
+  ModelCatalogResponse,
   ModelPrice,
   ModelPriceInput,
   PriceMatch,
@@ -225,6 +226,7 @@ export const api = {
   usageFacets: () => request<UsageFacets>('GET', '/api/usage/facets'),
 
   listPricing: () => request<ModelPrice[]>('GET', '/api/pricing'),
+  modelCatalog: () => request<ModelCatalogResponse>('GET', '/api/models'),
   upsertPricing: (prices: ModelPriceInput[]) =>
     request<{ updated: number }>('PUT', '/api/pricing', { body: { prices } }),
   deletePricing: (model?: string) =>
