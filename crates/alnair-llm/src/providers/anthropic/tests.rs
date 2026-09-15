@@ -1,7 +1,6 @@
-
 use super::*;
-use crate::llm::model_config::ThinkingLevel;
-use crate::llm::types::{Message, MessageToolCall};
+use crate::model_config::ThinkingLevel;
+use crate::types::{Message, MessageToolCall};
 use futures::StreamExt;
 
 fn convert_for_test(messages: &[Message], options: &LlmStreamOptions) -> AnthropicRequest {

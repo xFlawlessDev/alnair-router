@@ -3,7 +3,7 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::model_config::{ModelConfig, ThinkingLevel};
+use crate::model_config::{ModelConfig, ThinkingLevel};
 
 // =============================================================================
 // Generation options

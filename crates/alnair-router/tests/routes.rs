@@ -581,8 +581,8 @@ async fn responses_endpoint_rejects_an_unknown_model() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// Guards the vendored-provider seam: only `upstream/chat_backend.rs` may name
-/// `crate::llm`, so the provider layer stays swappable.
+/// Guards the provider seam: only `upstream/chat_backend.rs` may reference the
+/// `alnair_llm` crate, so the provider layer stays swappable.
 #[test]
 fn vendored_llm_layer_is_imported_from_exactly_one_file() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -591,7 +591,7 @@ fn vendored_llm_layer_is_imported_from_exactly_one_file() {
 
     assert!(
         offenders.is_empty(),
-        "only upstream/chat_backend.rs may reach into the vendored llm layer, \
+        "only upstream/chat_backend.rs may reach into the alnair_llm crate, \
          but found: {offenders:?}"
     );
 }
@@ -600,10 +600,6 @@ fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).expect("readable dir") {
         let path = entry.expect("entry").path();
         if path.is_dir() {
-            // The vendored provider layer is allowed to reference itself.
-            if path.ends_with("src/llm") {
-                continue;
-            }
             visit(&path, offenders);
             continue;
         }
@@ -615,7 +611,12 @@ fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
         }
 
         let contents = std::fs::read_to_string(&path).expect("readable file");
-        if contents.contains("crate::llm") || contents.contains("alnair_router::llm") {
+        // Doc/comment mentions are fine; the guard is about real dependencies.
+        let code = contents
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<String>();
+        if code.contains("alnair_llm") || code.contains("alnair-llm") {
             offenders.push(path.display().to_string());
         }
     }
@@ -907,4 +908,53 @@ async fn metrics_endpoint_exposes_prometheus_text() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("alnair_router_requests_total"));
     assert!(text.contains("# TYPE alnair_router_attempts_total counter"));
+}
+
+async fn raw_text(app: &axum::Router, path: &str) -> (StatusCode, String, Option<String>) {
+    let response = raw_request_with_auth(app, "GET", path, None, None).await;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (
+        status,
+        String::from_utf8_lossy(&bytes).to_string(),
+        content_type,
+    )
+}
+
+#[tokio::test]
+async fn dashboard_is_served_from_the_binary() {
+    let (app, _db) = app(false).await;
+
+    let (status, body, content_type) = raw_text(&app, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("text/html"),
+        "index should be html: {content_type:?}"
+    );
+    assert!(
+        body.contains("<html") || body.contains("<!doctype"),
+        "unexpected body: {body}"
+    );
+
+    // SPA route without a file extension falls back to the shell.
+    let (status, body, _) = raw_text(&app, "/connections").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("<html") || body.contains("<!doctype"));
+
+    // A missing file is a real 404, not the shell.
+    let (status, _, _) = raw_text(&app, "/missing-asset.js").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

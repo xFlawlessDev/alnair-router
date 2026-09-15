@@ -1,12 +1,12 @@
 //! The single seam to the vendored provider layer.
 //!
 //! **This is the only module in the crate permitted to reach into
-//! [`crate::llm`].** The provider stack is vendored so the router builds
+//! [`alnair_llm`].** The provider stack is vendored so the router builds
 //! standalone; funnelling every coupling point through here keeps that boundary
 //! honest. Verify with:
 //!
 //! ```text
-//! grep -rl "crate::llm" src | grep -v "src/upstream/chat_backend.rs"   # expect no output
+//! grep -rl "alnair_llm" src | grep -v "src/upstream/chat_backend.rs"   # expect no output
 //! ```
 
 use std::collections::BTreeMap;
@@ -15,15 +15,15 @@ use futures::StreamExt;
 use futures::stream::{BoxStream, Stream};
 
 use crate::error::{Error, Result};
-use crate::llm::{
+use alnair_llm::{
     ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions, Message, MessageContent,
     MessageToolCall, ModelConfig, ProviderType, TextContentPart,
 };
 
-/// Re-exported provider registry, so callers never name `crate::llm` directly.
-pub use crate::llm::ProviderRegistry;
+/// Re-exported provider registry, so callers never name `alnair_llm` directly.
+pub use alnair_llm::ProviderRegistry;
 
-/// Re-exported conversation message, so callers never name `crate::llm` directly.
+/// Re-exported conversation message, so callers never name `alnair_llm` directly.
 pub type RouterMessage = Message;
 
 /// A single multimodal part of a message, in router-owned form.
@@ -57,7 +57,7 @@ pub fn message_parts(role: impl Into<String>, parts: Vec<MessagePart>) -> Router
             }),
             MessagePart::ImageUrl(url) => ContentPart::ImageUrl(ImageUrlContentPart {
                 content_type: "image_url".to_string(),
-                image_url: crate::llm::ImageUrl { url },
+                image_url: alnair_llm::ImageUrl { url },
             }),
         })
         .collect();
@@ -309,7 +309,7 @@ fn stream_options(options: Option<&GenerationOptions>, retry: RetryPolicy) -> Ll
 
 /// Converts a vendored chunk into a router-owned chunk.
 fn to_stream_chunk(
-    chunk: std::result::Result<LlmStreamChunk, crate::llm::ChatError>,
+    chunk: std::result::Result<LlmStreamChunk, alnair_llm::ChatError>,
 ) -> Result<StreamChunk> {
     match chunk {
         Ok(LlmStreamChunk::Text(text)) => Ok(StreamChunk::Text(text)),

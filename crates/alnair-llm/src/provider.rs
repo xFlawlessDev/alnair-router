@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use futures::stream::BoxStream;
 
-use crate::llm::model_config::{LlmStreamOptions, ModelConfig};
-use crate::llm::providers::{AnthropicNativeProvider, OpenAiProvider};
-use crate::llm::types::{ChatError, LlmStreamChunk, Message, ProviderType};
+use crate::model_config::{LlmStreamOptions, ModelConfig};
+use crate::providers::{AnthropicNativeProvider, OpenAiProvider};
+use crate::types::{ChatError, LlmStreamChunk, Message, ProviderType};
 
 /// A streaming LLM provider contract.
 pub trait LlmProvider: Send + Sync {

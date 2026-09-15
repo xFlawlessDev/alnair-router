@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/alnair-router"]
+members = ["crates/alnair-llm", "crates/alnair-router"]
 
 [profile.dev]
 debug = 1

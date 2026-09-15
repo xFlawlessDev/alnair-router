@@ -5,11 +5,11 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tracing::warn;
 
-use crate::llm::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel};
-use crate::llm::provider::LlmProvider;
-use crate::llm::providers::common::{calculate_token_costs, normalize_base_url};
-use crate::llm::providers::sse::{SseLineBuffer, parse_data_line};
-use crate::llm::types::{ChatError, LlmStreamChunk, Message};
+use crate::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel};
+use crate::provider::LlmProvider;
+use crate::providers::common::{calculate_token_costs, normalize_base_url};
+use crate::providers::sse::{SseLineBuffer, parse_data_line};
+use crate::types::{ChatError, LlmStreamChunk, Message};
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -39,7 +39,7 @@ impl OpenAiProvider {
         Box::pin(async_stream::stream! {
             let endpoint = format!("{}/chat/completions", normalize_base_url(&base_url));
 
-            let openai_messages = crate::llm::types::convert_messages_to_openai_format(&messages);
+            let openai_messages = crate::types::convert_messages_to_openai_format(&messages);
             if openai_messages.is_empty() {
                 yield Err(ChatError::BadRequest("No valid messages to send".to_string()));
                 return;

@@ -2,8 +2,8 @@
 
 use tracing::warn;
 
-use crate::llm::providers::common::parse_tool_arguments_strict;
-use crate::llm::types::{ChatError, LlmStreamChunk};
+use crate::providers::common::parse_tool_arguments_strict;
+use crate::types::{ChatError, LlmStreamChunk};
 
 #[cfg(test)]
 pub(super) fn drain_complete_sse_lines(buffer: &mut String, chunk: &str) -> Vec<String> {

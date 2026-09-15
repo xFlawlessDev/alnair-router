@@ -48,6 +48,8 @@ pub struct ServerConfig {
     pub cors_origins: Vec<String>,
     /// Include best-effort upstream TCP reachability in `/api/ready`.
     pub readiness_upstream_checks: bool,
+    /// Serve the embedded dashboard at `/` (disable when a reverse proxy owns it).
+    pub serve_dashboard: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -125,6 +127,7 @@ impl Default for ServerConfig {
             allow_unauthenticated_admin: false,
             cors_origins: Vec::new(),
             readiness_upstream_checks: false,
+            serve_dashboard: true,
         }
     }
 }

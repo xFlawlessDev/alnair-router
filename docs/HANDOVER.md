@@ -27,7 +27,7 @@ The tiered-combo design is modelled on
 
 ## 2. Status right now
 
-- **Builds and tests standalone.** 202 tests green, `cargo clippy --all-targets` clean.
+- **Builds and tests standalone.** 203 tests green, `cargo clippy --workspace --all-targets` clean.
 - **Self-contained by construction:** no path dependencies anywhere in the
   workspace. `Cargo.lock` resolves entirely from crates.io, so `target/` can be
   deleted and `cargo build --offline` still succeeds.
@@ -73,6 +73,20 @@ roadmap):
   upstream reachability; both probes are public.
 - Per-connection connect/idle timeouts are enforced in the executor.
 
+**P3 is done** (2026-09-15):
+
+- `LICENSE` (MIT) ships with the repo; manifests and the dashboard declare it.
+- CI (`.github/workflows/ci.yml`) runs fmt/clippy/test on Linux + Windows and
+  the web suite; push it to a GitHub remote to activate.
+- The provider stack was extracted to the `crates/alnair-llm` crate — the seam
+  is now a crate dependency guarded by the same test.
+- The dashboard is embedded in the binary (`rust-embed` + `build.rs`
+  placeholder) and served at `/` unless `server.serve_dashboard = false`.
+- A multi-stage `Dockerfile` builds web + router and runs non-root with a
+  `/data` volume. Not built in this environment (no Docker CLI); verify on a
+  machine with Docker.
+- Opt-in real-provider tests live in `tests/e2e_real.rs` (`--ignored`).
+
 ---
 
 ## 3. Architecture
@@ -80,10 +94,16 @@ roadmap):
 ```
 Cargo.toml                    # virtual workspace root (members, profiles)
 Cargo.lock                    # resolves entirely from crates.io
+LICENSE                       # MIT
+Dockerfile                    # web + router image, non-root, /data volume
+.github/workflows/ci.yml      # fmt/clippy/test + web suite
 apps/web/                     # admin dashboard (Vue 3 + Vite + Tailwind, npm)
+crates/alnair-llm/            # provider stack crate (moved out of the router)
+└── src/{lib,types,model_config,provider}.rs + providers/{...}
 crates/alnair-router/
 ├── Cargo.toml
-├── migrations/0001_init.sql  # 6 tables
+├── build.rs                 # ensures apps/web/dist exists for rust-embed
+├── migrations/0001_init.sql # 6 tables
 ├── migrations/0002_api_key_limits.sql
 ├── migrations/0003_connection_timeouts.sql
 ├── router.example.toml       # every config option
@@ -97,7 +117,7 @@ crates/alnair-router/
 │   ├── error.rs             # scoped Error → OpenAI-shaped JSON error body
 │   ├── state.rs             # AppState: config, pool, cipher, executor, repos
 │   ├── middleware.rs        # bearer auth + rate/budget checks for /v1/* and /api/*
-│   ├── server.rs            # route table (public probes, guarded admin)
+│   ├── server.rs            # route table (public probes, guarded admin, SPA fallback)
 │   ├── model/
 │   │   ├── cache.rs         # catalog cache: TTL + explicit invalidation
 │   │   ├── catalog.rs       # loads connections/aliases/combos from DB
@@ -106,13 +126,12 @@ crates/alnair-router/
 │   │   ├── mod.rs           # pool + embedded migrations + credential migration
 │   │   └── repos/           # connections, aliases, combos, api_keys, usage
 │   ├── upstream/
-│   │   ├── chat_backend.rs  # ← THE SEAM. Only file that may touch crate::llm
+│   │   ├── chat_backend.rs  # ← THE SEAM. Only file that may touch alnair_llm
 │   │   ├── executor.rs      # fallback walk, permits, timeouts, first-chunk peek
 │   │   └── media.rs         # HTTP proxying for non-chat endpoints
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
-│   ├── handlers/            # chat, messages, responses, models, media, admin, shared
-│   └── llm/                 # VENDORED provider stack — module folders, see §5
-└── tests/                   # resolve, storage, fallback, routes
+│   └── handlers/            # chat, messages, responses, models, media, admin, web
+└── tests/                   # resolve, storage, fallback, routes, e2e_real
 ```
 
 ### Request flow
@@ -231,10 +250,12 @@ suite should tell you.
 
 ---
 
-## 5. The vendored `src/llm/` layer — read this
+## 5. The `alnair-llm` crate — read this
 
-`src/llm/` is a **vendored provider stack**, copied in so the crate has no path
-dependency on anything outside this repository.
+`crates/alnair-llm/` is a **vendored provider stack**, extracted from the router
+so it can be versioned, tested, and swapped independently. It was originally a
+trimmed copy of an upstream provider stack, kept in-repo so the workspace has no
+path dependency outside itself.
 
 **What was kept:** `types`, `model_config`, `provider`, and `providers/{mod,common,sse,anthropic,openai}`.
 
@@ -242,31 +263,32 @@ dependency on anything outside this repository.
 `router.rs` (unused by the provider stack), and the entire Ollama provider
 (module, `ProviderType::Ollama` variant, `to_ollama_*` methods, tests).
 
-**Two consequences you must accept or fix:**
+**Consequences:**
 
-- **Staleness.** There is no external upstream to sync fixes from; this copy is
-  the source of truth. See roadmap P3.3.
-- **Size, handled.** The providers were split into module folders under the
-  800-LOC cap: `openai/{mod,request,chunks,tests}` and
-  `anthropic/{mod,stream,tests}`. Keep it that way when adding code.
+- **Staleness.** There is no external upstream to sync fixes from; this crate is
+  the source of truth. Roadmap P3.3 chose extraction over vendoring in-tree.
+- **Size.** Providers are module folders, every file under the 800-LOC cap:
+  `openai/{mod,request,chunks,tests}` and `anthropic/{mod,stream,tests}`. Keep
+  it that way when adding code.
 
 ### The seam (this is the important part)
 
-**Only `src/upstream/chat_backend.rs` may reference `crate::llm`.** Everything
+**Only `src/upstream/chat_backend.rs` may reference `alnair_llm`.** Everything
 else goes through that module, which re-exports router-owned types
 (`RouterMessage`, `StreamChunk`, `TokenUsage`, `GenerationOptions`, …).
 
 A test enforces it:
 
 ```bash
-cargo test vendored_llm_layer_is_imported_from_exactly_one_file
+cargo test -p alnair-router vendored_llm_layer_is_imported_from_exactly_one_file
 ```
 
 The guard was verified to actually fail (not pass vacuously) by planting a
 violating file during development. Keep it that way.
 
-**Why it matters:** if you later publish the provider layer as its own crate, it
-is a one-file change plus one `Cargo.toml` line.
+**Why it matters:** swapping provider implementations is a one-file change plus
+one `Cargo.toml` line. `alnair-llm` is published as `publish = false`; make it
+public when it stabilises.
 
 ---
 
@@ -275,18 +297,36 @@ is a one-file change plus one `Cargo.toml` line.
 ```bash
 export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"   # required
 cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
-cargo test                    # 202 tests, ~32s (retry backoff + vendored provider tests)
-cargo clippy --all-targets
+cargo test --workspace        # 203 tests, ~33s (retry backoff + provider tests)
+cargo clippy --workspace --all-targets
 ```
 
-**Admin dashboard** — the Vue app in `apps/web` talks to `/api/*`:
+**Dashboard** — built assets are embedded, so `http://127.0.0.1:7878/` serves the
+dashboard. For live development use Vite instead:
 
 ```bash
 cd apps/web
 npm ci
 npm run dev                   # :5173, proxies /api and /v1 to ALNAIR_ROUTER_URL (:7878)
-npm run check                 # vue-tsc --noEmit + production build
+npm run check                 # vue-tsc --noEmit + production build (rebuild embeds it)
 npm test                      # Vitest: api client, formatters, router
+```
+
+`build.rs` drops a placeholder `apps/web/dist/index.html` when the dashboard has
+not been built, so `cargo build` never fails on a fresh clone.
+
+**Docker** — multi-stage image (web + router), non-root, `/data` volume:
+
+```bash
+docker build -t alnair-router .
+docker run --rm -p 7878:7878 -e ALNAIR_ROUTER__SECRETS__KEY=... -v alnair-data:/data alnair-router
+```
+
+**Real-provider tests** (opt-in, `#[ignore]`d):
+
+```bash
+ALNAIR_ROUTER_E2E_OPENAI_API_KEY=sk-... \
+  cargo test -p alnair-router --test e2e_real -- --ignored
 ```
 
 **Configuration** — `$ALNAIR_ROUTER_HOME/config.toml`, default `~/.alnair-router/`.
@@ -328,22 +368,23 @@ Response headers report the routing decision:
 
 | File | Covers |
 |---|---|
+| `crates/alnair-llm/src/**` (81) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff |
 | `tests/resolve.rs` (21) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering |
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
-| `tests/routes.rs` (29) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, the vendored-layer seam guard |
+| `tests/routes.rs` (30) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, the seam guard |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
-| `src/**` inline (124) | Vendored provider internals (split over `openai/{request,chunks,tests}` and `anthropic/{stream,tests}`), crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics |
+| `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
+| `src/**` inline (43) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics |
 | `apps/web/src/**` (21) | API client error/transport handling, formatters, route table, theme store |
 
 ---
 
 ## 8. Repo hygiene checklist
 
-- [ ] Add a `LICENSE` file. The workspace and crate declare `MIT OR Apache-2.0`
-      but no license text ships with it.
-- [ ] `git init`, and confirm `.gitignore` covers `target/`, `data/`, `*.sqlite*`
-      (it already does).
-- [ ] Add CI (roadmap P3.2) — the vendored provider tests need caching.
+- [x] `LICENSE` (MIT) present; manifests declare it.
+- [x] `git init` done; `.gitignore` covers `target/`, `data/`, `*.sqlite*`.
+- [x] CI added (`.github/workflows/ci.yml`) — activate by pushing to GitHub.
+- [ ] Build the Docker image once on a machine with Docker and smoke-test it.
 - [ ] Re-run `cargo build --offline` from the repo root as a sanity check.
 
 **Nothing is coupled.** No absolute paths, no sibling-directory references, no

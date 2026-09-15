@@ -3,9 +3,9 @@
 use tracing::warn;
 
 use super::chunks::truncate_for_log;
-use crate::llm::model_config::apply_custom_headers;
-use crate::llm::providers::common::{is_retryable_status, retry_after_delay, retry_delay};
-use crate::llm::types::ChatError;
+use crate::model_config::apply_custom_headers;
+use crate::providers::common::{is_retryable_status, retry_after_delay, retry_delay};
+use crate::types::ChatError;
 
 pub(super) fn apply_openai_chat_model_compatibility(model: &str, body: &mut serde_json::Value) {
     if !uses_gpt5_chat_parameter_shape(model) {

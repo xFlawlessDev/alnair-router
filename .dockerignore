@@ -1,0 +1,12 @@
+.git/
+.github/
+target/
+data/
+**/*.sqlite
+**/*.sqlite-shm
+**/*.sqlite-wal
+node_modules/
+apps/web/node_modules/
+apps/web/dist/
+docs/
+*.log

@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::llm::providers::PROVIDER_MAX_RETRIES;
-use crate::llm::types::{ChatError, GenerationOptions, ProviderType};
+use crate::providers::PROVIDER_MAX_RETRIES;
+use crate::types::{ChatError, GenerationOptions, ProviderType};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {

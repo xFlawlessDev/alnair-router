@@ -22,6 +22,8 @@ require_api_key = false
 allow_unauthenticated_admin = false
 # Include best-effort upstream TCP reachability in /api/ready.
 readiness_upstream_checks = false
+# Serve the embedded dashboard at / (disable when a reverse proxy owns it).
+serve_dashboard = true
 # Extra origins permitted to call the API cross-origin. Empty by default; the
 # dashboard is served same-origin.
 # cors_origins = ["https://admin.example.com"]

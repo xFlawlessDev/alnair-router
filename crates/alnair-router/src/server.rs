@@ -99,16 +99,19 @@ pub fn build_router(state: AppState) -> Router {
             middleware::require_api_key,
         ));
 
-    Router::new()
-        .merge(probes)
-        .merge(admin)
-        .merge(v1)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
+    let mut app = Router::new().merge(probes).merge(admin).merge(v1);
+    if state.config.server.serve_dashboard {
+        // Unmatched paths fall through to the embedded dashboard (SPA routes
+        // resolve to index.html; missing files 404).
+        app = app.fallback(handlers::web::serve_asset);
+    }
+
+    app.layer(
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any),
+    )
+    .layer(TraceLayer::new_for_http())
+    .with_state(state)
 }

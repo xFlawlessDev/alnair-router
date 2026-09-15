@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use reqwest::header::HeaderMap;
 
-use crate::llm::model_config::ModelCostRates;
-use crate::llm::types::ChatError;
+use crate::model_config::ModelCostRates;
+use crate::types::ChatError;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct TokenCosts {

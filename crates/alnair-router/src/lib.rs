@@ -1,12 +1,12 @@
 //! alnair-router: standalone OpenAI-compatible AI router.
 //!
 //! Resolves prefixed model references to upstream providers, expands combos into
-//! ordered fallback chains, and streams responses through the vendored provider
-//! layer in [`llm`].
+//! ordered fallback chains, and streams responses through the [`alnair_llm`]
+//! provider crate.
 //!
-//! The package builds standalone: the provider stack is vendored under `src/llm`
-//! rather than pulled in as a path dependency on the main workspace. All access
-//! to it is funnelled through [`upstream::chat_backend`].
+//! The provider stack lives in the sibling `alnair-llm` crate so it can be
+//! versioned and tested on its own. All access to it is funnelled through
+//! [`upstream::chat_backend`].
 
 pub mod config;
 pub mod crypto;
@@ -14,7 +14,6 @@ pub mod db;
 pub mod error;
 pub mod handlers;
 pub mod limits;
-pub mod llm;
 pub mod metrics;
 pub mod middleware;
 pub mod model;

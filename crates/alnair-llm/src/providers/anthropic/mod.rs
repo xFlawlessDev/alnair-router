@@ -4,11 +4,11 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
-use crate::llm::model_config::{CacheRetention, LlmStreamOptions, ModelConfig, ThinkingLevel};
-use crate::llm::provider::LlmProvider;
-use crate::llm::providers::common::normalize_base_url;
-use crate::llm::providers::sse::SseLineBuffer;
-use crate::llm::types::{ChatError, ContentPart, LlmStreamChunk, Message, MessageContent};
+use crate::model_config::{CacheRetention, LlmStreamOptions, ModelConfig, ThinkingLevel};
+use crate::provider::LlmProvider;
+use crate::providers::common::normalize_base_url;
+use crate::providers::sse::SseLineBuffer;
+use crate::types::{ChatError, ContentPart, LlmStreamChunk, Message, MessageContent};
 
 #[derive(Debug, Clone, Serialize)]
 struct AnthropicRequest {

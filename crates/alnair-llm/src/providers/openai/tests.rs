@@ -1,7 +1,6 @@
-
 use super::*;
-use crate::llm::model_config::ThinkingLevel;
-use crate::llm::types::GenerationOptions;
+use crate::model_config::ThinkingLevel;
+use crate::types::GenerationOptions;
 
 #[test]
 fn retries_openai_compatible_auto_tool_choice_errors_without_tools() {
@@ -318,7 +317,7 @@ fn non_gpt5_chat_payload_keeps_openai_compatible_fields() {
 #[test]
 fn llm_stream_options_apply_to_openai_compatible_body_sets_cache_control() {
     let options = LlmStreamOptions {
-        cache_retention: crate::llm::model_config::CacheRetention::Short,
+        cache_retention: crate::model_config::CacheRetention::Short,
         ..LlmStreamOptions::default()
     };
     let mut body = serde_json::json!({});

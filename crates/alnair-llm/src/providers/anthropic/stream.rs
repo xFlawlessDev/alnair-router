@@ -2,14 +2,14 @@
 
 use std::collections::HashMap;
 
-use crate::llm::model_config::ModelCostRates;
-use crate::llm::model_config::apply_custom_headers;
-use crate::llm::providers::common::{
+use crate::model_config::ModelCostRates;
+use crate::model_config::apply_custom_headers;
+use crate::providers::common::{
     calculate_token_costs, is_retryable_status, parse_tool_arguments_strict, retry_after_delay,
     retry_delay,
 };
-use crate::llm::providers::sse::parse_data_line;
-use crate::llm::types::{ChatError, LlmStreamChunk};
+use crate::providers::sse::parse_data_line;
+use crate::types::{ChatError, LlmStreamChunk};
 
 use super::{AnthropicCompletion, AnthropicCompletionBlock, AnthropicRequest, PendingToolUse};
 

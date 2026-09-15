@@ -7,3 +7,4 @@ pub mod messages;
 pub mod models;
 pub mod responses;
 pub mod shared;
+pub mod web;

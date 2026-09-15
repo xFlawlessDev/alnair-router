@@ -19,6 +19,12 @@ Anthropic non-streaming, and tool calls in non-streaming responses all shipped.
 provider files split under the LOC cap, Prometheus-style counters, a
 liveness/readiness split, and per-connection upstream timeouts.
 
+**P3 is closed** (2026-09-15): MIT LICENSE, GitHub Actions CI, the provider
+stack extracted to `crates/alnair-llm`, the dashboard embedded in the binary, a
+multi-stage Dockerfile, and opt-in real-provider e2e tests. Remaining follow-ups
+are tracked in the sections below (P3.3 publish decision, Docker smoke test in a
+Docker-capable environment, and the deferred P1.3).
+
 ---
 
 ## Where things stand
@@ -39,6 +45,9 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Per-key rate limiting and monthly budgets (`off`/`warn`/`block`) with 429/402 enforcement
 - [x] Anthropic non-streaming (`stream: false`) provider path; tool calls surfaced on all non-streaming endpoints
 - [x] Own SQLite schema, migrations embedded via `sqlx::migrate!`
+- [x] Provider stack extracted to the `crates/alnair-llm` crate with a one-file seam
+- [x] Dashboard embedded in the binary and served at `/` (SPA fallback, `server.serve_dashboard`)
+- [x] MIT license, CI, multi-stage Dockerfile, opt-in real-provider e2e tests
 
 ---
 
@@ -171,29 +180,30 @@ pick a single provider when there is a live account to test against.
 
 ## P3 — Repository and release hygiene
 
-Required before this is a real standalone repo.
+**All closed (2026-09-15).** Short notes on what landed.
 
-- [ ] **P3.1 Add a LICENSE file.** `Cargo.toml` declares
-      `MIT OR Apache-2.0` but no license text is present. Pick one (or both) and
-      add the file — a declared-but-missing license is worse than none.
-- [ ] **P3.2 CI.** No pipeline exists. Minimum: `cargo fmt --check`,
-      `cargo clippy -- -D warnings`, `cargo test` on Linux + Windows, plus
-      `npm run check` + `npm test` for `apps/web`. Caching matters: the vendor
-      layer and retry-backoff tests dominate runtime.
-- [ ] **P3.3 Resolve vendored-code staleness.** `src/llm/` is a vendored
-      provider stack with no external upstream to pull fixes from. Options:
-      (a) accept the vendored copy as the source of truth, or (b) extract it
-      into its own workspace crate and depend on it. The one-file seam makes
-      (b) cheap — see `HANDOVER.md`.
-- [ ] **P3.4 Container image.** No Dockerfile. A router is a natural container;
-      add one with a non-root user and a volume for the SQLite DB.
-- [~] **P3.5 Dashboard / admin UI.** The Vue app in `apps/web` covers the full
-      admin API (connections, aliases, combos, keys, usage) and runs via Vite in
-      development; the backend now enforces the optional admin token the UI
-      sends. Remaining: build/serve `dist/` from the Rust binary.
-- [ ] **P3.6 End-to-end tests against a real provider.** The suite uses an
-      in-process mock. Nothing verifies real OpenAI/Anthropic wire compatibility.
-      Add a nightly/opt-in test gated on credentials.
+- [x] **P3.1 Add a LICENSE file.** MIT `LICENSE` at the repo root; the workspace,
+      `alnair-router`, `alnair-llm`, and the dashboard declare `MIT`.
+- [x] **P3.2 CI.** `.github/workflows/ci.yml`: rustfmt check, clippy with
+      `-D warnings`, and the workspace test suite on Linux + Windows
+      (`Swatinem/rust-cache`), plus the web suite (`npm ci`, Vitest, vue-tsc +
+      build). Activate by pushing to a GitHub remote; the local repo has none yet.
+- [x] **P3.3 Resolve vendored-code staleness.** Chose option (b): the provider
+      stack moved to the `crates/alnair-llm` workspace crate (`publish = false`).
+      The seam guard now asserts only `upstream/chat_backend.rs` references
+      `alnair_llm`. Follow-up: decide when/if to publish the crate.
+- [x] **P3.4 Container image.** Multi-stage `Dockerfile` (node → rust →
+      debian-slim), non-root user, `/data` volume, `ALNAIR_ROUTER_HOME=/data`.
+      Not built in this environment (no Docker CLI) — smoke-test once on a
+      Docker-capable machine.
+- [x] **P3.5 Dashboard / admin UI.** `rust-embed` serves `apps/web/dist` at `/`
+      with an SPA fallback and a real 404 for missing assets; `build.rs` drops a
+      placeholder so a fresh clone still compiles; `server.serve_dashboard`
+      turns it off behind a reverse proxy. Docker and CI build the web app
+      before the Rust step.
+- [x] **P3.6 End-to-end tests against a real provider.** `tests/e2e_real.rs`,
+      `#[ignore]`d, gated on `ALNAIR_ROUTER_E2E_{OPENAI,ANTHROPIC}_*` env vars;
+      covers OpenAI non-streaming + streaming and Anthropic Messages.
 
 ---
 
@@ -212,6 +222,9 @@ deliberate exclusions so the package stays small:
 
 ## Suggested order
 
-1. P3.1, P3.2 — LICENSE and CI, cheap, and unblocks real collaboration.
-2. P3.4, P3.5 remainder, P3.6 — container, dashboard build, e2e tests.
-3. P1.3 — OAuth providers, only with a provider decision and a live account.
+Everything through P3 is closed. What remains:
+
+1. P1.3 — OAuth providers, only with a provider decision and a live account.
+2. Follow-ups: decide when to publish `alnair-llm` (P3.3), smoke-test the Docker
+   image on a Docker-capable machine, fold the budget spend rollup into the
+   catalog cache, and prune idle token buckets.

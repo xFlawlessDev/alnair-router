@@ -4,6 +4,11 @@ Admin dashboard for [`alnair-router`](../../crates/alnair-router). Manage the
 router's connections, aliases, combos, and client API keys, and inspect usage —
 all against the router's admin JSON API.
 
+In production the built assets are embedded into the router binary
+(`rust-embed`), so the dashboard is served from the same origin at `/` —
+`npm run build` and the next `cargo build` pick it up. `server.serve_dashboard
+= false` disables that when a reverse proxy owns the root path.
+
 Built with Vue 3, TypeScript, Vite, Tailwind CSS v4, and shadcn-vue primitives,
 scaffolded from the [EvoFast `vue-tailwind-vite` template](https://github.com/evofast) (MIT).
 

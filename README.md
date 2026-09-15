@@ -5,9 +5,10 @@ upstream providers, expands named **combos** into ordered fallback chains, and
 tracks usage per attempt.
 
 This repository is a standalone Cargo monorepo. A virtual workspace at the root
-owns the lock file and build profiles, and the router crate lives in
-`crates/alnair-router/`. It depends only on crates.io — no path dependencies —
-with its own SQLite database and its own HTTP server.
+owns the lock file and build profiles; the router crate lives in
+`crates/alnair-router/` and the provider stack in `crates/alnair-llm/`. It
+depends only on crates.io — no path dependency outside the workspace — with its
+own SQLite database and its own HTTP server.
 
 ```
 .
@@ -15,6 +16,7 @@ with its own SQLite database and its own HTTP server.
 ├── apps/
 │   └── web/             # admin dashboard (Vue 3 + Vite)
 ├── crates/
+│   ├── alnair-llm/      # provider stack (OpenAI-compatible + Anthropic-native)
 │   └── alnair-router/   # the router crate (binary + library)
 └── docs/                # HANDOVER.md, ROADMAP.md
 ```
@@ -81,8 +83,13 @@ curl http://127.0.0.1:7878/v1/chat/completions \
 
 ## Admin dashboard
 
-A Vue 3 dashboard in [`apps/web`](apps/web) manages everything the admin API
-exposes — connections, aliases, combos, API keys, and usage — without curl.
+The Vue 3 dashboard in [`apps/web`](apps/web) manages everything the admin API
+exposes — connections, aliases, combos, API keys, and usage — and the built
+assets are **embedded into the router binary**: with a production build, open
+`http://127.0.0.1:7878/` and the dashboard is there. Set
+`server.serve_dashboard = false` when a reverse proxy serves it instead.
+
+For development, run it with Vite against the live router:
 
 ```bash
 cd apps/web
@@ -92,6 +99,19 @@ npm run dev        # http://localhost:5173, proxies /api and /v1 to :7878
 
 Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
 [`apps/web/README.md`](apps/web/README.md).
+
+## Docker
+
+The image builds the dashboard and the router (embedded assets), then runs as a
+non-root user with `/data` as the state volume:
+
+```bash
+docker build -t alnair-router .
+docker run --rm -p 7878:7878 \
+  -e ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)" \
+  -v alnair-data:/data \
+  alnair-router
+```
 
 ## Endpoints
 
@@ -179,15 +199,15 @@ See `crates/alnair-router/router.example.toml` for every option.
 
 ```
 crates/alnair-router/src/
-├── llm/                 # vendored provider stack (OpenAI + Anthropic native)
 ├── crypto.rs            # AES-256-GCM credential encryption at rest
+├── model/cache.rs       # cached routing catalog (TTL + invalidation)
 ├── model/resolver.rs    # pure resolution: reference → ordered targets
 ├── upstream/
-│   ├── chat_backend.rs  # ← the ONLY file that may touch `crate::llm`
-│   ├── executor.rs      # fallback walk + first-chunk peek
+│   ├── chat_backend.rs  # ← the ONLY file that may touch `alnair_llm`
+│   ├── executor.rs      # fallback walk, permits, timeouts, first-chunk peek
 │   └── media.rs         # HTTP proxying for non-chat endpoints
 ├── protocol/            # OpenAI ⇄ Anthropic wire translation
-├── handlers/            # HTTP handlers
+├── handlers/            # HTTP handlers + embedded dashboard serving
 ├── db/repos/            # SQLite repositories
 └── server.rs            # route table
 ```
@@ -196,26 +216,26 @@ crates/alnair-router/src/
 
 The workspace builds with **no path dependency on anything outside this
 repository** — `Cargo.lock` resolves entirely from crates.io. The provider stack
-it needs (OpenAI-compatible + Anthropic-native) is vendored under `src/llm`,
-with the Ollama provider and the RAG/queue/handler layers removed.
+(OpenAI-compatible + Anthropic-native) lives in `crates/alnair-llm`, with the
+Ollama provider and the RAG/queue/handler layers removed.
 
-Every coupling point to that layer is funnelled through the single module
-`src/upstream/chat_backend.rs`; no other file names `crate::llm`. A test enforces
+Every coupling point to that crate is funnelled through the single module
+`src/upstream/chat_backend.rs`; no other file names `alnair_llm`. A test enforces
 this:
 
 ```bash
 cargo test -p alnair-router vendored_llm_layer_is_imported_from_exactly_one_file
 ```
 
-That keeps the provider layer swappable: replacing the vendored copy with a
-published crate is a one-file change plus a single `Cargo.toml` line.
+That keeps the provider layer swappable: replacing it is a one-file change plus
+a single `Cargo.toml` line.
 
 ## Development
 
 ```bash
 # Router
-cargo check
-cargo test
+cargo check --workspace
+cargo test --workspace
 
 # Dashboard
 cd apps/web
@@ -227,3 +247,16 @@ The Rust suite covers pure resolution, repository behaviour against a real
 in-memory SQLite, fallback ordering against an in-process mock upstream, and
 endpoint shape/auth over the real Axum app. The web suite covers the API client,
 formatters, and routing.
+
+Opt-in tests against real providers live in `tests/e2e_real.rs` and are
+`#[ignore]`d:
+
+```bash
+ALNAIR_ROUTER_E2E_OPENAI_API_KEY=sk-... \
+  cargo test -p alnair-router --test e2e_real -- --ignored
+```
+
+## License
+
+[MIT](LICENSE). The dashboard under `apps/web` is scaffolded from the EvoFast
+`vue-tailwind-vite` template, also MIT.
