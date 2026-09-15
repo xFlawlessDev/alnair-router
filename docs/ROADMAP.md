@@ -186,8 +186,9 @@ pick a single provider when there is a live account to test against.
       `alnair-router`, `alnair-llm`, and the dashboard declare `MIT`.
 - [x] **P3.2 CI.** `.github/workflows/ci.yml`: rustfmt check, clippy with
       `-D warnings`, and the workspace test suite on Linux + Windows
-      (`Swatinem/rust-cache`), plus the web suite (`npm ci`, Vitest, vue-tsc +
-      build). Activate by pushing to a GitHub remote; the local repo has none yet.
+      (`Swatinem/rust-cache`), plus the web suite (`pnpm install`, Vitest,
+      vue-tsc + build). Activate by pushing to a GitHub remote; the local repo
+      has none yet.
 - [x] **P3.3 Resolve vendored-code staleness.** Chose option (b): the provider
       stack moved to the `crates/alnair-llm` workspace crate (`publish = false`).
       The seam guard now asserts only `upstream/chat_backend.rs` references

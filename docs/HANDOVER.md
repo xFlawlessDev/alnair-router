@@ -97,7 +97,7 @@ Cargo.lock                    # resolves entirely from crates.io
 LICENSE                       # MIT
 Dockerfile                    # web + router image, non-root, /data volume
 .github/workflows/ci.yml      # fmt/clippy/test + web suite
-apps/web/                     # admin dashboard (Vue 3 + Vite + Tailwind, npm)
+apps/web/                     # admin dashboard (Vue 3 + Vite + Tailwind, pnpm)
 crates/alnair-llm/            # provider stack crate (moved out of the router)
 └── src/{lib,types,model_config,provider}.rs + providers/{...}
 crates/alnair-router/
@@ -306,10 +306,10 @@ dashboard. For live development use Vite instead:
 
 ```bash
 cd apps/web
-npm ci
-npm run dev                   # :5173, proxies /api and /v1 to ALNAIR_ROUTER_URL (:7878)
-npm run check                 # vue-tsc --noEmit + production build (rebuild embeds it)
-npm test                      # Vitest: api client, formatters, router
+pnpm install
+pnpm dev                      # :5173, proxies /api and /v1 to ALNAIR_ROUTER_URL (:7878)
+pnpm run check                # vue-tsc --noEmit + production build (rebuild embeds it)
+pnpm test                     # Vitest: api client, formatters, router
 ```
 
 `build.rs` drops a placeholder `apps/web/dist/index.html` when the dashboard has

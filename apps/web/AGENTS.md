@@ -4,13 +4,15 @@ Admin dashboard for the `alnair-router` crate. Vue 3 + TypeScript + Vite + Tailw
 
 ## Commands
 
-Run from `apps/web`:
+Run from `apps/web` (pnpm only; the lockfile is `pnpm-lock.yaml`):
 
-- `npm ci` installs the locked dependencies.
-- `npm run dev` starts Vite on `:5173`, proxying `/api` and `/v1` to `ALNAIR_ROUTER_URL` (default `http://127.0.0.1:7878`).
-- `npm run check` runs `vue-tsc --noEmit` and a production build.
-- `npm test` runs the Vitest suite.
-- `npm run format` formats with Prettier.
+- `pnpm install --frozen-lockfile` installs the locked dependencies.
+- `pnpm dev` starts Vite on `:5173`, proxying `/api` and `/v1` to `ALNAIR_ROUTER_URL` (default `http://127.0.0.1:7878`).
+- `pnpm run check` runs `vue-tsc --noEmit` and a production build.
+- `pnpm test` runs the Vitest suite.
+- `pnpm run format` formats with Prettier.
+
+Note: `pnpm-workspace.yaml` here is pnpm's settings file (single package, no `packages:` list); its `allowBuilds` entries approve the two dependencies with install scripts (`vue-demi`, `maplibre-gl`). Without them `pnpm install` exits non-zero.
 
 ## Structure
 
@@ -25,7 +27,7 @@ Run from `apps/web`:
 
 - Composition API with typed `<script setup lang="ts">` only.
 - Mutations go through `src/lib/api.ts`; do not call `fetch` from components.
-- Use existing UI primitives and Tailwind tokens before adding components or dependencies; any new dependency must update `package-lock.json`.
+- Use existing UI primitives and Tailwind tokens before adding components or dependencies; any new dependency must update `pnpm-lock.yaml` (`pnpm install` after editing `package.json`).
 - Use `vue-sonner` toasts for mutation feedback, `ConfirmDialog` for destructive actions.
 - Keep accessibility: labels, aria-labels on icon buttons, focus states.
-- Tests live next to the module they cover (`*.test.ts`); run `npm test` before finishing.
+- Tests live next to the module they cover (`*.test.ts`); run `pnpm test` before finishing.

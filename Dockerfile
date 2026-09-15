@@ -2,11 +2,12 @@
 
 # --- Dashboard -------------------------------------------------------------
 FROM node:22-alpine AS web
+RUN npm install -g pnpm@11.17.0
 WORKDIR /app/apps/web
-COPY apps/web/package.json apps/web/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY apps/web/ ./
-RUN npm run build
+RUN pnpm run build
 
 # --- Router ----------------------------------------------------------------
 FROM rust:1.85-slim-bookworm AS build

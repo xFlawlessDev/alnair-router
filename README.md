@@ -93,8 +93,8 @@ For development, run it with Vite against the live router:
 
 ```bash
 cd apps/web
-npm ci
-npm run dev        # http://localhost:5173, proxies /api and /v1 to :7878
+pnpm install
+pnpm dev           # http://localhost:5173, proxies /api and /v1 to :7878
 ```
 
 Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
@@ -239,8 +239,8 @@ cargo test --workspace
 
 # Dashboard
 cd apps/web
-npm run check      # vue-tsc + production build
-npm test
+pnpm run check     # vue-tsc + production build
+pnpm test
 ```
 
 The Rust suite covers pure resolution, repository behaviour against a real

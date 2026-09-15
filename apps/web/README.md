@@ -6,7 +6,7 @@ all against the router's admin JSON API.
 
 In production the built assets are embedded into the router binary
 (`rust-embed`), so the dashboard is served from the same origin at `/` —
-`npm run build` and the next `cargo build` pick it up. `server.serve_dashboard
+`pnpm run build` and the next `cargo build` pick it up. `server.serve_dashboard
 = false` disables that when a reverse proxy owns the root path.
 
 Built with Vue 3, TypeScript, Vite, Tailwind CSS v4, and shadcn-vue primitives,
@@ -23,15 +23,15 @@ cargo run -p alnair-router
 Then this app (from `apps/web`):
 
 ```bash
-npm ci
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Vite serves on `http://localhost:5173` and proxies `/api` and `/v1` to
 `http://127.0.0.1:7878`. Point it elsewhere with `ALNAIR_ROUTER_URL`:
 
 ```bash
-ALNAIR_ROUTER_URL=http://192.168.1.10:7878 npm run dev
+ALNAIR_ROUTER_URL=http://192.168.1.10:7878 pnpm dev
 ```
 
 ## What it does
@@ -52,9 +52,9 @@ key icon in the header.
 ## Checks
 
 ```bash
-npm run check   # vue-tsc --noEmit && vite build
-npm test        # Vitest
-npm run build   # production bundle in dist/
+pnpm run check   # vue-tsc --noEmit && vite build
+pnpm test        # Vitest
+pnpm run build   # production bundle in dist/
 ```
 
 ## Structure

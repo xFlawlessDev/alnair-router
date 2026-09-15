@@ -14,7 +14,7 @@ const PLACEHOLDER: &str = r#"<!doctype html>
   <body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto">
     <h1>Dashboard not built</h1>
     <p>
-      Run <code>npm ci &amp;&amp; npm run build</code> in <code>apps/web</code>,
+      Run <code>pnpm install &amp;&amp; pnpm run build</code> in <code>apps/web</code>,
       then rebuild the router.
     </p>
   </body>

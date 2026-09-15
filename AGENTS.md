@@ -1,32 +1,34 @@
-### RUST ARCHITECTURE & MODULARITY RULES
+# AGENTS.md
 
-1. **File Size Cap (500–800 LOC Rule):**
-   - No single `.rs` file may exceed 800 lines of code.
-   - When a file grows beyond this, convert `file.rs` into `file/mod.rs` (or `file.rs` + sibling submodules) and split `impl` blocks or domain logic into separate child submodules.
+## Repo map
 
-2. **Clean Library Roots:**
-   - `lib.rs` and `main.rs` must contain ONLY module declarations (`mod foo;`), `pub use` re-exports, top-level documentation, and entrypoints.
-   - Never write heavy implementation logic or global state directly inside `lib.rs`.
+- Cargo workspace root owns `Cargo.lock` and profiles. Members: `crates/alnair-router` (router binary + lib) and `crates/alnair-llm` (provider stack, `publish = false`).
+- `apps/web` is the Vue 3 dashboard with its own guide (`apps/web/AGENTS.md`); its built `dist/` is embedded into the router binary.
+- Design docs: `docs/HANDOVER.md` (architecture, behaviours) and `docs/ROADMAP.md` (status).
 
-3. **Strict Minimum Visibility:**
-   - Default to private (`fn` or `struct`).
-   - Use `pub(super)` for submodule helpers shared only with immediate parent modules.
-   - Use `pub(crate)` for items shared within the crate.
-   - Reserve bare `pub` exclusively for items intended as part of the public crate/workspace API.
+## Commands
 
-4. **The Facade Pattern (`pub use`):**
-   - Keep internal file structures deep and domain-focused, but expose a shallow public API at the module root via `pub use`.
+- `cargo fmt --all` then `cargo clippy --workspace --all-targets -- -D warnings` — CI fails on either; run both before finishing.
+- `cargo test --workspace` (~203 tests, ~35s). `cargo test -p alnair-llm` is the slow half (~23s); for fast loops use `cargo test -p alnair-router --lib` or `--test routes`.
+- `cargo run -p alnair-router` **refuses to start** without `ALNAIR_ROUTER__SECRETS__KEY` (64 hex or base64). Every config value overrides as `ALNAIR_ROUTER__SECTION__KEY`.
+- Real-provider e2e (opt-in, `#[ignore]`d): `ALNAIR_ROUTER_E2E_OPENAI_API_KEY=... cargo test -p alnair-router --test e2e_real -- --ignored`.
+- Web: in `apps/web` run `pnpm test` and `pnpm run check` (vue-tsc + build). Run `pnpm run build` before a release build so the embedded dashboard is current. Dependency changes must update `pnpm-lock.yaml`. (pnpm settings live in `apps/web/pnpm-workspace.yaml`.)
 
-5. **Split Large `impl` Blocks:**
-   - Do not write massive single `impl MyStruct` blocks.
-   - Group related methods into logical submodules across multiple files using separate `impl MyStruct` blocks.
+## Hard rules
 
-6. **Decouple via Traits:**
-   - Do not tie business modules directly to concrete database repositories, network drivers, or heavy external types. Accept traits or generics (`R: TaskRepository` / `dyn TaskRepository`) to allow fast parallel compilation.
+- **Provider seam:** only `crates/alnair-router/src/upstream/chat_backend.rs` may reference `alnair_llm`; the `vendored_llm_layer_is_imported_from_exactly_one_file` test fails otherwise. Provider work belongs in `crates/alnair-llm`.
+- **Catalog cache:** admin writes to connections/aliases/combos must call `state.invalidate_catalog()`; routing reads the cached snapshot (`model/cache.rs`, TTL `router.catalog_ttl_ms`).
+- **Credentials:** never write `connections.api_key` outside `ConnectionRepository` (AES-256-GCM) — no raw SQL bypass.
+- **Config keys:** add to `config.rs`, `router.example.toml`, and the README config list together.
+- Migrations are embedded via `sqlx::migrate!`; a new file in `migrations/` needs a rebuild. Queries are runtime SQL — no `DATABASE_URL` or `cargo sqlx prepare` step.
+- `provider_type` is CHECK-constrained to `openai-compatible` | `anthropic-native`.
+- Wire JSON is snake_case end to end; mirror shape changes in `apps/web/src/types/api.ts`.
+- Debug builds read dashboard assets from the `apps/web/dist` folder resolved at compile time; release builds embed them. `build.rs` writes a placeholder when `dist/` is missing; `server.serve_dashboard = false` disables serving.
 
-7. **Test File Hygiene:**
-   - Keep inline `#[cfg(test)]` modules under 150 lines.
-   - If tests exceed 150 lines, move them to a sibling `tests.rs` file within the module folder (`#[cfg(test)] mod tests;`) or into the crate-level `tests/` directory.
+## Rust conventions (review-enforced)
 
-8. **Scoped Error Enums:**
-   - Prefer scoped domain errors (e.g., `task_coordinator::Error`) over giant crate-wide error enums. Use `thiserror` for library crates.
+- No file over 800 LOC — split into `file/mod.rs` + submodules.
+- `lib.rs`/`main.rs` hold module declarations, re-exports, docs, and entrypoints only.
+- Visibility ladder: private → `pub(super)` → `pub(crate)` → bare `pub` only for real public API.
+- Split large `impl` blocks across files; inline `#[cfg(test)]` modules under 150 lines, otherwise a sibling `tests.rs`.
+- Prefer scoped `thiserror` enums over one crate-wide error.
