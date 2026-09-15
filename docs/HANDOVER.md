@@ -183,8 +183,37 @@ the live components (`UpstreamLimiter`, `RateLimiter`, `Executor`,
 config each iteration and is woken by `AppState::pricing_sync_trigger`.
 
 Deployment-only values (`server.host`/`port`, `server.tray`,
-`server.serve_dashboard`, `storage.url`, `secrets.key`, `server.cors_origins`)
-stay read-only in the API and are surfaced in the `deployment` block.
+`server.serve_dashboard`, `storage.url`, `secrets.key`) stay read-only in the
+API and are surfaced in the `deployment` block.
+
+### Dashboard authentication
+
+The dashboard signs in with a **password only** (no username), stored as an
+Argon2 hash in the single-row `auth` table (migration `0014_auth.sql`). Until
+that row exists, the router prints a one-time setup code at startup
+(`alnair-router setup code: …`); `POST /api/auth/setup` requires the code and
+then creates the password. Sessions are opaque token pairs: `auth_sessions`
+keeps SHA-256 hashes of access (30 minutes) and refresh (7 days sliding, 30
+days absolute) tokens. `POST /api/auth/refresh` rotates the pair and marks the
+old refresh row; presenting a rotated token means a copy is in use, so
+`AuthRepository::refresh` returns `Rotation::Reused` and the caller revokes the
+whole family. Logout revokes the caller's family, and changing the password
+revokes every session. `server.admin_token` remains a machine credential for
+scripts and CI.
+
+`middleware::require_admin_token` accepts, in order:
+`allow_unauthenticated_admin`, a matching `admin_token`, or a live session.
+With neither a password nor an admin token the documented localhost posture
+applies; once `server.lan_access` is on (or `host` is non-loopback) every admin
+route returns `401` until the password exists. `GET /api/auth/status` reports
+`password_set`, `setup_required`, `authenticated`, `admin_token_set` and
+`admin_open`, which is what the SPA guard and the login page read.
+
+`server.lan_access` flips the listener to `0.0.0.0` without a restart:
+`AppState::apply_overrides` notices the `listen_address()` change and notifies
+`AppState::rebind`; the serve loop in `main.rs` lets `axum::serve` finish, then
+binds the new address and serves again. Boot defaults still come from
+`config.toml`/env, so the toggle only writes the `settings` row.
 
 ### Backup and restore
 
@@ -427,6 +456,17 @@ suite should tell you.
     Tokens/Cost cells. Rows written before migration `0009` fall back to a
     single "recorded total" line in the breakdown.
 
+26. **CORS is a live, explicit allowlist.** `server.cors_origins` starts empty
+    and then emits no CORS headers at all; `"*"` allows any origin; otherwise
+    only the listed origins are answered. `middleware::cors` reads the current
+    config on every request and answers preflight `OPTIONS` itself, so the
+    Settings page can change the policy without a restart (entries are
+    validated as `scheme://host[:port]`). Bind and browser addresses go through
+    `ServerConfig::bind_address` / `browser_address`, which bracket IPv6
+    literals and turn an unspecified bind (`0.0.0.0`, `::`) into `127.0.0.1`
+    for the tray link. (`middleware.rs`, `handlers/settings.rs`, `config.rs`,
+    `main.rs`)
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -474,9 +514,11 @@ public when it stabilises.
 ## 6. Running it
 
 ```bash
-export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"   # required
 cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
-cargo test --workspace        # 223 tests, ~33s (retry backoff + provider tests)
+# No config needed: secrets.key is generated under $ALNAIR_ROUTER_HOME on first
+# run and a dashboard setup code is printed; set/override values with
+# ALNAIR_ROUTER__SECTION__KEY when deploying (e.g. ALNAIR_ROUTER__SECRETS__KEY).
+cargo test --workspace        # ~316 tests, ~35s (retry backoff + provider tests)
 cargo clippy --workspace --all-targets
 ```
 

@@ -2882,3 +2882,283 @@ async fn public_usage_can_be_disabled() {
     let (status, _) = get_with_auth(&app, "/api/public/models", Some(&secret)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+async fn get_with_origin(app: &axum::Router, path: &str, origin: &str) -> axum::response::Response {
+    let request = Request::builder()
+        .method("GET")
+        .uri(path)
+        .header(header::ORIGIN, origin)
+        .body(Body::empty())
+        .unwrap();
+    app.clone().oneshot(request).await.expect("request")
+}
+
+fn allowed_origin(response: &axum::response::Response) -> Option<&str> {
+    response
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .and_then(|value| value.to_str().ok())
+}
+
+#[tokio::test]
+async fn cors_origins_gate_cross_origin_access() {
+    // Empty list: the same-origin dashboard needs no headers, and other
+    // origins get none.
+    let (app, _db) = app(false).await;
+    let response = get_with_origin(&app, "/api/health", "https://app.example.com").await;
+    assert_eq!(allowed_origin(&response), None);
+
+    // An explicit allowlist answers only its own origins.
+    let mut config = RouterConfig::default();
+    config.server.cors_origins = vec!["https://app.example.com".to_string()];
+    let (app, _db) = app_with_config(config).await;
+    let response = get_with_origin(&app, "/api/health", "https://app.example.com").await;
+    assert_eq!(allowed_origin(&response), Some("https://app.example.com"));
+    let response = get_with_origin(&app, "/api/health", "https://other.example.com").await;
+    assert_eq!(allowed_origin(&response), None);
+
+    // `*` allows any origin.
+    let mut config = RouterConfig::default();
+    config.server.cors_origins = vec!["*".to_string()];
+    let (app, _db) = app_with_config(config).await;
+    let response = get_with_origin(&app, "/api/health", "https://any.example.com").await;
+    assert_eq!(allowed_origin(&response), Some("*"));
+}
+
+#[tokio::test]
+async fn cors_preflight_is_answered_for_allowed_origins() {
+    let mut config = RouterConfig::default();
+    config.server.cors_origins = vec!["https://app.example.com".to_string()];
+    let (app, _db) = app_with_config(config).await;
+
+    let request = Request::builder()
+        .method("OPTIONS")
+        .uri("/v1/chat/completions")
+        .header(header::ORIGIN, "https://app.example.com")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .header(
+            header::ACCESS_CONTROL_REQUEST_HEADERS,
+            "authorization, content-type",
+        )
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.expect("request");
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(allowed_origin(&response), Some("https://app.example.com"));
+    assert!(
+        response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_METHODS)
+    );
+
+    // A disallowed origin is answered without CORS headers.
+    let request = Request::builder()
+        .method("OPTIONS")
+        .uri("/v1/chat/completions")
+        .header(header::ORIGIN, "https://other.example.com")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.expect("request");
+    assert_eq!(allowed_origin(&response), None);
+}
+
+#[tokio::test]
+async fn settings_apply_cors_origins_without_a_restart() {
+    let (app, _db) = app(false).await;
+
+    let response = get_with_origin(&app, "/api/health", "https://app.example.com").await;
+    assert_eq!(allowed_origin(&response), None);
+
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "cors_origins": ["https://app.example.com"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["server"]["cors_origins"],
+        serde_json::json!(["https://app.example.com"])
+    );
+
+    let response = get_with_origin(&app, "/api/health", "https://app.example.com").await;
+    assert_eq!(allowed_origin(&response), Some("https://app.example.com"));
+    let response = get_with_origin(&app, "/api/health", "https://other.example.com").await;
+    assert_eq!(allowed_origin(&response), None);
+
+    // `*` opens it up.
+    let (status, _) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "cors_origins": ["*"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let response = get_with_origin(&app, "/api/health", "https://any.example.com").await;
+    assert_eq!(allowed_origin(&response), Some("*"));
+
+    // Invalid entries are rejected before they are stored.
+    let (status, _) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "cors_origins": ["not a header"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Builds a state whose setup code is ready, plus the app over it.
+async fn app_with_setup_code() -> (axum::Router, AppState, String) {
+    let db = Db::connect_in_memory().await.expect("db");
+    let mut config = RouterConfig::default();
+    config.secrets.key = Some(TEST_SECRET.to_string());
+
+    let state = AppState::new(config, db).expect("state");
+    let code = state
+        .init_setup_code()
+        .await
+        .expect("setup code")
+        .expect("no password yet");
+    (build_router(state.clone()), state, code)
+}
+
+#[tokio::test]
+async fn password_auth_gates_the_admin_api() {
+    let (app, _state, code) = app_with_setup_code().await;
+
+    let (status, body) = get(&app, "/api/auth/status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["setup_required"], true);
+    assert_eq!(body["password_set"], false);
+
+    // The wrong setup code never creates a password.
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/api/auth/setup",
+        serde_json::json!({ "setup_code": "0000-0000-0000-0000", "password": "secret123" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, session) = json_request(
+        &app,
+        "POST",
+        "/api/auth/setup",
+        serde_json::json!({ "setup_code": code, "password": "secret123" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "setup failed: {session}");
+    let access = session["access_token"]
+        .as_str()
+        .expect("access")
+        .to_string();
+    let refresh = session["refresh_token"]
+        .as_str()
+        .expect("refresh")
+        .to_string();
+
+    // A password now exists, so even loopback needs a credential.
+    let (status, _) = get(&app, "/api/connections").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = get_with_auth(&app, "/api/connections", Some(&access)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = get_with_auth(&app, "/api/auth/status", Some(&access)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["authenticated"], true);
+    assert_eq!(body["setup_required"], false);
+
+    // Refreshing rotates the pair; replaying the old token kills the family.
+    let (status, rotated) = json_request(
+        &app,
+        "POST",
+        "/api/auth/refresh",
+        serde_json::json!({ "refresh_token": refresh }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "refresh failed: {rotated}");
+    let rotated_access = rotated["access_token"]
+        .as_str()
+        .expect("access")
+        .to_string();
+
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/api/auth/refresh",
+        serde_json::json!({ "refresh_token": refresh }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "reuse must be rejected");
+    let (status, _) = get_with_auth(&app, "/api/connections", Some(&rotated_access)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "family revoked");
+
+    // Login and logout round-trip.
+    let (status, session) = json_request(
+        &app,
+        "POST",
+        "/api/auth/login",
+        serde_json::json!({ "password": "secret123" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let access = session["access_token"]
+        .as_str()
+        .expect("access")
+        .to_string();
+
+    let (status, _) = json_request(&app, "POST", "/api/auth/logout", serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "logout needs a session");
+
+    let response =
+        raw_request_with_auth(&app, "POST", "/api/auth/logout", None, Some(&access)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (status, _) = get_with_auth(&app, "/api/connections", Some(&access)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn lan_access_requires_credentials_even_without_a_password() {
+    let (app, _db) = app_with_config({
+        let mut config = RouterConfig::default();
+        config.server.lan_access = true;
+        config
+    })
+    .await;
+
+    let (status, body) = get(&app, "/api/connections").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["type"], "authentication_error");
+
+    // Public surfaces still work, so the setup screen can load.
+    let (status, _) = get(&app, "/api/auth/status").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn settings_toggle_lan_access_hot() {
+    let (app, _db) = app(false).await;
+
+    // Loopback with no password keeps the localhost posture.
+    let (status, _) = get(&app, "/api/connections").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "lan_access": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["server"]["lan_access"], true);
+
+    // Exposing the network closes the admin API until a password exists.
+    let (status, _) = get(&app, "/api/connections").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

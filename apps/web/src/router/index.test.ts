@@ -16,6 +16,7 @@ describe('router', () => {
       'usage',
       'console',
       'guide',
+      'login',
       'my-usage',
       'not-found',
     ]);

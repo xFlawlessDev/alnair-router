@@ -1,5 +1,6 @@
 import { getAdminToken } from '@/lib/adminToken';
 import { getClientKey } from '@/lib/clientKey';
+import { getAccessToken, getRefreshToken, setSession } from '@/lib/session';
 import type {
   ActivitySnapshot,
   Alias,
@@ -9,6 +10,8 @@ import type {
   AliasTestResult,
   ApiKey,
   ApiKeyInput,
+  AuthSession,
+  AuthStatus,
   ComboWithEntries,
   Connection,
   ConnectionInput,
@@ -85,10 +88,18 @@ function errorType(payload: unknown): string | undefined {
   return typeof type === 'string' ? type : undefined;
 }
 
-async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { accept: 'application/json' };
+/** Bearer for admin calls: the password session first, then a legacy token. */
+function authHeader(): string {
+  const access = getAccessToken();
+  if (access) return `Bearer ${access}`;
   const token = getAdminToken();
-  if (token) headers.authorization = `Bearer ${token}`;
+  return token ? `Bearer ${token}` : '';
+}
+
+async function send(method: string, path: string, options: RequestOptions): Promise<Response> {
+  const headers: Record<string, string> = { accept: 'application/json' };
+  const authorization = authHeader();
+  if (authorization) headers.authorization = authorization;
 
   const init: RequestInit = { method, headers, signal: options.signal };
   if (options.body !== undefined) {
@@ -96,12 +107,52 @@ async function request<T>(method: string, path: string, options: RequestOptions 
     init.body = JSON.stringify(options.body);
   }
 
-  let response: Response;
   try {
-    response = await fetch(buildUrl(path, options.query), init);
+    return await fetch(buildUrl(path, options.query), init);
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new ApiError('Cannot reach the router. Is it running?', 0);
+  }
+}
+
+let refreshing: Promise<boolean> | null = null;
+
+/** Rotates the session pair once, deduping parallel 401s. */
+async function refreshSession(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+
+  refreshing ??= (async () => {
+    try {
+      const response = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!response.ok) {
+        setSession(null);
+        return false;
+      }
+      setSession((await response.json()) as AuthSession);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshing = null;
+    }
+  })();
+
+  return refreshing;
+}
+
+async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
+  let response = await send(method, path, options);
+
+  // An expired access token is refreshed once, then the call is replayed.
+  if (response.status === 401 && !path.startsWith('/api/auth/') && getRefreshToken()) {
+    if (await refreshSession()) {
+      response = await send(method, path, options);
+    }
   }
 
   if (response.status === 204) return undefined as T;
@@ -166,6 +217,19 @@ export const api = {
   health: () => request<HealthResponse>('GET', '/api/health'),
   version: () => request<VersionResponse>('GET', '/api/version'),
   initState: () => request<InitState>('GET', '/api/init'),
+
+  authStatus: () => request<AuthStatus>('GET', '/api/auth/status'),
+  login: (password: string) =>
+    request<AuthSession>('POST', '/api/auth/login', { body: { password } }),
+  setup: (setupCode: string, password: string) =>
+    request<AuthSession>('POST', '/api/auth/setup', {
+      body: { setup_code: setupCode, password },
+    }),
+  logout: () => request<{ signed_out: boolean }>('POST', '/api/auth/logout'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<AuthSession>('PATCH', '/api/auth/password', {
+      body: { current_password: currentPassword, new_password: newPassword },
+    }),
 
   listConnections: () => request<Connection[]>('GET', '/api/connections'),
   createConnection: (body: ConnectionInput) =>

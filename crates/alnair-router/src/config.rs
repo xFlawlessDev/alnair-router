@@ -50,8 +50,11 @@ pub struct ServerConfig {
     /// Include best-effort upstream TCP reachability in `/api/ready`.
     pub readiness_upstream_checks: bool,
     /// Expose the self-service usage page and its per-key API. Clients read
-    /// their own rollup with their router-issued key.
+    /// their own rollup with a router-issued key.
     pub public_usage: bool,
+    /// Bind every interface instead of `host`, so the router is reachable on
+    /// the local network. Hot-applied: the listener rebinds on change.
+    pub lan_access: bool,
     /// Serve the embedded dashboard at `/` (disable when a reverse proxy owns it).
     pub serve_dashboard: bool,
     /// Show a system tray icon (Open dashboard / Quit) while serving. Windows
@@ -63,7 +66,8 @@ pub struct ServerConfig {
 #[serde(default)]
 pub struct SecretsConfig {
     /// 32-byte key, as 64 hex characters or base64, encrypting upstream
-    /// credentials at rest. Required: the router refuses to start without it.
+    /// credentials at rest. Optional: when unset, the router generates one at
+    /// `$ALNAIR_ROUTER_HOME/secrets.key` on first run.
     pub key: Option<String>,
 }
 
@@ -158,6 +162,7 @@ impl Default for ServerConfig {
             cors_origins: Vec::new(),
             readiness_upstream_checks: false,
             public_usage: true,
+            lan_access: false,
             serve_dashboard: true,
             tray: true,
         }
@@ -188,6 +193,39 @@ impl ServerConfig {
                 .is_ok_and(|ip| ip.is_loopback())
     }
 
+    /// `host:port` ready for `TcpListener::bind`; IPv6 literals get bracketed.
+    pub fn bind_address(&self) -> String {
+        format!("{}:{}", bracketed_host(self.host.trim()), self.port)
+    }
+
+    /// Address the listener actually binds: LAN access overrides `host`.
+    pub fn listen_address(&self) -> String {
+        if self.lan_access {
+            format!("0.0.0.0:{}", self.port)
+        } else {
+            self.bind_address()
+        }
+    }
+
+    /// True when the listener can be reached beyond the local machine.
+    pub fn exposes_network(&self) -> bool {
+        self.lan_access || !self.binds_loopback()
+    }
+
+    /// `host:port` safe to open in a browser: an unspecified bind address
+    /// (`0.0.0.0`, `::`) becomes loopback.
+    pub fn browser_address(&self) -> String {
+        let host = match self.host.trim().trim_matches(['[', ']']) {
+            "0.0.0.0" | "::" => "127.0.0.1",
+            _ => self.host.trim(),
+        };
+        format!(
+            "{}:{}",
+            bracketed_host(host.trim_matches(['[', ']'])),
+            self.port
+        )
+    }
+
     /// Effective admin token, treating blank values as unset.
     pub fn admin_token(&self) -> Option<&str> {
         self.admin_token
@@ -199,6 +237,15 @@ impl ServerConfig {
     /// True when `/api/*` must demand a bearer token.
     pub fn requires_admin_token(&self) -> bool {
         self.admin_token().is_some()
+    }
+}
+
+/// Wraps bare IPv6 literals so they parse as `host:port` pairs.
+fn bracketed_host(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
     }
 }
 
@@ -233,8 +280,9 @@ impl RouterConfig {
             return Err(Error::Config(format!(
                 "refusing to bind non-loopback host '{}' without server.admin_token: \
                  the /api routes expose upstream credentials and mint client keys. \
-                 Set ALNAIR_ROUTER__SERVER__ADMIN_TOKEN, or bind 127.0.0.1, or set \
-                 server.allow_unauthenticated_admin = true to override.",
+                 Set ALNAIR_ROUTER__SERVER__ADMIN_TOKEN, bind 127.0.0.1, or use \
+                 server.lan_access = true instead of a non-loopback host \
+                 (server.allow_unauthenticated_admin = true overrides this check).",
                 self.server.host
             )));
         }
@@ -276,16 +324,74 @@ pub fn load() -> Result<RouterConfig> {
                 .separator("__"),
         );
 
-    let config = builder
+    let mut config = builder
         .build()
         .map_err(|error| Error::Config(format!("failed to load config: {error}")))?
         .try_deserialize::<RouterConfig>()
         .map_err(|error| Error::Config(format!("invalid config: {error}")))?;
 
+    resolve_secrets_key(&mut config, &router_home().join("secrets.key"))?;
     config.validate()?;
 
     Ok(config)
 }
+
+/// Materializes `secrets.key` so a fresh install runs with no configuration.
+///
+/// A configured value (file or env) always wins; otherwise the key file is
+/// read, or generated once with a log line pointing at it.
+fn resolve_secrets_key(config: &mut RouterConfig, path: &Path) -> Result<()> {
+    if config
+        .secrets
+        .key
+        .as_deref()
+        .is_some_and(|key| !key.trim().is_empty())
+    {
+        return Ok(());
+    }
+
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                Error::Config(format!("failed to create the secrets directory: {error}"))
+            })?;
+        }
+        // Two v4 UUIDs give 32 random bytes; hex keeps the value printable.
+        let generated = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        std::fs::write(path, &generated).map_err(|error| {
+            Error::Config(format!("failed to write {}: {error}", path.display()))
+        })?;
+        restrict_permissions(path);
+        tracing::info!(path = %path.display(), "generated a new secrets.key");
+    }
+
+    let value = std::fs::read_to_string(path)
+        .map_err(|error| Error::Config(format!("failed to read {}: {error}", path.display())))?;
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err(Error::Config(format!(
+            "{} is empty; delete it to regenerate a key",
+            path.display()
+        )));
+    }
+    config.secrets.key = Some(value);
+    Ok(())
+}
+
+/// Best-effort owner-only permissions for the generated key file.
+#[cfg(unix)]
+fn restrict_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -330,6 +436,36 @@ mod tests {
             server("127.0.0.1", Some("secret")).admin_token(),
             Some("secret")
         );
+    }
+
+    #[test]
+    fn bind_and_browser_addresses_handle_unspecified_and_ipv6_hosts() {
+        let mut server = server("0.0.0.0", None);
+        assert_eq!(server.bind_address(), "0.0.0.0:7878");
+        assert_eq!(server.browser_address(), "127.0.0.1:7878");
+
+        server.host = "::1".to_string();
+        assert_eq!(server.bind_address(), "[::1]:7878");
+        assert_eq!(server.browser_address(), "[::1]:7878");
+
+        server.host = "[::]".to_string();
+        assert_eq!(server.bind_address(), "[::]:7878");
+        assert_eq!(server.browser_address(), "127.0.0.1:7878");
+
+        server.host = "192.168.1.10".to_string();
+        assert_eq!(server.bind_address(), "192.168.1.10:7878");
+        assert_eq!(server.browser_address(), "192.168.1.10:7878");
+    }
+
+    #[test]
+    fn lan_access_rebinds_every_interface() {
+        let mut server = server("127.0.0.1", None);
+        assert_eq!(server.listen_address(), "127.0.0.1:7878");
+        assert!(!server.exposes_network());
+
+        server.lan_access = true;
+        assert_eq!(server.listen_address(), "0.0.0.0:7878");
+        assert!(server.exposes_network());
     }
 
     #[test]
@@ -384,6 +520,33 @@ mod tests {
         assert!(server("127.0.0.1", Some("secret")).requires_admin_token());
         assert!(!server("127.0.0.1", None).requires_admin_token());
         assert!(server("0.0.0.0", Some("secret")).requires_admin_token());
+    }
+
+    #[test]
+    fn missing_secret_key_is_generated_once() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("secrets.key");
+
+        let mut config = RouterConfig::default();
+        resolve_secrets_key(&mut config, &path).expect("generate");
+        let generated = config.secrets.key.clone().expect("key");
+        assert_eq!(generated.len(), 64, "hex-encoded 32 bytes");
+        assert!(path.exists());
+
+        // A later run reuses the file instead of rotating credentials.
+        let mut again = RouterConfig::default();
+        resolve_secrets_key(&mut again, &path).expect("reuse");
+        assert_eq!(again.secrets.key, Some(generated));
+
+        // An explicit value always wins over the file.
+        let mut explicit = RouterConfig {
+            secrets: SecretsConfig {
+                key: Some("00".repeat(32)),
+            },
+            ..RouterConfig::default()
+        };
+        resolve_secrets_key(&mut explicit, &path).expect("explicit");
+        assert_eq!(explicit.secrets.key, Some("00".repeat(32)));
     }
 
     #[test]

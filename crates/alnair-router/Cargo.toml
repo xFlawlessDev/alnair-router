@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 aes-gcm = "0.10"
 alnair-llm = { path = "../alnair-llm" }
+argon2 = "0.5"
 async-stream = "0.3"
 auto-launch = "0.5"
 axum = { version = "0.8", features = ["macros", "json", "ws"] }

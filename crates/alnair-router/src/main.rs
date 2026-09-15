@@ -7,6 +7,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use alnair_router::config::RouterConfig;
 use alnair_router::{Db, Error, Result, build_router, cli, config, state::AppState};
@@ -141,7 +142,7 @@ fn run_without_tray(config: RouterConfig) -> Result<()> {
 /// macOS additionally wants it running before the icon is created.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn run_with_tray(config: RouterConfig) -> Result<()> {
-    let address = format!("{}:{}", config.server.host, config.server.port);
+    let address = config.server.browser_address();
     let shutdown = Arc::new(Notify::new());
     let (done_tx, done_rx) = std::sync::mpsc::channel();
 
@@ -213,26 +214,59 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
         tracing::info!(keys = ?overrides.keys(), "applied dashboard settings");
     }
 
-    let effective = state.config_snapshot();
-    let address = format!("{}:{}", effective.server.host, effective.server.port);
-    let listener = tokio::net::TcpListener::bind(&address)
-        .await
-        .map_err(|error| Error::Config(format!("cannot bind {address}: {error}")))?;
-
-    tracing::info!(
-        address = %address,
-        require_api_key = effective.server.require_api_key,
-        admin_token = effective.server.requires_admin_token(),
-        "alnair-router listening"
-    );
+    if let Some(code) = state.init_setup_code().await? {
+        tracing::warn!(
+            setup_code = %code,
+            "no dashboard password yet; set one at /login with this setup code"
+        );
+        println!("alnair-router setup code: {code}");
+    }
 
     spawn_pricing_sync(&state);
-    let app = build_router(state);
+    let app = build_router(state.clone());
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(shutdown))
-        .await
-        .map_err(|error| Error::Internal(error.to_string()))?;
+    // The listener re-binds in place when LAN access or the port changes; the
+    // rest of the process keeps running.
+    loop {
+        let effective = state.config_snapshot();
+        let address = effective.server.listen_address();
+        let listener = tokio::net::TcpListener::bind(&address)
+            .await
+            .map_err(|error| Error::Config(format!("cannot bind {address}: {error}")))?;
+
+        tracing::info!(
+            address = %address,
+            require_api_key = effective.server.require_api_key,
+            admin_token = effective.server.requires_admin_token(),
+            lan_access = effective.server.lan_access,
+            "alnair-router listening"
+        );
+
+        let stopping = Arc::new(AtomicBool::new(false));
+        let signal = {
+            let shutdown = shutdown.clone();
+            let rebind = state.rebind.clone();
+            let stopping = stopping.clone();
+            async move {
+                tokio::select! {
+                    _ = shutdown_signal(shutdown) => {}
+                    _ = rebind.notified() => {
+                        stopping.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+        };
+
+        axum::serve(listener, app.clone())
+            .with_graceful_shutdown(signal)
+            .await
+            .map_err(|error| Error::Internal(error.to_string()))?;
+
+        if !stopping.load(Ordering::SeqCst) {
+            break;
+        }
+        tracing::info!("re-binding the listener after a settings change");
+    }
 
     Ok(())
 }

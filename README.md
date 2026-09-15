@@ -42,18 +42,22 @@ moves to the next one. Responses report which tier answered via
 
 ## Quick start
 
-Upstream credentials are encrypted at rest, so the router needs a key before it
-will start:
+No configuration is required: the router generates its encryption key at
+`$ALNAIR_ROUTER_HOME/secrets.key` (default `~/.alnair-router/secrets.key`) on
+first run and prints a dashboard setup code:
 
 ```bash
-# Required. 32 bytes as 64 hex characters (or base64). Keep it safe.
-export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"
-
 cargo run -p alnair-router
+# alnair-router setup code: 8f3a-2b91-c4d7-e5f6
 ```
 
+Open `http://127.0.0.1:7878/login`, paste the setup code and choose the
+dashboard password. To override the generated key (or any other value), use
+`config.toml` or env vars — e.g.
+`ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"`.
+
 The server listens on `127.0.0.1:7878`. Then configure an upstream and a
-fallback chain:
+fallback chain (the admin API is open on loopback until a password is set):
 
 ```bash
 # 1. An upstream endpoint
@@ -125,14 +129,67 @@ with `/data` as the state volume:
 ```bash
 export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"
 docker compose up -d
-docker compose pull   # pick up a newer release
+docker compose logs         # copy the setup code, then open /login
+docker compose pull         # pick up a newer release
 ```
+
+The compose file enables LAN access inside the container (a published port
+cannot reach a loopback bind) and keeps `/v1` closed to anyone without a key.
+The first time, `docker compose logs` prints `alnair-router setup code: …`; use
+it at `/login` to create the dashboard password. See
+[Exposing beyond loopback](#exposing-beyond-loopback).
 
 Pin a version with `image: ghcr.io/xflawlessdev/alnair-router:vX.Y.Z`, or build
 from source instead with `docker build -t alnair-router .`.
 
 The GHCR package starts private; make it public in the repository's package
 settings for anonymous pulls.
+
+## Exposing beyond loopback
+
+The dashboard is protected by a **password** (no username). First-run flow:
+
+1. Start the router; when no password exists the log prints a one-time code:
+   `alnair-router setup code: 8f3a-2b91-c4d7-e5f6`.
+2. Open `/login`, paste the code and choose a password (8+ characters). Sessions
+   use rotating access/refresh tokens stored hashed in SQLite; replaying a
+   rotated refresh token revokes that whole session family.
+3. In **Settings → Security**, turn on **LAN access**. The listener re-binds to
+   every interface immediately and admin routes start requiring sign-in. The
+   login page and `/api/auth/status` stay reachable so other devices can sign
+   in once someone enables it.
+
+`/v1` is separate: it takes router-issued client keys. Set
+`server.require_api_key = true` (Settings or config) before exposing the
+network, or anyone who can reach the port can spend upstream credits. Keys are
+minted on the API Keys page (hashed at rest, revocable, rate limits and budgets
+per key).
+
+Deployment notes:
+
+- `server.admin_token` still works for scripts and CI; when set it is accepted
+  alongside password sessions. `server.allow_unauthenticated_admin` opts out of
+  both (trusted networks only).
+- TLS: the router speaks HTTP only. Terminate TLS in front of it — Caddy or
+  nginx on the same host (`reverse_proxy 127.0.0.1:7878`, keeping the router on
+  loopback), a Cloudflare tunnel
+  (`cloudflared tunnel --url http://127.0.0.1:7878`), or Tailscale/WireGuard for
+  private access.
+- `server.cors_origins` gates browser cross-origin calls: empty (default) emits
+  no CORS headers, `["*"]` allows any origin, otherwise an explicit allowlist.
+  It can be edited on the Settings page without a restart. Non-browser clients
+  are unaffected.
+- `/api/health` and `/api/ready` stay public and carry no secrets.
+- `server.public_usage` (default true) exposes `/me` and `/api/public/*`, which
+  still require a valid client key; turn it off if clients should not
+  self-serve.
+- `server.host`/`server.port`, `server.serve_dashboard` and `secrets.key` remain
+  file/env values that need a restart.
+
+Behind a same-host proxy the router can keep `host = "127.0.0.1"`, so only the
+proxy is reachable from the network. In Docker, publish the port explicitly
+(`-p 127.0.0.1:7878:7878` for a host proxy, `-p 7878:7878` for LAN) and set
+`ALNAIR_ROUTER__SERVER__HOST=0.0.0.0` inside the container.
 
 ## Endpoints
 
@@ -164,6 +221,10 @@ split by budget window, for the dashboard's budget monitor), `/api/models`
 (provider + model + price catalog), `/api/pricing`, `/api/pricing/sync`,
 `/api/settings`, `/api/backup`, `/api/restore`, `/api/metrics`,
 `/api/activity`.
+**Auth:** `/api/auth/status`, `/api/auth/setup`, `/api/auth/login` and
+`/api/auth/refresh` are public; `/api/auth/logout` and
+`PATCH /api/auth/password` need a session. The dashboard signs in with a
+password only (no username) and rotates access/refresh tokens server-side.
 `PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit,
 daily/weekly/monthly/lifetime budgets, model allowlist, plan and expiry;
 `/api/plans` manages the reusable rule sets.
@@ -218,9 +279,12 @@ overridable by `ALNAIR_ROUTER__SECTION__KEY` env vars — e.g.
 
 Key settings:
 
-- `secrets.key` — **required**; AES-256-GCM key for upstream credentials at rest.
-  Legacy plaintext rows are re-encrypted on boot.
-- `server.admin_token` — optional bearer token enforced on `/api/*`.
+- `secrets.key` — AES-256-GCM key for upstream credentials at rest. Optional:
+  when unset the router generates `$ALNAIR_ROUTER_HOME/secrets.key` on first
+  run and reuses it. Legacy plaintext rows are re-encrypted on boot.
+- `server.admin_token` — optional bearer token for scripts and CI. The
+  dashboard itself signs in with a password (see
+  [Exposing beyond loopback](#exposing-beyond-loopback)).
 - `router.max_retries_per_tier` (default 2) and `router.max_retry_delay_ms`
   (default 30000) — provider retries inside one tier before failover, with
   exponential backoff.
@@ -250,6 +314,12 @@ Key settings:
 - `server.public_usage` (default true) — exposes the self-service page at `/me`
   and `GET /api/public/usage`, where a client reads its own rollup (summary
   plus per-model totals) with a router-issued API key.
+- `server.lan_access` (default false) — bind every interface so the LAN can
+  reach the router; flippable from Settings and the listener re-binds without a
+  restart. Admin routes then require the dashboard password.
+- `server.cors_origins` — browser cross-origin allowlist (editable on the
+  Settings page); empty (default) emits no CORS headers at all, `["*"]` allows
+  any origin, otherwise only the listed origins are answered.
 - `server.tray` (default true) — system tray icon with **Open dashboard** and
   **Quit** on Windows and macOS; `alnair-router --no-tray` disables it for one
   run.
@@ -374,6 +444,19 @@ your user PATH, and runs `install`. From a checkout it prefers a local
 `target\release` (or `target\debug`) build; same overrides as above
 (`-Version`, `-Repo`, `-InstallDir`, `-NoAutoStart`).
 
+**npm (Node 18+):**
+
+```bash
+npm install -g @xflawlessdev/alnair-router
+# or run it without installing:
+npx @xflawlessdev/alnair-router
+```
+
+The wrapper ships prebuilt binaries for Linux x64 (glibc), Windows x64, and
+Apple Silicon through optional platform packages — no postinstall download,
+nothing is fetched at runtime. Alpine/musl is not covered; use the install
+script or build from source there.
+
 Manage it with:
 
 ```powershell
@@ -404,13 +487,17 @@ git push --follow-tags origin main
 ```
 
 `scripts/sync-version.mjs` (the `postbump` hook) keeps `crates/*/Cargo.toml`,
-`apps/web/package.json`, and `Cargo.lock` in lockstep and stages them so the
-release commit carries every manifest.
+`apps/web/package.json`, the `npm/*/package.json` manifests (including the
+platform `optionalDependencies`), and `Cargo.lock` in lockstep and stages them
+so the release commit carries every manifest.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`: it builds the dashboard
 and the router for Linux x86_64, Windows x86_64, and macOS arm64, packages each
 target (`tar.gz`/`zip`), and attaches the archives plus `SHA256SUMS.txt` to the
-GitHub Release for the tag.
+GitHub Release for the tag. The same run publishes the container image to GHCR
+and the npm wrapper (`@xflawlessdev/alnair-router` plus one binary package per
+platform) with provenance; the npm job needs an `NPM_TOKEN` repository secret
+with publish rights to the `@xflawlessdev` scope.
 
 For a local release binary with the embedded dashboard:
 

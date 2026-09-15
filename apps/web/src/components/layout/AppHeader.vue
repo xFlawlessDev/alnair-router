@@ -1,42 +1,33 @@
 <script setup lang="ts">
-import { KeyRound } from '@lucide/vue';
-import { computed, ref } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
+import { KeyRound, LogOut } from '@lucide/vue';
+import { computed } from 'vue';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { toast } from 'vue-sonner';
 
 import Logo from '@/components/Logo.vue';
 import ThemeToggle from '@/components/layout/ThemeToggle.vue';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
-import { useAdminToken } from '@/lib/adminToken';
+import { api } from '@/lib/api';
+import { clearAuthStatus } from '@/lib/authState';
+import { getSession, setSession } from '@/lib/session';
 
 const route = useRoute();
+const router = useRouter();
 const pageTitle = computed(() => route.meta.title ?? 'Alnair Router');
-const { token, set } = useAdminToken();
+const signedIn = computed(() => getSession() !== null);
 
-const tokenDialogOpen = ref(false);
-const draft = ref('');
-
-function openTokenDialog(): void {
-  draft.value = token.value;
-  tokenDialogOpen.value = true;
-}
-
-function saveToken(): void {
-  set(draft.value);
-  tokenDialogOpen.value = false;
-  toast.success(draft.value.trim() ? 'Admin token saved' : 'Admin token cleared');
+async function signOut(): Promise<void> {
+  try {
+    await api.logout();
+  } catch {
+    // The local session is dropped either way.
+  }
+  setSession(null);
+  clearAuthStatus();
+  toast.success('Signed out');
+  await router.replace({ name: 'login' });
 }
 </script>
 
@@ -47,7 +38,11 @@ function saveToken(): void {
     <div class="flex min-w-0 items-center gap-2">
       <SidebarTrigger class="shrink-0" />
       <Separator orientation="vertical" class="h-4" />
-      <RouterLink to="/" class="flex shrink-0 items-center gap-2 md:hidden" aria-label="Alnair Router">
+      <RouterLink
+        to="/"
+        class="flex shrink-0 items-center gap-2 md:hidden"
+        aria-label="Alnair Router"
+      >
         <Logo class="size-6" />
       </RouterLink>
       <span class="truncate text-sm font-medium">{{ pageTitle }}</span>
@@ -55,41 +50,21 @@ function saveToken(): void {
 
     <div class="flex shrink-0 items-center gap-1">
       <Button
+        v-if="signedIn"
         variant="ghost"
         size="icon"
-        aria-label="Configure admin token"
-        :title="token ? 'Admin token configured' : 'Configure admin token'"
-        @click="openTokenDialog"
+        aria-label="Sign out"
+        title="Sign out"
+        @click="signOut"
       >
-        <KeyRound :class="token ? 'text-primary' : ''" />
+        <LogOut />
+      </Button>
+      <Button v-else as-child variant="ghost" size="icon">
+        <RouterLink to="/login" aria-label="Dashboard password" title="Dashboard password">
+          <KeyRound />
+        </RouterLink>
       </Button>
       <ThemeToggle />
     </div>
   </header>
-
-  <Dialog v-model:open="tokenDialogOpen">
-    <DialogContent>
-      <DialogHeader>
-        <DialogTitle>Admin token</DialogTitle>
-        <DialogDescription>
-          Sent as a bearer token on every <code>/api/*</code> request. Leave empty when the router
-          binds loopback without <code>server.admin_token</code>.
-        </DialogDescription>
-      </DialogHeader>
-      <div class="grid gap-2">
-        <Label for="admin-token">Bearer token</Label>
-        <Input
-          id="admin-token"
-          v-model="draft"
-          type="password"
-          autocomplete="off"
-          placeholder="ALNAIR_ROUTER__SERVER__ADMIN_TOKEN"
-        />
-      </div>
-      <DialogFooter>
-        <Button variant="outline" @click="tokenDialogOpen = false">Cancel</Button>
-        <Button @click="saveToken">Save</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
 </template>

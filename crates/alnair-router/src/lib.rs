@@ -8,6 +8,7 @@
 //! versioned and tested on its own. All access to it is funnelled through
 //! [`upstream::chat_backend`].
 
+pub mod auth;
 pub mod backup;
 pub mod cli;
 pub mod config;

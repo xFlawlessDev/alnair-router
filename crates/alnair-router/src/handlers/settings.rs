@@ -20,6 +20,10 @@ pub struct SettingsPatch {
     pub admin_token: Option<Option<String>>,
     pub readiness_upstream_checks: Option<bool>,
     pub public_usage: Option<bool>,
+    /// LAN access; flips the listener to every interface.
+    pub lan_access: Option<bool>,
+    /// Browser CORS allowlist; an empty array disables CORS headers.
+    pub cors_origins: Option<Vec<String>>,
     #[serde(deserialize_with = "crate::db::repos::double_option")]
     pub default_connection: Option<Option<String>>,
     pub max_attempts: Option<usize>,
@@ -58,6 +62,10 @@ impl SettingsPatch {
             self.readiness_upstream_checks,
         );
         set(&mut overrides.public_usage, self.public_usage);
+        set(&mut overrides.lan_access, self.lan_access);
+        if let Some(origins) = self.cors_origins {
+            overrides.cors_origins = Some(normalize_origins(origins)?);
+        }
         if let Some(connection) = self.default_connection {
             overrides.default_connection = Some(non_blank(connection));
         }
@@ -117,11 +125,46 @@ fn non_blank(value: Option<String>) -> Option<String> {
     })
 }
 
+/// Trims, deduplicates and validates a CORS origin list; `*` is allowed.
+fn normalize_origins(origins: Vec<String>) -> Result<Vec<String>> {
+    let mut normalized = Vec::new();
+    for origin in origins {
+        let origin = origin.trim().to_string();
+        if origin.is_empty() {
+            continue;
+        }
+        if origin != "*" && !is_valid_origin(&origin) {
+            return Err(Error::BadRequest(format!(
+                "invalid CORS origin '{origin}' (expected scheme://host[:port] or '*')"
+            )));
+        }
+        if !normalized.iter().any(|entry| entry == &origin) {
+            normalized.push(origin);
+        }
+    }
+    Ok(normalized)
+}
+
+/// True for `scheme://host[:port]` with no path, query, fragment or userinfo.
+fn is_valid_origin(origin: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    url.host().is_some()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+}
+
 #[derive(Debug, Serialize)]
 pub struct ServerSettingsView {
     pub require_api_key: bool,
     pub readiness_upstream_checks: bool,
     pub public_usage: bool,
+    pub lan_access: bool,
+    pub cors_origins: Vec<String>,
     pub admin_token_set: bool,
 }
 
@@ -166,7 +209,6 @@ pub struct DeploymentView {
     pub serve_dashboard: bool,
     pub tray: bool,
     pub allow_unauthenticated_admin: bool,
-    pub cors_origins: Vec<String>,
     pub database_url: String,
     pub secrets_key_set: bool,
 }
@@ -189,6 +231,8 @@ impl SettingsResponse {
                 require_api_key: config.server.require_api_key,
                 readiness_upstream_checks: config.server.readiness_upstream_checks,
                 public_usage: config.server.public_usage,
+                lan_access: config.server.lan_access,
+                cors_origins: config.server.cors_origins.clone(),
                 admin_token_set: config.server.requires_admin_token(),
             },
             router: RouterSettingsView {
@@ -222,7 +266,6 @@ impl SettingsResponse {
                 serve_dashboard: config.server.serve_dashboard,
                 tray: config.server.tray,
                 allow_unauthenticated_admin: config.server.allow_unauthenticated_admin,
-                cors_origins: config.server.cors_origins.clone(),
                 database_url: config.database_url(),
                 secrets_key_set: config.secrets.key.is_some(),
             },

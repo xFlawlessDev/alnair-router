@@ -1,10 +1,11 @@
 //! Shared application state for the HTTP layer.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use sqlx::SqlitePool;
 use tokio::sync::Notify;
 
+use crate::auth::{AuthRepository, generate_setup_code};
 use crate::config::RouterConfig;
 use crate::crypto::CredentialCipher;
 use crate::db::Db;
@@ -41,6 +42,10 @@ pub struct AppState {
     pub pricing_cache: Arc<PricingCache>,
     /// Wakes the pricing sync loop after a settings save.
     pub pricing_sync_trigger: Arc<Notify>,
+    /// Wakes the serve loop to rebind when LAN access or the port changes.
+    pub rebind: Arc<Notify>,
+    /// One-time code for the first dashboard password; `None` once set.
+    setup_code: Arc<Mutex<Option<String>>>,
     catalog_cache: Arc<crate::model::CatalogCache>,
 }
 
@@ -89,6 +94,8 @@ impl AppState {
             telemetry,
             pricing_cache,
             pricing_sync_trigger: Arc::new(Notify::new()),
+            rebind: Arc::new(Notify::new()),
+            setup_code: Arc::new(Mutex::new(None)),
             catalog_cache,
         })
     }
@@ -119,11 +126,14 @@ impl AppState {
         self.executor.apply(&next);
         self.catalog_cache.apply(&next).await;
 
-        let pricing_changed = {
+        let (pricing_changed, rebind) = {
             let current = self.config.read().expect("config lock poisoned");
-            current.pricing.sync_enabled != next.pricing.sync_enabled
-                || current.pricing.sync_interval_secs != next.pricing.sync_interval_secs
-                || current.pricing.source_url != next.pricing.source_url
+            (
+                current.pricing.sync_enabled != next.pricing.sync_enabled
+                    || current.pricing.sync_interval_secs != next.pricing.sync_interval_secs
+                    || current.pricing.source_url != next.pricing.source_url,
+                current.server.listen_address() != next.server.listen_address(),
+            )
         };
 
         *self.config.write().expect("config lock poisoned") = next.clone();
@@ -131,8 +141,36 @@ impl AppState {
         if pricing_changed {
             self.pricing_sync_trigger.notify_one();
         }
+        if rebind {
+            self.rebind.notify_one();
+        }
 
         Ok(next)
+    }
+
+    /// Dashboard password and sessions.
+    pub fn auth(&self) -> AuthRepository {
+        AuthRepository::new(self.pool.clone())
+    }
+
+    /// Generates and stores the first-run setup code when no password exists.
+    /// Returns the code so the caller can log it.
+    pub async fn init_setup_code(&self) -> Result<Option<String>> {
+        if self.auth().password_set().await? {
+            return Ok(None);
+        }
+
+        let code = generate_setup_code();
+        *self.setup_code.lock().expect("setup code poisoned") = Some(code.clone());
+        Ok(Some(code))
+    }
+
+    pub fn setup_code(&self) -> Option<String> {
+        self.setup_code.lock().expect("setup code poisoned").clone()
+    }
+
+    pub fn clear_setup_code(&self) {
+        *self.setup_code.lock().expect("setup code poisoned") = None;
     }
 
     pub fn connections(&self) -> ConnectionRepository {

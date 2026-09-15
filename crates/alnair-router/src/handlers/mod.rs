@@ -1,6 +1,7 @@
 //! HTTP handlers.
 
 pub mod admin;
+pub mod auth;
 pub mod backup;
 pub mod catalog;
 pub mod chat;

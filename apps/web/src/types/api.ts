@@ -18,6 +18,24 @@ export interface VersionResponse {
   version: string;
 }
 
+/** `GET /api/auth/status` — what the sign-in screen needs to know. */
+export interface AuthStatus {
+  password_set: boolean;
+  setup_required: boolean;
+  authenticated: boolean;
+  admin_token_set: boolean;
+  /** True when the admin API needs no credential at all (loopback posture). */
+  admin_open: boolean;
+}
+
+/** Rotating access/refresh pair returned by login, setup and refresh. */
+export interface AuthSession {
+  access_token: string;
+  refresh_token: string;
+  access_expires_at: string;
+  refresh_expires_at: string;
+}
+
 export interface InitState {
   initialized: boolean;
   connections: number;
@@ -431,6 +449,10 @@ export interface ServerSettings {
   require_api_key: boolean;
   readiness_upstream_checks: boolean;
   public_usage: boolean;
+  /** Bind every interface so the LAN can reach the router. */
+  lan_access: boolean;
+  /** Browser CORS allowlist; empty means no CORS headers; `*` allows any. */
+  cors_origins: string[];
   /** Whether an admin token is configured; the value itself is write-only. */
   admin_token_set: boolean;
 }
@@ -470,7 +492,6 @@ export interface DeploymentInfo {
   serve_dashboard: boolean;
   tray: boolean;
   allow_unauthenticated_admin: boolean;
-  cors_origins: string[];
   database_url: string;
   secrets_key_set: boolean;
 }
@@ -585,6 +606,8 @@ export interface SettingsPatch {
   admin_token?: string | null;
   readiness_upstream_checks?: boolean;
   public_usage?: boolean;
+  lan_access?: boolean;
+  cors_origins?: string[];
   default_connection?: string | null;
   max_attempts?: number;
   max_retries_per_tier?: number;

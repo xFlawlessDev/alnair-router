@@ -1,6 +1,8 @@
 //! Bearer-key authentication for `/v1/*` and the `/api/*` admin surface.
 
+use axum::body::Body;
 use axum::extract::{Request, State};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
@@ -12,6 +14,99 @@ use crate::state::AppState;
 
 /// Response header set on requests that exceed a soft budget.
 const BUDGET_WARNING_HEADER: &str = "x-router-budget-warning";
+
+/// Methods and headers offered to cross-origin browser callers.
+const CORS_METHODS: &str = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
+const CORS_HEADERS: &str = "Authorization, Content-Type, Accept";
+
+/// Applies `server.cors_origins` to every response.
+///
+/// Reading the live config keeps the policy editable from the dashboard: an
+/// empty list emits no CORS headers, `"*"` allows any origin, and anything
+/// else is an explicit allowlist. Preflight `OPTIONS` requests never reach a
+/// route, so they are answered here.
+pub async fn cors(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let allowed = state
+        .config
+        .read()
+        .expect("config lock poisoned")
+        .server
+        .cors_origins
+        .clone();
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let requested_headers = request
+        .headers()
+        .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+
+    if request.method() == Method::OPTIONS && origin.is_some() {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NO_CONTENT;
+        apply_cors(
+            &mut response,
+            &allowed,
+            origin.as_deref(),
+            requested_headers.as_deref(),
+        );
+        return response;
+    }
+
+    let mut response = next.run(request).await;
+    apply_cors(
+        &mut response,
+        &allowed,
+        origin.as_deref(),
+        requested_headers.as_deref(),
+    );
+    response
+}
+
+/// Adds the CORS headers a matching origin asked for, if any.
+fn apply_cors(
+    response: &mut Response,
+    allowed: &[String],
+    origin: Option<&str>,
+    requested_headers: Option<&str>,
+) {
+    let Some(origin) = origin else {
+        return;
+    };
+
+    let allow_any = allowed.iter().any(|entry| entry.trim() == "*");
+    let matched = allow_any
+        || allowed
+            .iter()
+            .any(|entry| entry.trim().eq_ignore_ascii_case(origin));
+    if !matched {
+        return;
+    }
+
+    let headers = response.headers_mut();
+    if allow_any {
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            HeaderValue::from_static("*"),
+        );
+    } else if let Ok(value) = HeaderValue::from_str(origin) {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+        headers.append(header::VARY, HeaderValue::from_static("Origin"));
+    }
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static(CORS_METHODS),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        requested_headers
+            .and_then(|value| HeaderValue::from_str(value).ok())
+            .unwrap_or_else(|| HeaderValue::from_static(CORS_HEADERS)),
+    );
+}
 
 /// The API key that authenticated the current request, with its effective
 /// rules (its own fields merged with the attached plan, if any).
@@ -271,34 +366,61 @@ async fn check_budget(
     }
 }
 
-/// Guards the `/api/*` admin routes with `server.admin_token`.
+/// Guards the `/api/*` admin routes.
 ///
-/// On loopback without a token the check is skipped, which is the documented
-/// localhost posture. Whenever a token is configured it is enforced — including
-/// on loopback — so exposing a non-loopback bind cannot accidentally leave the
-/// admin API open.
+/// Three credentials are accepted, in order:
+/// 1. `server.allow_unauthenticated_admin` disables the check entirely;
+/// 2. a bearer matching `server.admin_token` (scripts and CI);
+/// 3. a live dashboard session token from `/api/auth/login`.
+///
+/// With no password and no admin token the documented localhost posture
+/// applies; once the listener exposes the network, requests are rejected until
+/// a password is set up.
 pub async fn require_admin_token(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Result<Response, Error> {
-    // Copy the expected token out of the lock before awaiting anything.
-    let expected = {
-        let config = state.config.read().expect("config lock poisoned");
-        config.server.admin_token().map(str::to_string)
-    };
-
-    // A blank or absent token keeps the documented loopback posture.
-    let Some(expected) = expected else {
+    let config = state.config_snapshot();
+    if config.server.allow_unauthenticated_admin {
         return Ok(next.run(request).await);
-    };
+    }
 
-    let provided = extract_bearer(request.headers()).ok_or_else(|| {
-        Error::Unauthorized("missing Authorization: Bearer <admin token> header".to_string())
-    })?;
+    let admin_token = config.server.admin_token();
+    let provided = extract_bearer(request.headers());
 
-    if !tokens_match(&provided, &expected) {
-        return Err(Error::Unauthorized("invalid admin token".to_string()));
+    if let (Some(token), Some(expected)) = (provided.as_deref(), admin_token)
+        && tokens_match(token, expected)
+    {
+        return Ok(next.run(request).await);
+    }
+
+    if state.auth().password_set().await? {
+        if let Some(token) = provided.as_deref()
+            && state.auth().authenticate(token).await?
+        {
+            return Ok(next.run(request).await);
+        }
+
+        return Err(Error::Unauthorized(if provided.is_some() {
+            "invalid or expired session".to_string()
+        } else {
+            "sign in required".to_string()
+        }));
+    }
+
+    if admin_token.is_some() {
+        return Err(Error::Unauthorized(if provided.is_some() {
+            "invalid admin token".to_string()
+        } else {
+            "missing Authorization: Bearer <admin token> header".to_string()
+        }));
+    }
+
+    if config.server.exposes_network() {
+        return Err(Error::Unauthorized(
+            "no dashboard password is set up yet".to_string(),
+        ));
     }
 
     Ok(next.run(request).await)

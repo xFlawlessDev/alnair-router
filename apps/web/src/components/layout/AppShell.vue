@@ -18,7 +18,7 @@ const isPublic = computed(() => route.meta.public === true);
     <header class="flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4 sm:px-6">
       <Logo class="size-6" />
       <span class="font-semibold">Alnair Router</span>
-      <span class="text-sm text-muted-foreground">· My usage</span>
+      <span class="text-sm text-muted-foreground">· {{ route.meta.title ?? 'My usage' }}</span>
       <div class="ml-auto">
         <ThemeToggle />
       </div>

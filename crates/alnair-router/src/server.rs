@@ -1,8 +1,7 @@
 //! Axum router construction.
 
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Router, middleware as axum_middleware};
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use crate::handlers;
@@ -21,7 +20,12 @@ pub fn build_router(state: AppState) -> Router {
     // the admin token.
     let public = Router::new()
         .route("/api/public/usage", get(handlers::public::usage))
-        .route("/api/public/models", get(handlers::public::models));
+        .route("/api/public/models", get(handlers::public::models))
+        // Sign-in must work before any credential exists.
+        .route("/api/auth/status", get(handlers::auth::status))
+        .route("/api/auth/setup", post(handlers::auth::setup))
+        .route("/api/auth/login", post(handlers::auth::login))
+        .route("/api/auth/refresh", post(handlers::auth::refresh));
 
     // Admin and management routes are unauthenticated on loopback; when
     // `server.admin_token` is configured the token is enforced on all of them.
@@ -107,6 +111,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/backup", get(handlers::backup::download_backup))
         .route("/api/restore", post(handlers::backup::restore_backup))
+        .route("/api/auth/logout", post(handlers::auth::logout))
+        .route("/api/auth/password", patch(handlers::auth::change_password))
         // Enforced only when `server.admin_token` is configured; loopback
         // without a token keeps the documented frictionless posture.
         .route_layer(axum_middleware::from_fn_with_state(
@@ -149,29 +155,22 @@ pub fn build_router(state: AppState) -> Router {
             middleware::require_api_key,
         ));
 
+    let config = state.config_snapshot();
     let mut app = Router::new()
         .merge(probes)
         .merge(public)
         .merge(admin)
         .merge(v1);
-    let serve_dashboard = state
-        .config
-        .read()
-        .expect("config lock poisoned")
-        .server
-        .serve_dashboard;
-    if serve_dashboard {
+    if config.server.serve_dashboard {
         // Unmatched paths fall through to the embedded dashboard (SPA routes
         // resolve to index.html; missing files 404).
         app = app.fallback(handlers::web::serve_asset);
     }
 
-    app.layer(
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any),
-    )
+    app.layer(axum_middleware::from_fn_with_state(
+        state.clone(),
+        middleware::cors,
+    ))
     .layer(TraceLayer::new_for_http())
     .with_state(state)
 }

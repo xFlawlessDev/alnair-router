@@ -6,6 +6,7 @@ import ConnectionsPage from '@/pages/ConnectionsPage.vue';
 import ConsolePage from '@/pages/ConsolePage.vue';
 import GuidePage from '@/pages/GuidePage.vue';
 import KeysPage from '@/pages/KeysPage.vue';
+import LoginPage from '@/pages/LoginPage.vue';
 import ModelsPage from '@/pages/ModelsPage.vue';
 import NotFoundPage from '@/pages/NotFoundPage.vue';
 import OverviewPage from '@/pages/OverviewPage.vue';
@@ -13,6 +14,9 @@ import PricingPage from '@/pages/PricingPage.vue';
 import PublicUsagePage from '@/pages/PublicUsagePage.vue';
 import SettingsPage from '@/pages/SettingsPage.vue';
 import UsagePage from '@/pages/UsagePage.vue';
+
+import { loadAuthStatus } from '@/lib/authState';
+import { getAdminToken } from '@/lib/adminToken';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -41,6 +45,7 @@ export const router = createRouter({
     { path: '/usage', name: 'usage', component: UsagePage, meta: { title: 'Usage' } },
     { path: '/logs', name: 'console', component: ConsolePage, meta: { title: 'Console' } },
     { path: '/guide', name: 'guide', component: GuidePage, meta: { title: 'API Guide' } },
+    { path: '/login', name: 'login', component: LoginPage, meta: { title: 'Sign in', public: true } },
     {
       path: '/me',
       name: 'my-usage',
@@ -59,4 +64,16 @@ export const router = createRouter({
 
 router.afterEach((to) => {
   document.title = to.meta.title ? `${to.meta.title} | Alnair Router` : 'Alnair Router';
+});
+
+// Admin routes need a password session, a legacy admin token, or the open
+// localhost posture. Public routes (the sign-in screen and /me) skip the check.
+router.beforeEach(async (to) => {
+  if (to.meta.public) return true;
+
+  const status = await loadAuthStatus();
+  if (status === null) return true;
+
+  if (status.authenticated || status.admin_open || getAdminToken()) return true;
+  return { name: 'login', query: { redirect: to.fullPath } };
 });

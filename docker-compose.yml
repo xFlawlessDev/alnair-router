@@ -6,6 +6,12 @@ services:
       - "7878:7878"
     environment:
       ALNAIR_ROUTER__SECRETS__KEY: ${ALNAIR_ROUTER__SECRETS__KEY:?set ALNAIR_ROUTER__SECRETS__KEY, e.g. openssl rand -hex 32}
+      # Bind every interface so the published port reaches the router; the
+      # dashboard password (set from the setup code in `docker compose logs`)
+      # then gates the admin API.
+      ALNAIR_ROUTER__SERVER__LAN_ACCESS: "true"
+      # Without this, anyone who can reach the port can spend upstream credits.
+      ALNAIR_ROUTER__SERVER__REQUIRE_API_KEY: "true"
     volumes:
       - alnair-data:/data
 

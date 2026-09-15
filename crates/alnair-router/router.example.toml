@@ -6,9 +6,10 @@
 #   ALNAIR_ROUTER__SERVER__PORT=9000
 #   ALNAIR_ROUTER__STORAGE__URL=sqlite:///var/lib/alnair-router/router.sqlite?mode=rwc
 #
-# The dashboard's Settings page can override a subset at runtime: server auth
-# and readiness, router.*, limits.*, rate_limit.*, and pricing.*. Overrides are
-# stored in the database, hot-applied, and win over file/env values until reset.
+# The dashboard's Settings page can override a subset at runtime: server auth,
+# readiness, CORS and LAN access, router.*, limits.*, rate_limit.*, and
+# pricing.*. Overrides are stored in the database, hot-applied, and win over
+# file/env values until reset.
 
 [server]
 # Port the router listens on.
@@ -18,8 +19,9 @@ host = "127.0.0.1"
 # When false, /v1/* accepts requests without an Authorization header.
 # Convenient for localhost development; set true for anything reachable.
 require_api_key = false
-# Bearer token guarding /api/*. Enforced whenever it is set, including on
-# loopback. Required for a non-loopback bind unless the opt-out below is used.
+# Bearer token for scripts and CI; the dashboard itself signs in with a
+# password. Required when `host` is non-loopback unless the opt-out below is
+# used. Prefer `lan_access = true` for LAN: it needs no token.
 # admin_token = "change-me"
 # Explicitly permit a non-loopback bind without an admin token. The admin API
 # reads upstream credentials and mints client keys — only for trusted networks.
@@ -29,13 +31,18 @@ readiness_upstream_checks = false
 # Expose the self-service usage page (/me) and GET /api/public/usage, where a
 # client reads its own rollup with a router-issued API key.
 public_usage = true
+# Bind every interface so the LAN can reach the router. The listener re-binds
+# when this changes (Settings toggle), and admin routes then require the
+# dashboard password. This file value is the boot default.
+lan_access = false
 # Serve the embedded dashboard at / (disable when a reverse proxy owns it).
 serve_dashboard = true
 # Show a system tray icon with "Open dashboard" and "Quit" while serving.
 # Windows and macOS only; `alnair-router --no-tray` disables it for one run.
 tray = true
-# Extra origins permitted to call the API cross-origin. Empty by default; the
-# dashboard is served same-origin.
+# Extra origins permitted to call the API cross-origin. Empty (default) emits
+# no CORS headers at all; the dashboard is served same-origin and needs none of
+# this. Use ["*"] to allow any origin, or list explicit origins.
 # cors_origins = ["https://admin.example.com"]
 
 [storage]
@@ -43,8 +50,9 @@ tray = true
 url = ""
 
 [secrets]
-# REQUIRED. 32-byte key encrypting upstream credentials at rest, as 64 hex
-# characters or base64. Generate one with `openssl rand -hex 32`.
+# Optional. 32-byte key encrypting upstream credentials at rest, as 64 hex
+# characters or base64. When unset, the router generates
+# $ALNAIR_ROUTER_HOME/secrets.key on first run and reuses it.
 # key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 
 [router]

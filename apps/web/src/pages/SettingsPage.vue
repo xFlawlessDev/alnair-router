@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { ApiError, api } from '@/lib/api';
 import { setAdminToken } from '@/lib/adminToken';
 import type { SettingsPatch, SettingsResponse } from '@/types/api';
@@ -37,6 +38,8 @@ const form = reactive({
   admin_token: '',
   readiness_upstream_checks: false,
   public_usage: true,
+  lan_access: false,
+  cors_origins: '',
   default_connection: '',
   max_attempts: 5,
   max_retries_per_tier: 2,
@@ -69,6 +72,8 @@ function hydrate(response: SettingsResponse): void {
   form.admin_token = '';
   form.readiness_upstream_checks = response.server.readiness_upstream_checks;
   form.public_usage = response.server.public_usage;
+  form.lan_access = response.server.lan_access;
+  form.cors_origins = response.server.cors_origins.join('\n');
   form.default_connection = response.router.default_connection ?? '';
   form.max_attempts = response.router.max_attempts;
   form.max_retries_per_tier = response.router.max_retries_per_tier;
@@ -123,6 +128,17 @@ function buildPatch(): SettingsPatch {
   }
   if (form.public_usage !== current.server.public_usage) {
     patch.public_usage = form.public_usage;
+  }
+  if (form.lan_access !== current.server.lan_access) {
+    patch.lan_access = form.lan_access;
+  }
+
+  const origins = form.cors_origins
+    .split(/[\n,]/)
+    .map((value) => value.trim())
+    .filter((value) => value !== '');
+  if (origins.join('\n') !== current.server.cors_origins.join('\n')) {
+    patch.cors_origins = origins;
   }
 
   const connection = form.default_connection.trim();
@@ -376,6 +392,34 @@ onMounted(load);
             </div>
             <Switch id="setting-public-usage" v-model="form.public_usage" />
           </div>
+
+          <div class="grid gap-2 rounded-md border p-4">
+            <div class="space-y-1">
+              <Label for="setting-cors">CORS origins</Label>
+              <p class="text-xs text-muted-foreground">
+                Browser origins allowed to call the API cross-origin, one per line. Empty emits no
+                CORS headers; <code>*</code> allows any origin.
+              </p>
+            </div>
+            <Textarea
+              id="setting-cors"
+              v-model="form.cors_origins"
+              rows="3"
+              class="font-mono text-xs"
+              placeholder="https://app.example.com"
+            />
+          </div>
+
+          <div class="flex items-start justify-between gap-4 rounded-md border p-4">
+            <div class="space-y-1">
+              <Label for="setting-lan-access">LAN access</Label>
+              <p class="text-xs text-muted-foreground">
+                Bind every interface so other devices on the network can reach the router; the
+                listener re-binds immediately. Admin routes then require the dashboard password.
+              </p>
+            </div>
+            <Switch id="setting-lan-access" v-model="form.lan_access" />
+          </div>
         </CardContent>
       </Card>
 
@@ -615,10 +659,6 @@ onMounted(load);
             <div class="flex items-center justify-between gap-4">
               <dt class="text-muted-foreground">Encryption key</dt>
               <dd>{{ deployment.secrets_key_set ? 'Configured' : 'Missing' }}</dd>
-            </div>
-            <div class="flex items-center justify-between gap-4 sm:col-span-2">
-              <dt class="text-muted-foreground">CORS origins</dt>
-              <dd class="font-mono">{{ deployment.cors_origins.join(', ') || '—' }}</dd>
             </div>
             <div class="flex items-center justify-between gap-4 sm:col-span-2">
               <dt class="text-muted-foreground">Database</dt>

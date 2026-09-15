@@ -30,6 +30,13 @@ pub struct SettingsOverrides {
     pub readiness_upstream_checks: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_usage: Option<bool>,
+    /// Bind every interface (LAN access); the listener rebinds when this flips.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lan_access: Option<bool>,
+    /// Browser origins allowed to call the API cross-origin. `Some(vec![])`
+    /// disables CORS headers entirely; `["*"]` allows any origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cors_origins: Option<Vec<String>>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::db::repos::double_option"
@@ -79,6 +86,12 @@ impl SettingsOverrides {
         }
         if let Some(value) = self.public_usage {
             config.server.public_usage = value;
+        }
+        if let Some(value) = self.lan_access {
+            config.server.lan_access = value;
+        }
+        if let Some(value) = &self.cors_origins {
+            config.server.cors_origins = value.clone();
         }
         if let Some(value) = &self.default_connection {
             config.router.default_connection = value.clone();
@@ -154,6 +167,12 @@ impl SettingsOverrides {
         }
         if self.public_usage.is_some() {
             keys.push("server.public_usage");
+        }
+        if self.lan_access.is_some() {
+            keys.push("server.lan_access");
+        }
+        if self.cors_origins.is_some() {
+            keys.push("server.cors_origins");
         }
         if self.default_connection.is_some() {
             keys.push("router.default_connection");

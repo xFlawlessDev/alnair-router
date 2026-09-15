@@ -4,16 +4,18 @@
 
 - Cargo workspace root owns `Cargo.lock` and profiles. Members: `crates/alnair-router` (router binary + lib) and `crates/alnair-llm` (provider stack, `publish = false`).
 - `apps/web` is the Vue 3 dashboard with its own guide (`apps/web/AGENTS.md`); its built `dist/` is embedded into the router binary.
+- `npm/` holds the published npm packages: the `@xflawlessdev/alnair-router` launcher plus one binary package per release target. Platform packages get their `bin/` injected by CI, never committed.
+- `Dockerfile` (source build recipe, used by CI) and `docker-compose.yml` (pulls the GHCR image).
 - Design docs: `docs/HANDOVER.md` (architecture, behaviours) and `docs/ROADMAP.md` (status).
 
 ## Commands
 
 - `cargo fmt --all` then `cargo clippy --workspace --all-targets -- -D warnings` — CI fails on either; run both before finishing.
 - `cargo test --workspace` (~203 tests, ~35s). `cargo test -p alnair-llm` is the slow half (~23s); for fast loops use `cargo test -p alnair-router --lib` or `--test routes`.
-- `cargo run -p alnair-router` **refuses to start** without `ALNAIR_ROUTER__SECRETS__KEY` (64 hex or base64). Every config value overrides as `ALNAIR_ROUTER__SECTION__KEY`.
+- `cargo run -p alnair-router` generates `$ALNAIR_ROUTER_HOME/secrets.key` on first run and prints a dashboard setup code; `ALNAIR_ROUTER__SECRETS__KEY` (64 hex or base64) overrides the generated key. Every config value overrides as `ALNAIR_ROUTER__SECTION__KEY`.
 - Real-provider e2e (opt-in, `#[ignore]`d): `ALNAIR_ROUTER_E2E_OPENAI_API_KEY=... cargo test -p alnair-router --test e2e_real -- --ignored`.
 - Web: in `apps/web` run `pnpm test` and `pnpm run check` (vue-tsc + build). Run `pnpm run build` before a release build so the embedded dashboard is current. Dependency changes must update `pnpm-lock.yaml`. (pnpm settings live in `apps/web/pnpm-workspace.yaml`.)
-- Release (root `npm install` once): `npm run release:dry` then `npm run release` — standard-version bumps, and the `postbump` hook syncs `crates/*/Cargo.toml`, `apps/web/package.json`, and `Cargo.lock`. Pushing the `v*` tag triggers the binary release workflow; `npm run build:binary` builds a local release binary.
+- Release (root `npm install` once): `npm run release:dry` then `npm run release` — standard-version bumps, and the `postbump` hook syncs `crates/*/Cargo.toml`, `apps/web/package.json`, `npm/*/package.json`, and `Cargo.lock`. Pushing the `v*` tag triggers the release workflow (binaries, GHCR image, npm packages; the npm job needs the `NPM_TOKEN` secret); `npm run build:binary` builds a local release binary.
 - Install/auto-start: `alnair-router install|uninstall|status` (auto-launch crate); `install.sh` (curl | sh) and `install.ps1` (irm | iex) fetch/unpack the release binary first. `install` never overwrites an existing `config.toml`.
 
 ## Hard rules
