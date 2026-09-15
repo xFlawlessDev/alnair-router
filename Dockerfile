@@ -6,6 +6,7 @@ RUN npm install -g pnpm@11.17.0
 WORKDIR /app/apps/web
 COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
+COPY assets /app/assets
 COPY apps/web/ ./
 RUN pnpm run build
 
@@ -17,6 +18,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY assets ./assets
 COPY --from=web /app/apps/web/dist ./apps/web/dist
 RUN cargo build --release --locked -p alnair-router
 
