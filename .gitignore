@@ -1,6 +1,7 @@
 target/
 data/
 node_modules/
+npm/alnair-router-*/bin/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

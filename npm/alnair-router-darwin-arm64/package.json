@@ -1,0 +1,23 @@
+{
+  "name": "@xflawlessdev/alnair-router-darwin-arm64",
+  "version": "0.1.0",
+  "description": "alnair-router binary for macOS arm64 (Apple Silicon)",
+  "license": "MIT",
+  "homepage": "https://github.com/xFlawlessDev/alnair-router#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xFlawlessDev/alnair-router.git"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

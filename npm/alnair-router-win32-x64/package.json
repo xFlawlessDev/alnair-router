@@ -1,0 +1,23 @@
+{
+  "name": "@xflawlessdev/alnair-router-win32-x64",
+  "version": "0.1.0",
+  "description": "alnair-router binary for Windows x64",
+  "license": "MIT",
+  "homepage": "https://github.com/xFlawlessDev/alnair-router#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xFlawlessDev/alnair-router.git"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

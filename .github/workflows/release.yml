@@ -138,3 +138,65 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=docker
           cache-to: type=gha,mode=max,scope=docker
+
+  npm:
+    name: Publish npm
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify tag matches manifests
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          for dir in npm/alnair-router npm/alnair-router-darwin-arm64 npm/alnair-router-linux-x64 npm/alnair-router-win32-x64; do
+            actual=$(node -p "require('./$dir/package.json').version")
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$dir is at $actual but the tag is v$expected"
+              exit 1
+            fi
+          done
+
+      - name: Stage binaries into platform packages
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+
+          mkdir -p npm/alnair-router-linux-x64/bin
+          tar -xzf "dist/alnair-router-${tag}-x86_64-unknown-linux-gnu.tar.gz" -C npm/alnair-router-linux-x64/bin
+          chmod +x npm/alnair-router-linux-x64/bin/alnair-router
+
+          mkdir -p npm/alnair-router-darwin-arm64/bin
+          tar -xzf "dist/alnair-router-${tag}-aarch64-apple-darwin.tar.gz" -C npm/alnair-router-darwin-arm64/bin
+          chmod +x npm/alnair-router-darwin-arm64/bin/alnair-router
+
+          mkdir -p npm/alnair-router-win32-x64/bin
+          unzip -o "dist/alnair-router-${tag}-x86_64-pc-windows-msvc.zip" -d npm/alnair-router-win32-x64/bin
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for dir in npm/alnair-router-linux-x64 npm/alnair-router-win32-x64 npm/alnair-router-darwin-arm64 npm/alnair-router; do
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already published, skipping"
+              continue
+            fi
+            npm publish "./$dir" --provenance
+          done

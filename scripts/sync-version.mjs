@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Keeps every manifest in lockstep with the version standard-version wrote to
- * the root package.json: both crate manifests, the dashboard package, and the
- * resolved Cargo.lock entry.
+ * the root package.json: both crate manifests, the dashboard package, the npm
+ * wrapper packages, and the resolved Cargo.lock entry.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -29,11 +29,27 @@ if (web.version !== version) {
   writeFileSync(webPath, `${JSON.stringify(web, null, 2)}\n`);
 }
 
+const npmPaths = [
+  'npm/alnair-router/package.json',
+  'npm/alnair-router-darwin-arm64/package.json',
+  'npm/alnair-router-linux-x64/package.json',
+  'npm/alnair-router-win32-x64/package.json',
+];
+
+for (const path of npmPaths) {
+  const manifest = JSON.parse(readFileSync(path, 'utf8'));
+  manifest.version = version;
+  for (const name of Object.keys(manifest.optionalDependencies ?? {})) {
+    manifest.optionalDependencies[name] = version;
+  }
+  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
 execFileSync('cargo', ['update', '--offline', '-p', 'alnair-router', '-p', 'alnair-llm'], {
   stdio: 'inherit',
 });
 
 // stage what we touched so the standard-version release commit includes it
-execFileSync('git', ['add', 'Cargo.lock', webPath, ...crates], { stdio: 'inherit' });
+execFileSync('git', ['add', 'Cargo.lock', webPath, ...crates, ...npmPaths], { stdio: 'inherit' });
 
 console.log(`synced workspace manifests to v${version}`);
