@@ -61,10 +61,7 @@ impl Catalog {
             .iter()
             .map(|c| (c.name.clone(), c.clone()))
             .collect();
-        let connections_by_id = enabled
-            .iter()
-            .map(|c| (c.id.clone(), c.clone()))
-            .collect();
+        let connections_by_id = enabled.iter().map(|c| (c.id.clone(), c.clone())).collect();
 
         let aliases_by_prefix = self
             .aliases
@@ -149,9 +146,7 @@ impl Resolver {
         let combo_key = reference.to_ascii_lowercase();
         if self.known_combos.contains(&combo_key) {
             let Some(combo) = self.combos_by_name.get(&combo_key) else {
-                return Err(Error::NoRoute(format!(
-                    "combo '{reference}' is disabled"
-                )));
+                return Err(Error::NoRoute(format!("combo '{reference}' is disabled")));
             };
 
             if !path.insert(combo_key.clone()) {

@@ -135,9 +135,7 @@ impl OpenAiMessage {
     pub fn into_router_message(self) -> Result<RouterMessage> {
         let role = self.role.trim().to_ascii_lowercase();
         if role.is_empty() {
-            return Err(Error::BadRequest(
-                "message role is required".to_string(),
-            ));
+            return Err(Error::BadRequest("message role is required".to_string()));
         }
 
         // Assistant messages carrying tool calls are rebuilt as such, so the
@@ -150,9 +148,7 @@ impl OpenAiMessage {
                     Some(ToolCallSpec {
                         id: call.id.unwrap_or_else(|| "call_0".to_string()),
                         name: function.name.unwrap_or_default(),
-                        arguments: function
-                            .arguments
-                            .unwrap_or_else(|| "{}".to_string()),
+                        arguments: function.arguments.unwrap_or_else(|| "{}".to_string()),
                     })
                 })
                 .collect();
@@ -164,9 +160,9 @@ impl OpenAiMessage {
         }
 
         if role == "tool" {
-            let tool_call_id = self
-                .tool_call_id
-                .ok_or_else(|| Error::BadRequest("tool message requires tool_call_id".to_string()))?;
+            let tool_call_id = self.tool_call_id.ok_or_else(|| {
+                Error::BadRequest("tool message requires tool_call_id".to_string())
+            })?;
             return Ok(chat_backend::message_tool_result(
                 self.content.map(content_to_text).unwrap_or_default(),
                 tool_call_id,

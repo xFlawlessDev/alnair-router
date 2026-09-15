@@ -128,10 +128,7 @@ impl ComboRepository {
         Ok(Some(ComboWithEntries { combo, entries }))
     }
 
-    pub async fn get_by_name_with_entries(
-        &self,
-        name: &str,
-    ) -> Result<Option<ComboWithEntries>> {
+    pub async fn get_by_name_with_entries(&self, name: &str) -> Result<Option<ComboWithEntries>> {
         let Some(combo) = self.get_by_name(name).await? else {
             return Ok(None);
         };

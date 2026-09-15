@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::protocol::openai::{
-    ChatCompletionRequest, OpenAiContent, OpenAiImageUrl, OpenAiMessage, OpenAiContentPart,
+    ChatCompletionRequest, OpenAiContent, OpenAiContentPart, OpenAiImageUrl, OpenAiMessage,
     StopSequence,
 };
 use crate::upstream::chat_backend::RouterMessage;

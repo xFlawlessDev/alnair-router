@@ -1,5 +1,6 @@
 //! Storage layer tests against an in-memory SQLite database.
 
+use alnair_router::crypto::CredentialCipher;
 use alnair_router::db::Db;
 use alnair_router::db::repos::aliases::{AliasRepository, CreateAlias};
 use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey};
@@ -10,6 +11,14 @@ use alnair_router::{Error, Result};
 
 async fn db() -> Db {
     Db::connect_in_memory().await.expect("in-memory db")
+}
+
+fn test_cipher() -> std::sync::Arc<CredentialCipher> {
+    std::sync::Arc::new(CredentialCipher::ephemeral())
+}
+
+fn connection_repo(db: &Db) -> ConnectionRepository {
+    ConnectionRepository::new(db.pool.clone(), test_cipher())
 }
 
 fn connection(name: &str, provider_type: &str) -> CreateConnection {
@@ -41,14 +50,17 @@ async fn migrations_create_all_tables() {
         "connections",
         "usage_records",
     ] {
-        assert!(names.iter().any(|t| t == expected), "missing table {expected}");
+        assert!(
+            names.iter().any(|t| t == expected),
+            "missing table {expected}"
+        );
     }
 }
 
 #[tokio::test]
 async fn connection_create_and_read_back() {
     let db = db().await;
-    let repo = ConnectionRepository::new(db.pool.clone());
+    let repo = connection_repo(&db);
 
     let created = repo
         .create(connection("openai-main", "openai-compatible"))
@@ -68,7 +80,7 @@ async fn connection_create_and_read_back() {
 #[tokio::test]
 async fn connection_rejects_ollama_provider_type() {
     let db = db().await;
-    let repo = ConnectionRepository::new(db.pool.clone());
+    let repo = connection_repo(&db);
 
     let error = repo
         .create(connection("local", "ollama"))
@@ -79,9 +91,111 @@ async fn connection_rejects_ollama_provider_type() {
 }
 
 #[tokio::test]
+async fn connection_credentials_are_encrypted_at_rest() {
+    let db = db().await;
+    let cipher = test_cipher();
+    let repo = ConnectionRepository::new(db.pool.clone(), cipher.clone());
+
+    let created = repo
+        .create(connection("openai-main", "openai-compatible"))
+        .await
+        .expect("create connection");
+
+    // The repository returns plaintext to callers...
+    assert_eq!(created.api_key.as_deref(), Some("sk-test"));
+
+    // ...while the column only holds ciphertext.
+    let stored: String = sqlx::query_scalar("SELECT api_key FROM connections WHERE id = ?")
+        .bind(&created.id)
+        .fetch_one(&db.pool)
+        .await
+        .expect("raw api_key");
+
+    assert_ne!(stored, "sk-test");
+    assert!(CredentialCipher::is_encrypted(&stored));
+    assert_eq!(cipher.decrypt(&stored).expect("decrypt"), "sk-test");
+}
+
+#[tokio::test]
+async fn connection_update_keeps_the_existing_key_encrypted() {
+    let db = db().await;
+    let cipher = test_cipher();
+    let repo = ConnectionRepository::new(db.pool.clone(), cipher.clone());
+    let created = repo
+        .create(connection("main", "openai-compatible"))
+        .await
+        .expect("create");
+
+    let updated = repo
+        .update(
+            &created.id,
+            alnair_router::db::repos::connections::UpdateConnection {
+                name: Some("renamed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update");
+
+    assert_eq!(updated.api_key.as_deref(), Some("sk-test"));
+
+    let stored: String = sqlx::query_scalar("SELECT api_key FROM connections WHERE id = ?")
+        .bind(&created.id)
+        .fetch_one(&db.pool)
+        .await
+        .expect("raw api_key");
+
+    assert!(CredentialCipher::is_encrypted(&stored));
+    assert_eq!(cipher.decrypt(&stored).expect("decrypt"), "sk-test");
+}
+
+#[tokio::test]
+async fn boot_migration_encrypts_legacy_plaintext_credentials() {
+    let db = db().await;
+    sqlx::query(
+        "INSERT INTO connections
+            (id, name, provider_type, base_url, api_key, custom_headers, enabled, created_at, updated_at)
+         VALUES
+            ('legacy', 'legacy', 'openai-compatible', 'https://api.example.com/v1', 'sk-legacy', '{}', 1,
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&db.pool)
+    .await
+    .expect("insert legacy row");
+
+    let cipher = CredentialCipher::ephemeral();
+    let migrated = db.migrate_credentials(&cipher).await.expect("migrate");
+    assert_eq!(migrated, 1, "one plaintext row should be rewritten");
+
+    let stored: String = sqlx::query_scalar("SELECT api_key FROM connections WHERE id = 'legacy'")
+        .fetch_one(&db.pool)
+        .await
+        .expect("raw api_key");
+    assert!(CredentialCipher::is_encrypted(&stored));
+    assert_eq!(cipher.decrypt(&stored).expect("decrypt"), "sk-legacy");
+}
+
+#[tokio::test]
+async fn boot_migration_refuses_a_wrong_key() {
+    let db = db().await;
+    let writer = test_cipher();
+    let repo = ConnectionRepository::new(db.pool.clone(), writer);
+    repo.create(connection("main", "openai-compatible"))
+        .await
+        .expect("create");
+
+    let other = CredentialCipher::ephemeral();
+    let error = db
+        .migrate_credentials(&other)
+        .await
+        .expect_err("wrong key must fail");
+    assert!(matches!(error, Error::Config(_)));
+}
+
+#[tokio::test]
 async fn connection_update_rejects_unsupported_type() {
     let db = db().await;
-    let repo = ConnectionRepository::new(db.pool.clone());
+    let repo = connection_repo(&db);
     let created = repo
         .create(connection("main", "openai-compatible"))
         .await
@@ -104,7 +218,7 @@ async fn connection_update_rejects_unsupported_type() {
 #[tokio::test]
 async fn connection_name_is_unique() {
     let db = db().await;
-    let repo = ConnectionRepository::new(db.pool.clone());
+    let repo = connection_repo(&db);
     repo.create(connection("dup", "openai-compatible"))
         .await
         .expect("first");
@@ -119,7 +233,7 @@ async fn connection_name_is_unique() {
 #[tokio::test]
 async fn connection_custom_headers_roundtrip() {
     let db = db().await;
-    let repo = ConnectionRepository::new(db.pool.clone());
+    let repo = connection_repo(&db);
 
     let mut input = connection("headers", "openai-compatible");
     input
@@ -134,7 +248,7 @@ async fn connection_custom_headers_roundtrip() {
 #[tokio::test]
 async fn alias_prefix_is_normalized_and_fetched() {
     let db = db().await;
-    let connections = ConnectionRepository::new(db.pool.clone());
+    let connections = connection_repo(&db);
     let aliases = AliasRepository::new(db.pool.clone());
 
     let connection = connections
@@ -166,7 +280,7 @@ async fn alias_prefix_is_normalized_and_fetched() {
 #[tokio::test]
 async fn alias_rejects_prefix_with_slash() {
     let db = db().await;
-    let connections = ConnectionRepository::new(db.pool.clone());
+    let connections = connection_repo(&db);
     let aliases = AliasRepository::new(db.pool.clone());
     let connection = connections
         .create(connection("main", "openai-compatible"))
@@ -190,7 +304,7 @@ async fn alias_rejects_prefix_with_slash() {
 #[tokio::test]
 async fn alias_model_override_blank_is_stored_as_none() {
     let db = db().await;
-    let connections = ConnectionRepository::new(db.pool.clone());
+    let connections = connection_repo(&db);
     let aliases = AliasRepository::new(db.pool.clone());
     let connection = connections
         .create(connection("main", "openai-compatible"))
@@ -214,7 +328,7 @@ async fn alias_model_override_blank_is_stored_as_none() {
 #[tokio::test]
 async fn alias_delete_cascades_from_connection() {
     let db = db().await;
-    let connections = ConnectionRepository::new(db.pool.clone());
+    let connections = connection_repo(&db);
     let aliases = AliasRepository::new(db.pool.clone());
     let connection = connections
         .create(connection("main", "openai-compatible"))

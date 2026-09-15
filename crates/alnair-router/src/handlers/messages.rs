@@ -13,8 +13,8 @@ use crate::error::Result;
 use crate::handlers::shared::{StreamUsage, record_failed_attempts, router_headers};
 use crate::middleware::AuthenticatedKey;
 use crate::protocol::anthropic::{
-    AnthropicResponseBlock, AnthropicUsage, CountTokensResponse, MessagesRequest,
-    MessagesResponse, estimate_messages,
+    AnthropicResponseBlock, AnthropicUsage, CountTokensResponse, MessagesRequest, MessagesResponse,
+    estimate_messages,
 };
 use crate::state::AppState;
 use crate::upstream::ExecutedStream;
@@ -164,25 +164,25 @@ fn stream_response(
         let mut usage_state = usage_state.clone();
 
         let events: Vec<std::result::Result<Event, std::convert::Infallible>> = match chunk {
-            Ok(StreamChunk::Text(text)) => vec![Ok(Event::default()
-                .event("content_block_delta")
-                .data(
+            Ok(StreamChunk::Text(text)) => {
+                vec![Ok(Event::default().event("content_block_delta").data(
                     json!({
                         "type": "content_block_delta",
                         "index": 0,
                         "delta": { "type": "text_delta", "text": text }
                     })
                     .to_string(),
-                ))],
+                ))]
+            }
             Ok(StreamChunk::Thinking(_)) | Ok(StreamChunk::ToolCall { .. }) => Vec::new(),
             Ok(StreamChunk::Usage(usage)) => {
                 usage_state.record(Some(usage), "ok");
                 Vec::new()
             }
             Ok(StreamChunk::Done) => vec![
-                Ok(Event::default().event("content_block_stop").data(
-                    json!({ "type": "content_block_stop", "index": 0 }).to_string(),
-                )),
+                Ok(Event::default()
+                    .event("content_block_stop")
+                    .data(json!({ "type": "content_block_stop", "index": 0 }).to_string())),
                 Ok(Event::default().event("message_delta").data(
                     json!({
                         "type": "message_delta",

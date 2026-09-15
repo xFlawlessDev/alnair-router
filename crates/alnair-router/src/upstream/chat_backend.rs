@@ -154,9 +154,28 @@ pub struct GenerationOptions {
     pub frequency_penalty: Option<f64>,
 }
 
+/// Provider retry behaviour applied inside a single tier, before the executor
+/// fails over to the next one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// Retries after the first attempt fails, per tier.
+    pub max_retries_per_tier: usize,
+    /// Upper bound for the exponential retry delay, in milliseconds.
+    pub max_retry_delay_ms: u64,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries_per_tier: 2,
+            max_retry_delay_ms: 30_000,
+        }
+    }
+}
+
 impl GenerationOptions {
     /// Converts into the provider options struct.
-    fn to_stream_options(&self) -> LlmStreamOptions {
+    fn to_stream_options(&self, retry: RetryPolicy) -> LlmStreamOptions {
         LlmStreamOptions {
             temperature: self.temperature,
             top_p: self.top_p,
@@ -165,6 +184,8 @@ impl GenerationOptions {
             seed: self.seed,
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
+            max_retries: retry.max_retries_per_tier,
+            max_retry_delay_ms: retry.max_retry_delay_ms,
             ..Default::default()
         }
     }
@@ -224,6 +245,7 @@ pub fn stream(
     messages: Vec<RouterMessage>,
     api_key: Option<&str>,
     options: Option<&GenerationOptions>,
+    retry: RetryPolicy,
     tools: Option<Vec<serde_json::Value>>,
     custom_headers: BTreeMap<String, String>,
 ) -> Result<ChunkStream> {
@@ -242,9 +264,7 @@ pub fn stream(
         api_key,
         custom_headers,
     );
-    let stream_options = options
-        .map(GenerationOptions::to_stream_options)
-        .unwrap_or_default();
+    let stream_options = stream_options(options, retry);
 
     // The provider borrows `config` and `stream_options` for `'a`. Moving them
     // into the generator keeps the borrow valid for the stream's whole life
@@ -266,6 +286,15 @@ pub fn stream(
     });
 
     Ok(chunks)
+}
+
+/// Builds provider options, always applying the router's retry policy even
+/// when the request carried no generation options.
+fn stream_options(options: Option<&GenerationOptions>, retry: RetryPolicy) -> LlmStreamOptions {
+    match options {
+        Some(options) => options.to_stream_options(retry),
+        None => GenerationOptions::default().to_stream_options(retry),
+    }
 }
 
 /// Converts a vendored chunk into a router-owned chunk.
@@ -330,4 +359,42 @@ pub async fn collect(stream: ChunkStream) -> Result<CompletionResponse> {
 /// Convenience adapter so callers can treat the backend stream as a `Stream`.
 pub fn into_stream(chunks: ChunkStream) -> impl Stream<Item = Result<StreamChunk>> + Send {
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_policy_maps_into_provider_options() {
+        let policy = RetryPolicy {
+            max_retries_per_tier: 7,
+            max_retry_delay_ms: 1_234,
+        };
+
+        let options = GenerationOptions::default().to_stream_options(policy);
+
+        assert_eq!(options.max_retries, 7);
+        assert_eq!(options.max_retry_delay_ms, 1_234);
+    }
+
+    #[test]
+    fn retry_policy_default_is_conservative() {
+        let policy = RetryPolicy::default();
+        assert_eq!(policy.max_retries_per_tier, 2);
+        assert_eq!(policy.max_retry_delay_ms, 30_000);
+    }
+
+    #[test]
+    fn retry_policy_applies_even_without_generation_options() {
+        let policy = RetryPolicy {
+            max_retries_per_tier: 3,
+            max_retry_delay_ms: 456,
+        };
+
+        let options = stream_options(None, policy);
+
+        assert_eq!(options.max_retries, 3);
+        assert_eq!(options.max_retry_delay_ms, 456);
+    }
 }

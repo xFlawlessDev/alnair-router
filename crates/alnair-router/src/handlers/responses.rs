@@ -150,8 +150,9 @@ fn convert_input(
 ) -> Result<Vec<crate::upstream::chat_backend::RouterMessage>> {
     match input {
         ResponsesInput::Text(text) => Ok(vec![chat_backend::message_text("user", text)]),
-        ResponsesInput::Messages(messages) => {
-            messages.into_iter().map(OpenAiMessage::into_router_message).collect()
-        }
+        ResponsesInput::Messages(messages) => messages
+            .into_iter()
+            .map(OpenAiMessage::into_router_message)
+            .collect(),
     }
 }

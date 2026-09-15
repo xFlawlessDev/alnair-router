@@ -99,16 +99,14 @@ async fn complete_response(
                 role: "assistant",
                 content: completion.content,
             },
-            finish_reason: completion.finish_reason.unwrap_or_else(|| "stop".to_string()),
+            finish_reason: completion
+                .finish_reason
+                .unwrap_or_else(|| "stop".to_string()),
         }],
         usage: usage_payload(completion.usage),
     };
 
-    Ok((
-        router_headers(&target, attempt_count),
-        Json(body),
-    )
-        .into_response())
+    Ok((router_headers(&target, attempt_count), Json(body)).into_response())
 }
 
 /// Streaming path: forward chunks as OpenAI `chat.completion.chunk` SSE events.

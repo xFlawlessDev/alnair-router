@@ -5,10 +5,12 @@ Forward plan for the crate. Status is measured against the code as of
 
 **Legend:** `[ ]` not started · `[~]` partially done · `[x]` done
 
-**Not production-ready.** Three blockers, all in §P0: upstream credentials are
-stored **plaintext**, the admin API is **unauthenticated** (acceptable only while
-bound to loopback), and `/v1/web/fetch` has a **known SSRF bypass** via redirects
-and hostname resolution.
+**P0 is closed** (2026-09-15): credentials are encrypted at rest, the admin API
+enforces `server.admin_token` when configured (and refuses non-loopback binds
+without one unless explicitly overridden), `/v1/web/fetch` validates and pins
+every hop, the dead `[queue]` config is gone, and the retry contract is pinned
+and configurable. The router is still developer-facing: no rate limiting, no
+concurrency limiting, and the loopback admin API stays open by design.
 
 ---
 
@@ -21,87 +23,64 @@ Working today, verified by the test suite and a live smoke test:
 - [x] OpenAI-compatible: `/v1/chat/completions` (SSE + JSON), `/v1/responses`, `/v1/models`, `/v1/models/info`
 - [x] Anthropic-native: `/v1/messages` (correct event ordering), `/v1/messages/count_tokens`
 - [x] Thin proxying: embeddings, images, audio (speech + transcription), video (incl. async jobs), search
-- [x] `/v1/web/fetch` with SSRF guard
-- [x] Admin CRUD + usage stats, bearer auth on `/v1/*`
+- [x] `/v1/web/fetch` with a complete SSRF guard: scheme allowlist, DNS resolution + validation, pinned connections, per-hop redirect checks
+- [x] Admin CRUD + usage stats, bearer auth on `/v1/*`, optional admin-token auth on `/api/*`
 - [x] Router-issued API keys hashed with SHA-256
+- [x] Upstream credentials AES-256-GCM encrypted at rest; mandatory `secrets.key`; boot re-encryption of legacy rows
+- [x] Configurable retry contract with exponential backoff (`router.max_retries_per_tier`, `router.max_retry_delay_ms`)
 - [x] Own SQLite schema, migrations embedded via `sqlx::migrate!`
 
 ---
 
 ## P0 — Correctness and security
 
-These are the items where the current behaviour is either wrong or unsafe to
-ship to anything but a localhost developer.
+**All closed (2026-09-15).** Short notes on what landed; the sections previously
+here described the problems, which no longer exist.
 
-### P0.1 — Encrypt upstream credentials at rest
-`connections.api_key` is stored **plaintext** in SQLite (`src/db/repos/connections.rs`).
-Router-issued keys are hashed, but the credentials *to your providers* are not.
+### [x] P0.1 — Encrypt upstream credentials at rest
+`api_key` is AES-256-GCM encrypted (`src/crypto.rs`), keyed from `secrets.key`
+(64 hex characters or base64; mandatory — `config::validate` refuses to start
+without it). `ConnectionRepository` encrypts on write and decrypts on read;
+`Catalog::load` decrypts for resolution. `Db::migrate_credentials` rewrites
+legacy plaintext rows on boot and aborts when a stored value does not decrypt
+with the configured key. Tests: crypto round-trip/wrong-key, at-rest
+assertions, boot migration.
 
-- Add an encryption layer (AES-256-GCM, via a vetted crate such as `aes-gcm`)
-  keyed from an env var or OS keyring.
-- Migration to re-encrypt existing rows.
-- Deliberate fallback: if no key is configured, refuse to start rather than
-  silently storing plaintext.
-- Tests: round-trip, wrong-key failure, migration.
+### [x] P0.2 — Decide and enforce the admin API posture
+`middleware::require_admin_token` enforces `server.admin_token` on every
+`/api/*` route whenever the token is configured; tokens are compared via hashed
+digests so the check is not timing-observable. A non-loopback bind without a
+token is rejected at startup unless `server.allow_unauthenticated_admin = true`
+is set explicitly. The dashboard sends the token from its header key dialog.
+Tests: `tests/routes.rs`.
 
-### P0.2 — Decide and enforce the admin API posture
-Admin routes are **unauthenticated by design** (they mint the keys protecting
-`/v1/*`) and bind `127.0.0.1`. That is defensible for localhost, but nothing
-stops a user from setting `host = "0.0.0.0"`.
+### [x] P0.4 — Close the SSRF bypass in `/v1/web/fetch`
+`validate_fetch_url` allows only http(s), rejects localhost names and every
+private/loopback/link-local/unique-local/unspecified/broadcast address —
+including IPv4-mapped IPv6 forms — resolves hostnames and checks all resolved
+addresses, then `pinned_client` connects via `resolve_to_addrs` with
+`redirect::Policy::none`. Redirects are followed manually for up to five hops,
+each re-validated. Tests: address-range units, scheme rejection, route-level 400s.
 
-- Refuse to bind a non-loopback host when admin auth is off, unless an explicit
-  `i_understand_the_risk`-style flag is set.
-- Or add a separate admin token, distinct from client API keys.
-- Document the reverse-proxy requirement more prominently than a README note.
+### [x] P0.5 — Remove the dead `[queue]` config
+`QueueSection` is gone from `RouterConfig` and `router.example.toml`.
+Concurrency limiting remains a real feature under P1.1.
 
-### P0.4 — Close the SSRF bypass in `/v1/web/fetch`
-`is_private_url` (`src/handlers/media.rs:272`) is correct **for the URL it is
-given** — it blocks loopback, RFC-1918, link-local (incl. `169.254.169.254`),
-unique-local and unspecified addresses, and has tests for each. But it is only
-applied to the **initial** URL, and two bypasses remain:
-
-1. **Redirects.** The fetch uses a default `reqwest::Client`, which follows up to
-   10 redirects. `https://attacker.example/x` → `302 Location: http://169.254.169.254/latest/meta-data/`
-   is fetched without re-checking the guard.
-2. **Hostnames that are not IP literals.** `is_private_url` returns `false` for any
-   bare hostname (`_ => false`). A domain resolving to `127.0.0.1` — or DNS
-   rebinding between check and connect — passes.
-
-- Disable redirect following (`redirect(reqwest::redirect::Policy::none())`), or
-  re-validate every hop.
-- Resolve the hostname and validate the resolved IP(s) **before** connecting.
-- Consider blocking non-HTTP(S) schemes explicitly.
-
-This is exploitable by anything that can reach `/v1/web/fetch`, so it sits in P0
-alongside the credential and admin-auth issues.
-
-### P0.5 — Remove the dead `[queue]` config
-`QueueSection` (`src/config.rs`) is parsed and defaulted but **never read** — no
-`ChatQueueManager` exists in this package. It silently implies concurrency
-control that does not happen.
-
-- Either implement the limiter (see P1.1) or delete the section.
-- Do not leave config that lies.
-
-### P0.6 — Pin the retry contract
-Retry logic lives **inside the provider layer** (`src/llm/providers/common.rs`,
-`PROVIDER_MAX_RETRIES = 10`, retryable = 408/429/500/502/503/504), while the
-executor makes exactly **one** attempt per tier. This is the reverse of the
-original design note ("1 retry per target, then move on").
-
-Consequences to decide on:
-- A tier can burn up to 10 retries with backoff (default 30s, capped by
-  `max_retry_delay_ms`) before failover is even considered. Worst-case latency is
-  large and currently unconfigurable per-tier from the router.
-- Surface a `max_retries_per_tier` / overall deadline knob, and document the
-  actual behaviour.
+### [x] P0.6 — Pin the retry contract
+`router.max_retries_per_tier` (default 2) and `router.max_retry_delay_ms`
+(default 30 000) flow through `RetryPolicy` → `LlmStreamOptions` into both
+providers. Delay is 500 ms doubling per retry, capped; `Retry-After` wins. The
+policy now applies even when a request carries no generation options — the old
+`unwrap_or_default()` path silently fell back to 10 retries. Tests: retry-delay
+math, policy mapping, fallback timing.
 
 ---
 
 ## P1 — Completeness against 9router parity
 
-- [ ] **P1.1 Concurrency limiting.** Reintroduce a queue/limiter over upstream
-      calls — per-connection and global. This is what `[queue]` was meant to be.
+- [ ] **P1.1 Concurrency limiting.** Add a queue/limiter over upstream calls —
+      per-connection and global. (`[queue]` was deleted in P0.5; this is the real
+      feature.)
 - [ ] **P1.2 Rate limiting per client key.** Currently any valid key can hammer
       the router. Add token-bucket limits keyed by `api_key_id`, with 429 +
       `Retry-After`.
@@ -145,8 +124,9 @@ Required before this is a real standalone repo.
       `MIT OR Apache-2.0` but no license text is present. Pick one (or both) and
       add the file — a declared-but-missing license is worse than none.
 - [ ] **P3.2 CI.** No pipeline exists. Minimum: `cargo fmt --check`,
-      `cargo clippy -- -D warnings`, `cargo test` on Linux + Windows.
-      Note the vendored provider tests take ~45s, so caching matters.
+      `cargo clippy -- -D warnings`, `cargo test` on Linux + Windows, plus
+      `npm run check` + `npm test` for `apps/web`. Caching matters: the vendor
+      layer and retry-backoff tests dominate runtime.
 - [ ] **P3.3 Resolve vendored-code staleness.** `src/llm/` is a vendored
       provider stack with no external upstream to pull fixes from. Options:
       (a) accept the vendored copy as the source of truth, or (b) extract it
@@ -156,9 +136,8 @@ Required before this is a real standalone repo.
       add one with a non-root user and a volume for the SQLite DB.
 - [~] **P3.5 Dashboard / admin UI.** The Vue app in `apps/web` covers the full
       admin API (connections, aliases, combos, keys, usage) and runs via Vite in
-      development. Remaining: build/serve `dist/` from the Rust binary, and wire
-      the optional admin token into the `/api/*` auth middleware (the UI already
-      sends it when configured).
+      development; the backend now enforces the optional admin token the UI
+      sends. Remaining: build/serve `dist/` from the Rust binary.
 - [ ] **P3.6 End-to-end tests against a real provider.** The suite uses an
       in-process mock. Nothing verifies real OpenAI/Anthropic wire compatibility.
       Add a nightly/opt-in test gated on credentials.
@@ -180,10 +159,8 @@ deliberate exclusions so the package stays small:
 
 ## Suggested order
 
-1. P0.5 (delete the lying config) — trivial, immediate.
-2. P0.1, P0.2, P0.4 — the three things that make it unsafe beyond localhost
-   (plaintext credentials, unauthenticated admin, SSRF bypass).
-3. P3.1, P3.2 — cheap, and unblocks real collaboration.
-4. P2.1 — the per-request catalog reload is the first thing that will hurt at load.
-5. P1.1, P1.2 — concurrency and rate limiting, in that order.
-6. P1.3 onward — parity features.
+1. P2.1 — the per-request catalog reload is the first thing that will hurt at load.
+2. P3.1, P3.2 — LICENSE and CI, cheap, and unblocks real collaboration.
+3. P1.1, P1.2 — concurrency and rate limiting, in that order.
+4. P1.3 onward — parity features.
+5. P3.4, P3.5 remainder, P3.6 — container, onboarding the dashboard build, e2e tests.

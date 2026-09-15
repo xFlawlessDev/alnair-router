@@ -36,7 +36,13 @@ moves to the next one. Responses report which tier answered via
 
 ## Quick start
 
+Upstream credentials are encrypted at rest, so the router needs a key before it
+will start:
+
 ```bash
+# Required. 32 bytes as 64 hex characters (or base64). Keep it safe.
+export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"
+
 cargo run -p alnair-router
 ```
 
@@ -113,13 +119,12 @@ Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/usage`, `/api/usage/summary`.
 
-> Admin routes are unauthenticated by design: they manage the keys that
-> authenticate `/v1/*`, so they cannot require one themselves. Bind the server
-> to `127.0.0.1` and put it behind a reverse proxy before exposing it.
->
-> **Before exposing this beyond localhost, read [`docs/ROADMAP.md`](docs/ROADMAP.md) §P0.**
-> Upstream credentials are currently stored plaintext, and `/v1/web/fetch` has a
-> known SSRF bypass via redirects and hostname resolution.
+> Admin routes are open on loopback by default, because they mint the keys that
+> authenticate `/v1/*`. Set `server.admin_token` to require
+> `Authorization: Bearer <token>` on every `/api/*` request — this is enforced
+> whenever the token is configured. A non-loopback bind refuses to start
+> without one unless `server.allow_unauthenticated_admin = true` is set
+> explicitly.
 
 ## Documentation
 
@@ -131,6 +136,15 @@ Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
 Reads `$ALNAIR_ROUTER_HOME/config.toml` (default `~/.alnair-router/config.toml`),
 overridable by `ALNAIR_ROUTER__SECTION__KEY` env vars — e.g.
 `ALNAIR_ROUTER__SERVER__PORT=9000`.
+
+Key settings:
+
+- `secrets.key` — **required**; AES-256-GCM key for upstream credentials at rest.
+  Legacy plaintext rows are re-encrypted on boot.
+- `server.admin_token` — optional bearer token enforced on `/api/*`.
+- `router.max_retries_per_tier` (default 2) and `router.max_retry_delay_ms`
+  (default 30000) — provider retries inside one tier before failover, with
+  exponential backoff.
 
 See `crates/alnair-router/router.example.toml` for every option.
 
@@ -147,6 +161,7 @@ See `crates/alnair-router/router.example.toml` for every option.
 ```
 crates/alnair-router/src/
 ├── llm/                 # vendored provider stack (OpenAI + Anthropic native)
+├── crypto.rs            # AES-256-GCM credential encryption at rest
 ├── model/resolver.rs    # pure resolution: reference → ordered targets
 ├── upstream/
 │   ├── chat_backend.rs  # ← the ONLY file that may touch `crate::llm`

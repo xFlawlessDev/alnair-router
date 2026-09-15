@@ -29,11 +29,16 @@ pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504)
 }
 
+/// Absolute ceiling for provider retries, used as the `LlmStreamOptions`
+/// default. The router surfaces a lower per-tier value through `RetryPolicy`.
 pub(crate) const PROVIDER_MAX_RETRIES: usize = 10;
 
-pub(crate) fn retry_delay(max_retry_delay_ms: Option<u64>) -> Duration {
-    let delay = Duration::from_secs(30);
-    max_retry_delay_ms.map_or(delay, |max| delay.min(Duration::from_millis(max)))
+/// Exponential backoff for provider retries: 500 ms doubling per zero-based
+/// `attempt`, capped by `max_retry_delay_ms`. A `Retry-After` header, when
+/// present, wins over this.
+pub(crate) fn retry_delay(attempt: usize, max_retry_delay_ms: u64) -> Duration {
+    let factor = 1u64 << attempt.min(6);
+    Duration::from_millis(500u64.saturating_mul(factor).min(max_retry_delay_ms))
 }
 
 pub(crate) fn calculate_token_costs(
@@ -116,13 +121,17 @@ mod tests {
     }
 
     #[test]
-    fn retry_delay_defaults_to_thirty_seconds() {
-        assert_eq!(retry_delay(None), Duration::from_secs(30));
+    fn retry_delay_grows_exponentially() {
+        assert_eq!(retry_delay(0, 30_000), Duration::from_millis(500));
+        assert_eq!(retry_delay(1, 30_000), Duration::from_secs(1));
+        assert_eq!(retry_delay(2, 30_000), Duration::from_secs(2));
+        assert_eq!(retry_delay(3, 30_000), Duration::from_secs(4));
     }
 
     #[test]
-    fn retry_delay_respects_lower_maximum() {
-        assert_eq!(retry_delay(Some(1_000)), Duration::from_secs(1));
+    fn retry_delay_respects_the_cap() {
+        assert_eq!(retry_delay(3, 1_000), Duration::from_secs(1));
+        assert_eq!(retry_delay(10, 30_000), Duration::from_secs(30));
     }
 
     #[test]

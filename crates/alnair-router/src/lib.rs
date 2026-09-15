@@ -9,6 +9,7 @@
 //! to it is funnelled through [`upstream::chat_backend`].
 
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod handlers;

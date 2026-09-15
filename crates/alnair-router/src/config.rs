@@ -25,7 +25,7 @@ pub struct RouterConfig {
     pub server: ServerConfig,
     pub storage: StorageConfig,
     pub router: RoutingConfig,
-    pub queue: QueueSection,
+    pub secrets: SecretsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -35,14 +35,23 @@ pub struct ServerConfig {
     pub host: String,
     /// When false, `/v1/*` accepts requests without an `Authorization` header.
     pub require_api_key: bool,
-    /// Bearer token guarding the `/api/*` admin routes. Required whenever the
-    /// server binds a non-loopback host, because those routes can read upstream
-    /// credentials and mint client keys.
+    /// Bearer token guarding the `/api/*` admin routes. Enforced whenever it is
+    /// set, on loopback and beyond.
     pub admin_token: Option<String>,
+    /// Permit a non-loopback bind without an admin token. Dangerous: anyone who
+    /// can reach the port can read upstream credentials and mint client keys.
+    pub allow_unauthenticated_admin: bool,
     /// Extra origins permitted to call the API cross-origin. The embedded UI is
-    /// served same-origin and needs none of this, so the default is empty —
-    /// meaning no CORS layer is installed at all.
+    /// served same-origin and needs none of this, so the default is empty.
     pub cors_origins: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SecretsConfig {
+    /// 32-byte key, as 64 hex characters or base64, encrypting upstream
+    /// credentials at rest. Required: the router refuses to start without it.
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -56,15 +65,10 @@ pub struct StorageConfig {
 pub struct RoutingConfig {
     pub default_connection: Option<String>,
     pub max_attempts: usize,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct QueueSection {
-    pub enabled: bool,
-    pub max_concurrent: usize,
-    pub max_queue_size: usize,
-    pub timeout_secs: u64,
+    /// Retries inside a single tier before the executor fails over to the next.
+    pub max_retries_per_tier: usize,
+    /// Upper bound for the exponential provider retry delay, in milliseconds.
+    pub max_retry_delay_ms: u64,
 }
 
 impl Default for ServerConfig {
@@ -74,6 +78,7 @@ impl Default for ServerConfig {
             host: "127.0.0.1".to_string(),
             require_api_key: false,
             admin_token: None,
+            allow_unauthenticated_admin: false,
             cors_origins: Vec::new(),
         }
     }
@@ -84,17 +89,8 @@ impl Default for RoutingConfig {
         Self {
             default_connection: None,
             max_attempts: 5,
-        }
-    }
-}
-
-impl Default for QueueSection {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_concurrent: 4,
-            max_queue_size: 16,
-            timeout_secs: 300,
+            max_retries_per_tier: 2,
+            max_retry_delay_ms: 30_000,
         }
     }
 }
@@ -104,7 +100,9 @@ impl ServerConfig {
     pub fn binds_loopback(&self) -> bool {
         let host = self.host.trim().trim_matches(['[', ']']);
         matches!(host, "127.0.0.1" | "localhost" | "::1")
-            || host.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())
+            || host
+                .parse::<std::net::Ipv4Addr>()
+                .is_ok_and(|ip| ip.is_loopback())
     }
 
     /// Effective admin token, treating blank values as unset.
@@ -117,9 +115,7 @@ impl ServerConfig {
 
     /// True when `/api/*` must demand a bearer token.
     pub fn requires_admin_token(&self) -> bool {
-        // A non-loopback bind always requires the token; on loopback it is only
-        // required when the operator explicitly configured one.
-        !self.binds_loopback() || self.admin_token().is_some()
+        self.admin_token().is_some()
     }
 }
 
@@ -139,20 +135,37 @@ impl RouterConfig {
         }
     }
 
-    /// Rejects configurations that would expose unauthenticated admin routes.
+    /// Rejects configurations that would start the router unsafely.
     ///
-    /// Binding a non-loopback host without an `admin_token` would let anyone who
-    /// can reach the port read every upstream credential and mint API keys, so
-    /// the server refuses to start instead.
+    /// Two rules:
+    /// - a non-loopback bind needs an admin token unless the operator explicitly
+    ///   opts out with `server.allow_unauthenticated_admin`;
+    /// - a valid `secrets.key` is mandatory so upstream credentials are never
+    ///   stored in plaintext.
     pub fn validate(&self) -> Result<()> {
-        if !self.server.binds_loopback() && self.server.admin_token().is_none() {
+        if !self.server.binds_loopback()
+            && self.server.admin_token().is_none()
+            && !self.server.allow_unauthenticated_admin
+        {
             return Err(Error::Config(format!(
                 "refusing to bind non-loopback host '{}' without server.admin_token: \
-                 the /api routes are unauthenticated and expose upstream credentials. \
-                 Set ALNAIR_ROUTER__SERVER__ADMIN_TOKEN (or bind 127.0.0.1).",
+                 the /api routes expose upstream credentials and mint client keys. \
+                 Set ALNAIR_ROUTER__SERVER__ADMIN_TOKEN, or bind 127.0.0.1, or set \
+                 server.allow_unauthenticated_admin = true to override.",
                 self.server.host
             )));
         }
+
+        let Some(key) = &self.secrets.key else {
+            return Err(Error::Config(
+                "secrets.key is required: upstream credentials are encrypted at rest. \
+                 Generate one with `openssl rand -hex 32` and set \
+                 ALNAIR_ROUTER__SECRETS__KEY (or secrets.key in config.toml)."
+                    .to_string(),
+            ));
+        };
+        crate::crypto::parse_key(key)?;
+
         Ok(())
     }
 }
@@ -195,6 +208,14 @@ pub fn load() -> Result<RouterConfig> {
 mod tests {
     use super::*;
 
+    const TEST_SECRET: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    fn secrets() -> SecretsConfig {
+        SecretsConfig {
+            key: Some(TEST_SECRET.to_string()),
+        }
+    }
+
     fn server(host: &str, token: Option<&str>) -> ServerConfig {
         ServerConfig {
             host: host.to_string(),
@@ -206,23 +227,33 @@ mod tests {
     #[test]
     fn loopback_hosts_are_recognized() {
         for host in ["127.0.0.1", "localhost", "::1", "[::1]"] {
-            assert!(server(host, None).binds_loopback(), "{host} should be loopback");
+            assert!(
+                server(host, None).binds_loopback(),
+                "{host} should be loopback"
+            );
         }
         for host in ["0.0.0.0", "192.168.1.10", "example.com"] {
-            assert!(!server(host, None).binds_loopback(), "{host} should not be loopback");
+            assert!(
+                !server(host, None).binds_loopback(),
+                "{host} should not be loopback"
+            );
         }
     }
 
     #[test]
     fn blank_admin_token_counts_as_unset() {
         assert_eq!(server("127.0.0.1", Some("   ")).admin_token(), None);
-        assert_eq!(server("127.0.0.1", Some("secret")).admin_token(), Some("secret"));
+        assert_eq!(
+            server("127.0.0.1", Some("secret")).admin_token(),
+            Some("secret")
+        );
     }
 
     #[test]
     fn non_loopback_bind_without_token_is_rejected() {
         let config = RouterConfig {
             server: server("0.0.0.0", None),
+            secrets: secrets(),
             ..RouterConfig::default()
         };
 
@@ -234,6 +265,7 @@ mod tests {
     fn non_loopback_bind_with_token_is_allowed() {
         let config = RouterConfig {
             server: server("0.0.0.0", Some("secret")),
+            secrets: secrets(),
             ..RouterConfig::default()
         };
 
@@ -242,8 +274,26 @@ mod tests {
 
     #[test]
     fn loopback_bind_without_token_is_allowed() {
-        let config = RouterConfig::default();
+        let config = RouterConfig {
+            secrets: secrets(),
+            ..RouterConfig::default()
+        };
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn allow_unauthenticated_admin_permits_non_loopback_without_token() {
+        let config = RouterConfig {
+            server: ServerConfig {
+                allow_unauthenticated_admin: true,
+                ..server("0.0.0.0", None)
+            },
+            secrets: secrets(),
+            ..RouterConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+        assert!(!config.server.requires_admin_token());
     }
 
     #[test]
@@ -251,5 +301,33 @@ mod tests {
         assert!(server("127.0.0.1", Some("secret")).requires_admin_token());
         assert!(!server("127.0.0.1", None).requires_admin_token());
         assert!(server("0.0.0.0", Some("secret")).requires_admin_token());
+    }
+
+    #[test]
+    fn missing_secret_key_is_rejected() {
+        let error = RouterConfig::default().validate().expect_err("must refuse");
+        assert!(
+            error.to_string().contains("secrets.key"),
+            "message should name secrets.key: {error}"
+        );
+    }
+
+    #[test]
+    fn invalid_secret_key_is_rejected() {
+        let config = RouterConfig {
+            secrets: SecretsConfig {
+                key: Some("not-a-key".to_string()),
+            },
+            ..RouterConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn retry_defaults_are_pinned() {
+        let routing = RoutingConfig::default();
+        assert_eq!(routing.max_retries_per_tier, 2);
+        assert_eq!(routing.max_retry_delay_ms, 30_000);
     }
 }

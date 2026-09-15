@@ -63,11 +63,9 @@ impl ApiKeyRepository {
     }
 
     pub async fn list(&self) -> Result<Vec<ApiKey>> {
-        let rows = sqlx::query_as::<_, ApiKey>(
-            "SELECT * FROM api_keys ORDER BY created_at DESC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query_as::<_, ApiKey>("SELECT * FROM api_keys ORDER BY created_at DESC")
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 

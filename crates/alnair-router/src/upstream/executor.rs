@@ -14,7 +14,7 @@ use futures::stream::BoxStream;
 use crate::error::{Error, Result};
 use crate::model::ResolvedTarget;
 use crate::upstream::chat_backend::{
-    self, ChunkStream, GenerationOptions, ProviderRegistry, RouterMessage, StreamChunk,
+    self, ChunkStream, GenerationOptions, ProviderRegistry, RetryPolicy, RouterMessage, StreamChunk,
 };
 
 /// One upstream attempt and its outcome.
@@ -45,11 +45,17 @@ impl AttemptOutcome {
 #[derive(Clone)]
 pub struct Executor {
     registry: Arc<ProviderRegistry>,
+    retry: RetryPolicy,
 }
 
 impl Executor {
     pub fn new(registry: Arc<ProviderRegistry>) -> Self {
-        Self { registry }
+        Self::with_retry_policy(registry, RetryPolicy::default())
+    }
+
+    /// Builds an executor with an explicit provider retry policy.
+    pub fn with_retry_policy(registry: Arc<ProviderRegistry>, retry: RetryPolicy) -> Self {
+        Self { registry, retry }
     }
 
     /// Opens a stream from the first target that yields a first chunk without
@@ -82,6 +88,7 @@ impl Executor {
                 messages.clone(),
                 target.api_key.as_deref(),
                 options,
+                self.retry,
                 tools.clone(),
                 target.custom_headers.clone(),
             );

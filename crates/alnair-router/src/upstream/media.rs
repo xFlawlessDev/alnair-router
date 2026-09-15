@@ -69,7 +69,11 @@ impl MediaProxy {
             url = format!("{url}?{query}");
         }
 
-        let mut request = self.client.post(&url).body(body).headers(upstream_headers(target)?);
+        let mut request = self
+            .client
+            .post(&url)
+            .body(body)
+            .headers(upstream_headers(target)?);
         if let Some(content_type) = content_type {
             request = request.header(reqwest::header::CONTENT_TYPE, content_type);
         }
@@ -83,11 +87,7 @@ impl MediaProxy {
     }
 
     /// Forwards a GET (used for async video job polling).
-    pub async fn get(
-        &self,
-        target: &ResolvedTarget,
-        path: &str,
-    ) -> Result<reqwest::Response> {
+    pub async fn get(&self, target: &ResolvedTarget, path: &str) -> Result<reqwest::Response> {
         let url = join_url(&target.base_url, path);
         let response = self
             .client

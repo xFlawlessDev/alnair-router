@@ -16,6 +16,11 @@ use alnair_router::upstream::chat_backend::{self, ProviderRegistry};
 use axum::Router;
 use axum::routing::post;
 
+/// A fresh per-process key for the credential cipher under test.
+fn test_cipher() -> Arc<alnair_router::crypto::CredentialCipher> {
+    Arc::new(alnair_router::crypto::CredentialCipher::ephemeral())
+}
+
 /// Serves a minimal OpenAI-compatible SSE completion.
 ///
 /// The provider appends `/chat/completions` to the configured base URL, so the
@@ -75,8 +80,11 @@ async fn spawn_upstream(fail: bool, hits: Arc<AtomicUsize>) -> String {
 #[tokio::test]
 async fn combo_falls_through_to_the_second_tier() {
     let db = Db::connect_in_memory().await.expect("db");
-    let connections =
-        alnair_router::db::repos::connections::ConnectionRepository::new(db.pool.clone());
+    let cipher = test_cipher();
+    let connections = alnair_router::db::repos::connections::ConnectionRepository::new(
+        db.pool.clone(),
+        cipher.clone(),
+    );
 
     let hits = Arc::new(AtomicUsize::new(0));
     let good_url = spawn_upstream(false, hits.clone()).await;
@@ -138,9 +146,8 @@ async fn combo_falls_through_to_the_second_tier() {
         .await
         .expect("combo");
 
-    let catalog = Catalog::load(&db.pool).await.expect("catalog");
-    let resolver = catalog
-        .resolver(Some("good".to_string()), 5);
+    let catalog = Catalog::load(&db.pool, &cipher).await.expect("catalog");
+    let resolver = catalog.resolver(Some("good".to_string()), 5);
     let targets = resolver.resolve("rescue").expect("resolve");
     assert_eq!(targets.len(), 2, "combo should expand into two tiers");
 
@@ -170,8 +177,11 @@ async fn combo_falls_through_to_the_second_tier() {
 #[tokio::test]
 async fn all_tiers_failing_reports_the_last_error() {
     let db = Db::connect_in_memory().await.expect("db");
-    let connections =
-        alnair_router::db::repos::connections::ConnectionRepository::new(db.pool.clone());
+    let cipher = test_cipher();
+    let connections = alnair_router::db::repos::connections::ConnectionRepository::new(
+        db.pool.clone(),
+        cipher.clone(),
+    );
 
     let hits = Arc::new(AtomicUsize::new(0));
     // A tier that responds, but with a retryable failure status.
@@ -201,7 +211,7 @@ async fn all_tiers_failing_reports_the_last_error() {
         .await
         .ok();
 
-    let catalog = Catalog::load(&db.pool).await.expect("catalog");
+    let catalog = Catalog::load(&db.pool, &cipher).await.expect("catalog");
     let resolver = catalog.resolver(Some("flaky".to_string()), 5);
     let targets = resolver.resolve("flaky").expect("resolve");
 
@@ -215,5 +225,8 @@ async fn all_tiers_failing_reports_the_last_error() {
         )
         .await;
 
-    assert!(result.is_err(), "a failing upstream must not report success");
+    assert!(
+        result.is_err(),
+        "a failing upstream must not report success"
+    );
 }

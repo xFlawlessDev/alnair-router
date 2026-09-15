@@ -12,8 +12,17 @@ async fn main() -> Result<()> {
         .init();
 
     let config = config::load()?;
+    let cipher = alnair_router::crypto::CredentialCipher::from_config(&config.secrets)?;
     let db = Db::connect(&config).await?;
     db.migrate().await?;
+
+    let re_encrypted = db.migrate_credentials(&cipher).await?;
+    if re_encrypted > 0 {
+        tracing::info!(
+            count = re_encrypted,
+            "encrypted legacy plaintext connection credentials"
+        );
+    }
 
     let address = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&address)
@@ -23,10 +32,11 @@ async fn main() -> Result<()> {
     tracing::info!(
         address = %address,
         require_api_key = config.server.require_api_key,
+        admin_token = config.server.requires_admin_token(),
         "alnair-router listening"
     );
 
-    let app = build_router(AppState::new(config, db));
+    let app = build_router(AppState::new(config, db)?);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

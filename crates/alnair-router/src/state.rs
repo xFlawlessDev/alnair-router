@@ -5,35 +5,51 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::config::RouterConfig;
+use crate::crypto::CredentialCipher;
 use crate::db::Db;
 use crate::db::repos::aliases::AliasRepository;
 use crate::db::repos::api_keys::ApiKeyRepository;
 use crate::db::repos::combos::ComboRepository;
 use crate::db::repos::connections::ConnectionRepository;
 use crate::db::repos::usage::UsageRepository;
+use crate::error::Result;
 use crate::upstream::Executor;
-use crate::upstream::chat_backend::ProviderRegistry;
+use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
 
 /// State shared by every handler.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<RouterConfig>,
     pub pool: SqlitePool,
+    pub cipher: Arc<CredentialCipher>,
     pub executor: Executor,
 }
 
 impl AppState {
     /// Builds state from an open database and the shared provider registry.
-    pub fn new(config: RouterConfig, db: Db) -> Self {
-        Self {
+    ///
+    /// Fails when `secrets.key` is malformed; `config::load` validates this up
+    /// front, so the error only surfaces for callers that skip validation.
+    pub fn new(config: RouterConfig, db: Db) -> Result<Self> {
+        let cipher = Arc::new(CredentialCipher::from_config(&config.secrets)?);
+        let retry = RetryPolicy {
+            max_retries_per_tier: config.router.max_retries_per_tier,
+            max_retry_delay_ms: config.router.max_retry_delay_ms,
+        };
+
+        Ok(Self {
             config: Arc::new(config),
             pool: db.pool.clone(),
-            executor: Executor::new(Arc::new(ProviderRegistry::with_defaults())),
-        }
+            cipher,
+            executor: Executor::with_retry_policy(
+                Arc::new(ProviderRegistry::with_defaults()),
+                retry,
+            ),
+        })
     }
 
     pub fn connections(&self) -> ConnectionRepository {
-        ConnectionRepository::new(self.pool.clone())
+        ConnectionRepository::new(self.pool.clone(), self.cipher.clone())
     }
 
     pub fn aliases(&self) -> AliasRepository {
@@ -53,8 +69,8 @@ impl AppState {
     }
 
     /// Loads a routing snapshot and builds a resolver over it.
-    pub async fn resolver(&self) -> crate::error::Result<crate::model::Resolver> {
-        let catalog = crate::model::Catalog::load(&self.pool).await?;
+    pub async fn resolver(&self) -> Result<crate::model::Resolver> {
+        let catalog = crate::model::Catalog::load(&self.pool, &self.cipher).await?;
         Ok(catalog.resolver(
             self.config.router.default_connection.clone(),
             self.config.router.max_attempts,

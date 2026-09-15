@@ -9,20 +9,48 @@ use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
+const TEST_SECRET: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
 /// Builds an app over a fresh in-memory database.
 async fn app(require_api_key: bool) -> (axum::Router, Db) {
     let db = Db::connect_in_memory().await.expect("db");
     let mut config = RouterConfig::default();
     config.server.require_api_key = require_api_key;
+    config.secrets.key = Some(TEST_SECRET.to_string());
 
-    let state = AppState::new(config, db.clone());
+    let state = AppState::new(config, db.clone()).expect("state");
+    (build_router(state), db)
+}
+
+/// Builds an app whose admin routes are guarded by a bearer token.
+async fn app_with_admin_token(token: &str) -> (axum::Router, Db) {
+    let db = Db::connect_in_memory().await.expect("db");
+    let mut config = RouterConfig::default();
+    config.server.admin_token = Some(token.to_string());
+    config.secrets.key = Some(TEST_SECRET.to_string());
+
+    let state = AppState::new(config, db.clone()).expect("state");
     (build_router(state), db)
 }
 
 async fn get(app: &axum::Router, path: &str) -> (StatusCode, serde_json::Value) {
+    get_with_auth(app, path, None).await
+}
+
+async fn get_with_auth(
+    app: &axum::Router,
+    path: &str,
+    bearer: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder().uri(path);
+
+    if let Some(token) = bearer {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+
     let response = app
         .clone()
-        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+        .oneshot(builder.body(Body::empty()).unwrap())
         .await
         .expect("request");
 
@@ -384,6 +412,51 @@ async fn web_fetch_refuses_private_addresses() {
             .contains("private"),
         "should refuse a metadata address: {body}"
     );
+}
+
+#[tokio::test]
+async fn web_fetch_refuses_non_http_schemes() {
+    let (app, _db) = app(false).await;
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/web/fetch",
+        serde_json::json!({ "url": "file:///etc/passwd" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unsupported scheme"),
+        "should reject non-http schemes: {body}"
+    );
+}
+
+#[tokio::test]
+async fn admin_routes_require_the_token_when_configured() {
+    let (app, _db) = app_with_admin_token("admin-secret").await;
+
+    let (status, body) = get(&app, "/api/connections").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["type"], "authentication_error");
+
+    let (status, _) = get_with_auth(&app, "/api/connections", Some("wrong")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) = get_with_auth(&app, "/api/connections", Some("admin-secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.as_array().expect("array").is_empty());
+}
+
+#[tokio::test]
+async fn admin_routes_are_open_when_no_token_is_configured() {
+    let (app, _db) = app(false).await;
+
+    let (status, _) = get(&app, "/api/connections").await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

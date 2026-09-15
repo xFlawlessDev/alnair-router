@@ -47,7 +47,13 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/keys/{id}", delete(handlers::admin::delete_key))
         .route("/api/usage", get(handlers::admin::list_usage))
-        .route("/api/usage/summary", get(handlers::admin::usage_summary));
+        .route("/api/usage/summary", get(handlers::admin::usage_summary))
+        // Enforced only when `server.admin_token` is configured; loopback
+        // without a token keeps the documented frictionless posture.
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::require_admin_token,
+        ));
 
     let v1 = Router::new()
         .route(

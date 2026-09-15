@@ -9,16 +9,29 @@
 [server]
 # Port the router listens on.
 port = 7878
-# Interface to bind. Keep 127.0.0.1 unless you have a reverse proxy in front:
-# the admin API is unauthenticated and can mint API keys.
+# Interface to bind. Anything non-loopback needs an admin token (below).
 host = "127.0.0.1"
 # When false, /v1/* accepts requests without an Authorization header.
 # Convenient for localhost development; set true for anything reachable.
 require_api_key = false
+# Bearer token guarding /api/*. Enforced whenever it is set, including on
+# loopback. Required for a non-loopback bind unless the opt-out below is used.
+# admin_token = "change-me"
+# Explicitly permit a non-loopback bind without an admin token. The admin API
+# reads upstream credentials and mints client keys — only for trusted networks.
+allow_unauthenticated_admin = false
+# Extra origins permitted to call the API cross-origin. Empty by default; the
+# dashboard is served same-origin.
+# cors_origins = ["https://admin.example.com"]
 
 [storage]
 # SQLite URL. Leave empty to use $ALNAIR_ROUTER_HOME/db/router.sqlite.
 url = ""
+
+[secrets]
+# REQUIRED. 32-byte key encrypting upstream credentials at rest, as 64 hex
+# characters or base64. Generate one with `openssl rand -hex 32`.
+# key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 
 [router]
 # Connection used for bare model names with no `prefix/` segment.
@@ -26,10 +39,8 @@ url = ""
 default_connection = "openai-main"
 # Maximum number of fallback tiers attempted for a single request.
 max_attempts = 5
-
-[queue]
-# Reserved for upstream concurrency limiting.
-enabled = true
-max_concurrent = 4
-max_queue_size = 16
-timeout_secs = 300
+# Provider retries inside a single tier before the executor moves to the next
+# tier. A `Retry-After` response header always wins over the local delay.
+max_retries_per_tier = 2
+# Upper bound for the exponential retry delay (500 ms doubling per retry).
+max_retry_delay_ms = 30000

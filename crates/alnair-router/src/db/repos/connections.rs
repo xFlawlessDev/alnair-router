@@ -1,11 +1,13 @@
 //! Upstream provider endpoint records.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
+use crate::crypto::CredentialCipher;
 use crate::error::{Error, Result};
 
 /// The two upstream families supported by the router.
@@ -32,6 +34,14 @@ impl Connection {
     /// Parses `custom_headers` JSON into a header map. Malformed values yield an empty map.
     pub fn headers(&self) -> BTreeMap<String, String> {
         serde_json::from_str(&self.custom_headers).unwrap_or_default()
+    }
+
+    /// Decrypts the stored `api_key` in place.
+    pub fn decrypt_api_key(&mut self, cipher: &CredentialCipher) -> Result<()> {
+        if let Some(stored) = self.api_key.take() {
+            self.api_key = Some(cipher.decrypt(&stored)?);
+        }
+        Ok(())
     }
 }
 
@@ -79,20 +89,26 @@ pub fn validate_provider_type(provider_type: &str) -> Result<()> {
 
 pub struct ConnectionRepository {
     pool: SqlitePool,
+    cipher: Arc<CredentialCipher>,
 }
 
 impl ConnectionRepository {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, cipher: Arc<CredentialCipher>) -> Self {
+        Self { pool, cipher }
+    }
+
+    /// Decrypts the `api_key` of a row read from the database.
+    fn decrypt(&self, mut connection: Connection) -> Result<Connection> {
+        connection.decrypt_api_key(&self.cipher)?;
+        Ok(connection)
     }
 
     pub async fn list(&self) -> Result<Vec<Connection>> {
-        let rows = sqlx::query_as::<_, Connection>(
-            "SELECT * FROM connections ORDER BY name ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
+        let rows = sqlx::query_as::<_, Connection>("SELECT * FROM connections ORDER BY name ASC")
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.into_iter().map(|row| self.decrypt(row)).collect()
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<Connection>> {
@@ -100,7 +116,8 @@ impl ConnectionRepository {
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row)
+
+        row.map(|row| self.decrypt(row)).transpose()
     }
 
     pub async fn get_by_name(&self, name: &str) -> Result<Option<Connection>> {
@@ -108,7 +125,8 @@ impl ConnectionRepository {
             .bind(name)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row)
+
+        row.map(|row| self.decrypt(row)).transpose()
     }
 
     pub async fn create(&self, input: CreateConnection) -> Result<Connection> {
@@ -125,6 +143,10 @@ impl ConnectionRepository {
         let now = Utc::now();
         let headers = serde_json::to_string(&input.custom_headers)
             .map_err(|error| Error::BadRequest(format!("invalid custom_headers: {error}")))?;
+        let api_key = match normalized_secret(input.api_key.as_deref()) {
+            Some(value) => Some(self.cipher.encrypt(&value)?),
+            None => None,
+        };
 
         sqlx::query(
             "INSERT INTO connections (id, name, provider_type, base_url, api_key, custom_headers, enabled, created_at, updated_at)
@@ -134,7 +156,7 @@ impl ConnectionRepository {
         .bind(name)
         .bind(&input.provider_type)
         .bind(input.base_url.trim())
-        .bind(&input.api_key)
+        .bind(&api_key)
         .bind(headers)
         .bind(i64::from(input.enabled))
         .bind(now)
@@ -157,7 +179,11 @@ impl ConnectionRepository {
             validate_provider_type(provider_type)?;
         }
 
-        let name = input.name.as_deref().map(str::trim).unwrap_or(&existing.name);
+        let name = input
+            .name
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&existing.name);
         if name.is_empty() {
             return Err(Error::BadRequest("name is required".to_string()));
         }
@@ -174,8 +200,16 @@ impl ConnectionRepository {
             return Err(Error::BadRequest("base_url is required".to_string()));
         }
         let api_key = match &input.api_key {
-            Some(value) => value.clone(),
-            None => existing.api_key.clone(),
+            Some(Some(value)) => match normalized_secret(Some(value)) {
+                Some(value) => Some(self.cipher.encrypt(&value)?),
+                None => None,
+            },
+            Some(None) => None,
+            None => match &existing.api_key {
+                // `existing` was decrypted on read; re-encrypt before write.
+                Some(value) => Some(self.cipher.encrypt(value)?),
+                None => None,
+            },
         };
         let headers = match &input.custom_headers {
             Some(map) => serde_json::to_string(map)
@@ -212,4 +246,12 @@ impl ConnectionRepository {
             .await?;
         Ok(result.rows_affected() > 0)
     }
+}
+
+/// Trims a secret and treats blanks as absent.
+fn normalized_secret(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }

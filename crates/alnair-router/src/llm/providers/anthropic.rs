@@ -10,8 +10,8 @@ use crate::llm::model_config::{
 };
 use crate::llm::provider::LlmProvider;
 use crate::llm::providers::common::{
-    PROVIDER_MAX_RETRIES, calculate_token_costs, is_retryable_status, normalize_base_url,
-    parse_tool_arguments_strict, retry_after_delay, retry_delay,
+    calculate_token_costs, is_retryable_status, normalize_base_url, parse_tool_arguments_strict,
+    retry_after_delay, retry_delay,
 };
 use crate::llm::providers::sse::{SseLineBuffer, parse_data_line};
 use crate::llm::types::{ChatError, ContentPart, LlmStreamChunk, Message, MessageContent};
@@ -643,10 +643,11 @@ async fn send_anthropic_request_with_retry(
     api_key: &str,
     custom_headers: &std::collections::BTreeMap<String, String>,
     request_body: &AnthropicRequest,
-    max_retry_delay_ms: Option<u64>,
+    max_retry_delay_ms: u64,
+    max_retries: usize,
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
-    for attempt in 0..=PROVIDER_MAX_RETRIES {
+    for attempt in 0..=max_retries {
         let request = client
             .post(endpoint)
             .header("x-api-key", api_key)
@@ -655,28 +656,26 @@ async fn send_anthropic_request_with_retry(
             .json(request_body);
         let request = apply_custom_headers(request, custom_headers)?;
         match request.send().await {
-            Ok(response)
-                if is_retryable_status(response.status()) && attempt < PROVIDER_MAX_RETRIES =>
-            {
+            Ok(response) if is_retryable_status(response.status()) && attempt < max_retries => {
                 let status = response.status();
                 let delay = retry_after_delay(response.headers())
-                    .unwrap_or_else(|| retry_delay(max_retry_delay_ms));
+                    .unwrap_or_else(|| retry_delay(attempt, max_retry_delay_ms));
                 tracing::warn!(
                     status = %status,
                     retry = attempt + 1,
-                    max_retries = PROVIDER_MAX_RETRIES,
+                    max_retries = max_retries,
                     ?delay,
                     "Anthropic request returned retryable status; retrying"
                 );
                 tokio::time::sleep(delay).await;
             }
             Ok(response) => return Ok(response),
-            Err(error) if attempt < PROVIDER_MAX_RETRIES => {
-                let delay = retry_delay(max_retry_delay_ms);
+            Err(error) if attempt < max_retries => {
+                let delay = retry_delay(attempt, max_retry_delay_ms);
                 tracing::warn!(
                     error = %error,
                     retry = attempt + 1,
-                    max_retries = PROVIDER_MAX_RETRIES,
+                    max_retries = max_retries,
                     ?delay,
                     "Anthropic request failed; retrying"
                 );
@@ -724,7 +723,8 @@ impl LlmProvider for AnthropicNativeProvider {
                 api_key,
                 &custom_headers,
                 &request,
-                Some(options.max_retry_delay_ms),
+                options.max_retry_delay_ms,
+                options.max_retries,
             )
             .await
             {

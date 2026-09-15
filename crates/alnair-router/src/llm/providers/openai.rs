@@ -5,11 +5,13 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tracing::warn;
 
-use crate::llm::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel, apply_custom_headers};
+use crate::llm::model_config::{
+    LlmStreamOptions, ModelConfig, ThinkingLevel, apply_custom_headers,
+};
 use crate::llm::provider::LlmProvider;
 use crate::llm::providers::common::{
-    PROVIDER_MAX_RETRIES, calculate_token_costs, is_retryable_status, normalize_base_url,
-    parse_tool_arguments_strict, retry_after_delay, retry_delay,
+    calculate_token_costs, is_retryable_status, normalize_base_url, parse_tool_arguments_strict,
+    retry_after_delay, retry_delay,
 };
 use crate::llm::providers::sse::{SseLineBuffer, parse_data_line};
 use crate::llm::types::{ChatError, LlmStreamChunk, Message};
@@ -79,7 +81,8 @@ impl OpenAiProvider {
                 api_key.as_deref(),
                 &custom_headers,
                 &request_body,
-                Some(options.max_retry_delay_ms),
+                options.max_retry_delay_ms,
+                options.max_retries,
             )
             .await
             {
@@ -118,7 +121,8 @@ impl OpenAiProvider {
                         api_key.as_deref(),
                         &custom_headers,
                         &request_body,
-                        Some(options.max_retry_delay_ms),
+                        options.max_retry_delay_ms,
+                        options.max_retries,
                     )
                     .await
                     {
@@ -149,7 +153,8 @@ impl OpenAiProvider {
                         api_key.as_deref(),
                         &custom_headers,
                         &request_body,
-                        Some(options.max_retry_delay_ms),
+                        options.max_retry_delay_ms,
+                        options.max_retries,
                     )
                     .await
                     {
@@ -1187,33 +1192,32 @@ async fn send_openai_request_with_retry(
     api_key: Option<&str>,
     custom_headers: &std::collections::BTreeMap<String, String>,
     request_body: &serde_json::Value,
-    max_retry_delay_ms: Option<u64>,
+    max_retry_delay_ms: u64,
+    max_retries: usize,
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
-    for attempt in 0..=PROVIDER_MAX_RETRIES {
+    for attempt in 0..=max_retries {
         match send_openai_request(client, endpoint, api_key, custom_headers, request_body).await {
-            Ok(response)
-                if is_retryable_status(response.status()) && attempt < PROVIDER_MAX_RETRIES =>
-            {
+            Ok(response) if is_retryable_status(response.status()) && attempt < max_retries => {
                 let status = response.status();
                 let delay = retry_after_delay(response.headers())
-                    .unwrap_or_else(|| retry_delay(max_retry_delay_ms));
+                    .unwrap_or_else(|| retry_delay(attempt, max_retry_delay_ms));
                 warn!(
                     status = %status,
                     retry = attempt + 1,
-                    max_retries = PROVIDER_MAX_RETRIES,
+                    max_retries = max_retries,
                     ?delay,
                     "OpenAI request returned retryable status; retrying"
                 );
                 tokio::time::sleep(delay).await;
             }
             Ok(response) => return Ok(response),
-            Err(error) if attempt < PROVIDER_MAX_RETRIES => {
-                let delay = retry_delay(max_retry_delay_ms);
+            Err(error) if attempt < max_retries => {
+                let delay = retry_delay(attempt, max_retry_delay_ms);
                 warn!(
                     error = %error,
                     retry = attempt + 1,
-                    max_retries = PROVIDER_MAX_RETRIES,
+                    max_retries = max_retries,
                     ?delay,
                     "OpenAI request failed; retrying"
                 );

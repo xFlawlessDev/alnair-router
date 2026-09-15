@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::llm::providers::PROVIDER_MAX_RETRIES;
 use crate::llm::types::{ChatError, GenerationOptions, ProviderType};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -69,7 +70,7 @@ pub fn known_cost_rates(model_id: &str) -> Option<ModelCostRates> {
 }
 
 /// Options passed to a single LLM streaming call.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LlmStreamOptions {
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
@@ -85,7 +86,33 @@ pub struct LlmStreamOptions {
     pub cache_retention: CacheRetention,
     pub connect_timeout_ms: Option<u64>,
     pub idle_timeout_ms: Option<u64>,
+    /// Upper bound for the exponential retry delay, in milliseconds.
     pub max_retry_delay_ms: u64,
+    /// Retries after the first attempt fails, inside one provider call.
+    pub max_retries: usize,
+}
+
+impl Default for LlmStreamOptions {
+    fn default() -> Self {
+        Self {
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            seed: None,
+            stop: None,
+            repeat_penalty: None,
+            num_ctx: None,
+            thinking_level: None,
+            cache_retention: CacheRetention::None,
+            connect_timeout_ms: None,
+            idle_timeout_ms: None,
+            max_retry_delay_ms: 30_000,
+            max_retries: PROVIDER_MAX_RETRIES,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
@@ -198,6 +225,7 @@ impl From<&GenerationOptions> for LlmStreamOptions {
             connect_timeout_ms: None,
             idle_timeout_ms: None,
             max_retry_delay_ms: 30_000,
+            max_retries: PROVIDER_MAX_RETRIES,
         }
     }
 }
@@ -264,12 +292,14 @@ mod tests {
 
     #[test]
     fn model_config_roundtrip_serde() {
-        let config =
-            ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
+        let config = ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
         let encoded = serde_json::to_string(&config).expect("serialize model config");
         let decoded: ModelConfig =
             serde_json::from_str(&encoded).expect("deserialize model config");
-        assert!(matches!(decoded.provider_type, ProviderType::OpenaiCompatible));
+        assert!(matches!(
+            decoded.provider_type,
+            ProviderType::OpenaiCompatible
+        ));
         assert_eq!(decoded.base_url, "https://api.example.com");
         assert_eq!(decoded.model_id, "gpt-4o");
         assert_eq!(decoded.context_window, 128_000);
@@ -299,8 +329,7 @@ mod tests {
             cache_read_per_million_usd: Some(0.12),
             cache_write_per_million_usd: Some(0.34),
         };
-        let mut config =
-            ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
+        let mut config = ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
         config.cost_rates = Some(custom.clone());
 
         let rates = config.effective_cost_rates().expect("custom rates");
@@ -338,6 +367,14 @@ mod tests {
             options.thinking_level,
             Some(ThinkingLevel::Medium)
         ));
+        assert_eq!(options.max_retry_delay_ms, 30_000);
+        assert_eq!(options.max_retries, PROVIDER_MAX_RETRIES);
+    }
+
+    #[test]
+    fn llm_stream_options_default_retries_are_pinned() {
+        let options = LlmStreamOptions::default();
+        assert_eq!(options.max_retries, PROVIDER_MAX_RETRIES);
         assert_eq!(options.max_retry_delay_ms, 30_000);
     }
 }

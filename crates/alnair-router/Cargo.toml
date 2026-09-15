@@ -11,6 +11,7 @@ name = "alnair-router"
 path = "src/main.rs"
 
 [dependencies]
+aes-gcm = "0.10"
 async-stream = "0.3"
 axum = { version = "0.8", features = ["macros", "json", "ws"] }
 base64 = "0.22"

@@ -83,11 +83,10 @@ impl AliasRepository {
     }
 
     pub async fn list(&self) -> Result<Vec<Alias>> {
-        let rows = sqlx::query_as::<_, Alias>(
-            "SELECT * FROM aliases ORDER BY sort_order ASC, prefix ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query_as::<_, Alias>("SELECT * FROM aliases ORDER BY sort_order ASC, prefix ASC")
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows)
     }
 

@@ -73,7 +73,12 @@ pub async fn create_alias(
 ) -> Result<impl IntoResponse> {
     // An alias that points at a missing connection would fail at request time;
     // reject it up front instead.
-    if state.connections().get(&input.connection_id).await?.is_none() {
+    if state
+        .connections()
+        .get(&input.connection_id)
+        .await?
+        .is_none()
+    {
         return Err(Error::BadRequest(format!(
             "connection '{}' does not exist",
             input.connection_id

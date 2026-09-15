@@ -62,8 +62,18 @@ fn entry(combo_id: &str, model_ref: &str, position: i64) -> ComboEntry {
 fn catalog() -> Catalog {
     Catalog {
         connections: vec![
-            connection("c1", "openai-main", "openai-compatible", "https://openai.test/v1"),
-            connection("c2", "anthropic-main", "anthropic-native", "https://anthropic.test/v1"),
+            connection(
+                "c1",
+                "openai-main",
+                "openai-compatible",
+                "https://openai.test/v1",
+            ),
+            connection(
+                "c2",
+                "anthropic-main",
+                "anthropic-native",
+                "https://anthropic.test/v1",
+            ),
         ],
         aliases: vec![
             alias("glm", "c1", None),
@@ -182,7 +192,9 @@ fn alias_with_empty_model_segment_is_rejected() {
 fn disabled_alias_is_not_resolvable() {
     let mut catalog = catalog();
     catalog.aliases[0].enabled = 0;
-    let error = resolver(&catalog).resolve("glm/glm-5.1").expect_err("must fail");
+    let error = resolver(&catalog)
+        .resolve("glm/glm-5.1")
+        .expect_err("must fail");
 
     assert!(matches!(error, Error::UnknownModel(_)));
 }
@@ -191,7 +203,9 @@ fn disabled_alias_is_not_resolvable() {
 fn disabled_connection_makes_alias_unroutable() {
     let mut catalog = catalog();
     catalog.connections[0].enabled = 0;
-    let error = resolver(&catalog).resolve("glm/glm-5.1").expect_err("must fail");
+    let error = resolver(&catalog)
+        .resolve("glm/glm-5.1")
+        .expect_err("must fail");
 
     assert!(matches!(error, Error::NoRoute(_)));
 }
@@ -200,7 +214,9 @@ fn disabled_connection_makes_alias_unroutable() {
 fn disabled_combo_is_not_resolvable() {
     let mut catalog = catalog();
     catalog.combos[0].enabled = 0;
-    let error = resolver(&catalog).resolve("free forever").expect_err("must fail");
+    let error = resolver(&catalog)
+        .resolve("free forever")
+        .expect_err("must fail");
 
     // A known-but-disabled combo must not silently fall through to the
     // default connection as if it were a bare model name.
@@ -221,8 +237,12 @@ fn combo_skips_disabled_entries() {
 fn nested_combos_are_flattened_in_order() {
     let mut catalog = catalog();
     catalog.combos.push(combo("combo2", "outer"));
-    catalog.combo_entries.push(entry("combo2", "free forever", 0));
-    catalog.combo_entries.push(entry("combo2", "glm/glm-5.1", 1));
+    catalog
+        .combo_entries
+        .push(entry("combo2", "free forever", 0));
+    catalog
+        .combo_entries
+        .push(entry("combo2", "glm/glm-5.1", 1));
 
     let targets = resolver(&catalog).resolve("outer").expect("resolve");
 
@@ -241,7 +261,9 @@ fn combo_cycle_is_broken_without_hanging() {
     catalog.combo_entries.push(entry("comboA", "b", 0));
     catalog.combo_entries.push(entry("comboB", "a", 0));
     // Give the cycle a real leaf so resolution produces something.
-    catalog.combo_entries.push(entry("comboA", "glm/glm-5.1", 1));
+    catalog
+        .combo_entries
+        .push(entry("comboA", "glm/glm-5.1", 1));
 
     let targets = resolver(&catalog).resolve("a").expect("resolve");
 
@@ -278,9 +300,7 @@ fn deep_nesting_beyond_max_depth_is_rejected() {
     }
 
     let resolver = catalog.resolver(Some("openai-main".to_string()), 5);
-    let error = resolver
-        .resolve("level0")
-        .expect_err("depth cap must trip");
+    let error = resolver.resolve("level0").expect_err("depth cap must trip");
 
     assert!(matches!(error, Error::BadRequest(_)));
 }
@@ -312,7 +332,10 @@ fn custom_headers_flow_into_target() {
         serde_json::to_string(&headers).expect("serialize headers");
 
     let targets = resolver(&catalog).resolve("glm/glm-5.1").expect("resolve");
-    assert_eq!(targets[0].custom_headers.get("X-Org").map(String::as_str), Some("acme"));
+    assert_eq!(
+        targets[0].custom_headers.get("X-Org").map(String::as_str),
+        Some("acme")
+    );
 }
 
 #[test]
