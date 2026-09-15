@@ -21,6 +21,7 @@ Note: `pnpm-workspace.yaml` here is pnpm's settings file (single package, no `pa
 - `src/types/api.ts` — wire types mirroring the Rust repositories (snake_case fields).
 - `src/pages/` — route-level views (Overview, Connections, Aliases, Combos, Keys, Usage, Console, About).
 - `src/components/` — app components; `src/components/usage/ProviderTopology.vue` is the Vue Flow graph driven by `GET /api/activity` (animated edges only for in-flight connections).
+- `src/components/Logo.vue` — brand mark rendered from the shared `assets/alnair-white.svg` at the repo root via the `@assets` alias (declared in both `vite.config.ts` and `vitest.config.ts`, with `server.fs.allow`; keep the two in sync).
 - `src/components/ui/` is the untouched shadcn-vue primitive set — preserve its API.
 - `src/router/` — route table; page titles live in route meta.
 

@@ -3,12 +3,12 @@ import { computed } from 'vue';
 import { Handle, Position, VueFlow, type Edge, type Node } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
-import { Waypoints } from '@lucide/vue';
 
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 
+import Logo from '@/components/Logo.vue';
 import { formatLatency, formatNumber } from '@/lib/format';
 import { buildTopology, type TopologyNodeData } from '@/lib/topology';
 import type { ConnectionActivity } from '@/types/api';
@@ -47,7 +47,7 @@ function averageLatency(connection: ConnectionActivity): number {
         <div
           class="relative flex size-24 flex-col items-center justify-center gap-1 rounded-full border-2 bg-background shadow-sm"
         >
-          <Waypoints class="size-5" />
+          <Logo class="size-6" />
           <span class="text-[10px] font-medium">Router</span>
           <Handle type="target" :position="Position.Left" id="left" />
           <Handle type="target" :position="Position.Right" id="right" />

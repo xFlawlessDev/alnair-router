@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Info, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Terminal, Waypoints } from '@lucide/vue';
+import { Info, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Terminal } from '@lucide/vue';
 import type { Component } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
+import Logo from '@/components/Logo.vue';
 import {
   Sidebar,
   SidebarContent,
@@ -47,11 +48,7 @@ const isActive = (path: string): boolean => route.path === path;
         <SidebarMenuItem>
           <SidebarMenuButton size="lg" as-child tooltip="Alnair Router">
             <RouterLink to="/">
-              <span
-                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-              >
-                <Waypoints class="size-4" />
-              </span>
+              <Logo class="size-8 shrink-0" />
               <span
                 class="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden"
               >

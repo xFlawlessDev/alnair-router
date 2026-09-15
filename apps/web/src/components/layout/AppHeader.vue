@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { KeyRound, Waypoints } from '@lucide/vue';
+import { KeyRound } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { toast } from 'vue-sonner';
 
+import Logo from '@/components/Logo.vue';
 import ThemeToggle from '@/components/layout/ThemeToggle.vue';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,11 +48,7 @@ function saveToken(): void {
       <SidebarTrigger class="shrink-0" />
       <Separator orientation="vertical" class="h-4" />
       <RouterLink to="/" class="flex shrink-0 items-center gap-2 md:hidden" aria-label="Alnair Router">
-        <span
-          class="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground"
-        >
-          <Waypoints class="size-3.5" />
-        </span>
+        <Logo class="size-6" />
       </RouterLink>
       <span class="truncate text-sm font-medium">{{ pageTitle }}</span>
     </div>
