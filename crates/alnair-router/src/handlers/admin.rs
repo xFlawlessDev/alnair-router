@@ -337,9 +337,14 @@ pub async fn delete_pricing(
 
 /// `POST /api/pricing/sync` — crawls the configured catalog now.
 pub async fn sync_pricing(State(state): State<AppState>) -> Result<impl IntoResponse> {
-    let status =
-        crate::pricing::sync_from_source(&state.pricing_cache, &state.config.pricing.source_url)
-            .await?;
+    let source_url = state
+        .config
+        .read()
+        .expect("config lock poisoned")
+        .pricing
+        .source_url
+        .clone();
+    let status = crate::pricing::sync_from_source(&state.pricing_cache, &source_url).await?;
     Ok(Json(status))
 }
 
@@ -656,7 +661,13 @@ pub async fn ready(State(state): State<AppState>) -> Response {
     }
 
     let mut body = json!({ "status": "ready", "database": "ok" });
-    if state.config.server.readiness_upstream_checks {
+    let readiness_checks = state
+        .config
+        .read()
+        .expect("config lock poisoned")
+        .server
+        .readiness_upstream_checks;
+    if readiness_checks {
         let (reachable, unreachable) = check_upstreams(&state).await;
         body["upstreams"] = json!({ "reachable": reachable, "unreachable": unreachable });
     }
@@ -767,11 +778,17 @@ pub async fn version() -> impl IntoResponse {
 pub async fn init_state(State(state): State<AppState>) -> Result<impl IntoResponse> {
     let connections = state.connections().list().await?;
     let enabled = connections.iter().filter(|c| c.is_enabled()).count();
+    let require_api_key = state
+        .config
+        .read()
+        .expect("config lock poisoned")
+        .server
+        .require_api_key;
 
     Ok(Json(json!({
         "initialized": enabled > 0,
         "connections": connections.len(),
         "enabled_connections": enabled,
-        "require_api_key": state.config.server.require_api_key,
+        "require_api_key": require_api_key,
     })))
 }

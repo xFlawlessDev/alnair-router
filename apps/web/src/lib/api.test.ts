@@ -155,4 +155,43 @@ describe('api', () => {
     await api.deletePricing('gpt-4o');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/pricing?model=gpt-4o');
   });
+
+  it('downloads a backup blob with the admin token attached', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([0x53, 0x51, 0x4c]), {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    setAdminToken('secret-token');
+
+    const blob = await api.downloadBackup();
+    expect(blob.size).toBe(3);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/backup');
+    expect(init.headers).toMatchObject({
+      authorization: 'Bearer secret-token',
+      accept: 'application/octet-stream',
+    });
+  });
+
+  it('uploads a backup and surfaces restore errors', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ error: { message: 'bad backup', type: 'invalid_request_error' } }, 400),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File([new Uint8Array([1, 2])], 'backup.sqlite');
+    const failure = await api.restoreBackup(file).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ message: 'bad backup', status: 400 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/restore');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(file);
+    expect(init.headers).toMatchObject({ 'content-type': 'application/octet-stream' });
+  });
 });

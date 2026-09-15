@@ -5,6 +5,10 @@
 # ALNAIR_ROUTER__SECTION__KEY form, e.g.:
 #   ALNAIR_ROUTER__SERVER__PORT=9000
 #   ALNAIR_ROUTER__STORAGE__URL=sqlite:///var/lib/alnair-router/router.sqlite?mode=rwc
+#
+# The dashboard's Settings page can override a subset at runtime: server auth
+# and readiness, router.*, limits.*, rate_limit.*, and pricing.*. Overrides are
+# stored in the database, hot-applied, and win over file/env values until reset.
 
 [server]
 # Port the router listens on.

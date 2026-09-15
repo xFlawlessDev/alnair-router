@@ -1,8 +1,9 @@
 //! Shared application state for the HTTP layer.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use sqlx::SqlitePool;
+use tokio::sync::Notify;
 
 use crate::config::RouterConfig;
 use crate::crypto::CredentialCipher;
@@ -17,6 +18,7 @@ use crate::error::Result;
 use crate::limits::{RateLimiter, UpstreamLimiter};
 use crate::metrics::Metrics;
 use crate::pricing::{PricingCache, PricingRepository};
+use crate::settings::{SettingsOverrides, SettingsRepository};
 use crate::telemetry::ActivityTracker;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
 use crate::upstream::{Executor, ExecutorSettings, UpstreamTimeouts};
@@ -24,7 +26,11 @@ use crate::upstream::{Executor, ExecutorSettings, UpstreamTimeouts};
 /// State shared by every handler.
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<RouterConfig>,
+    /// Effective configuration: `base_config` plus dashboard overrides.
+    pub(crate) config: Arc<RwLock<RouterConfig>>,
+    /// Configuration as loaded from file/env, before dashboard overrides. A
+    /// reset drops every override and rebuilds the effective config from it.
+    base_config: Arc<RouterConfig>,
     pub pool: SqlitePool,
     pub cipher: Arc<CredentialCipher>,
     pub executor: Executor,
@@ -33,6 +39,8 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub telemetry: Arc<ActivityTracker>,
     pub pricing_cache: Arc<PricingCache>,
+    /// Wakes the pricing sync loop after a settings save.
+    pub pricing_sync_trigger: Arc<Notify>,
     catalog_cache: Arc<crate::model::CatalogCache>,
 }
 
@@ -60,7 +68,8 @@ impl AppState {
         let pricing_cache = Arc::new(PricingCache::new(db.pool.clone()));
 
         Ok(Self {
-            config: Arc::new(config),
+            config: Arc::new(RwLock::new(config.clone())),
+            base_config: Arc::new(config),
             pool: db.pool.clone(),
             cipher,
             executor: Executor::with_settings(
@@ -79,8 +88,51 @@ impl AppState {
             metrics,
             telemetry,
             pricing_cache,
+            pricing_sync_trigger: Arc::new(Notify::new()),
             catalog_cache,
         })
+    }
+
+    /// Snapshot of the effective configuration (file/env plus overrides).
+    pub fn config_snapshot(&self) -> RouterConfig {
+        self.config.read().expect("config lock poisoned").clone()
+    }
+
+    /// Configuration as loaded from file/env, before dashboard overrides.
+    pub fn base_config(&self) -> &RouterConfig {
+        self.base_config.as_ref()
+    }
+
+    /// Returns the configuration `overrides` would produce, validating it
+    /// without applying anything. Used to reject bad saves before persisting.
+    pub fn merged_config(&self, overrides: &SettingsOverrides) -> Result<RouterConfig> {
+        overrides.merge(self.base_config())
+    }
+
+    /// Recomputes the effective configuration from `overrides` and pushes it
+    /// into the live components. Persisting the overrides is the caller's job.
+    pub async fn apply_overrides(&self, overrides: &SettingsOverrides) -> Result<RouterConfig> {
+        let next = self.merged_config(overrides)?;
+
+        self.limiter.apply(&next.limits);
+        self.rate_limiter.apply(&next.rate_limit);
+        self.executor.apply(&next);
+        self.catalog_cache.apply(&next).await;
+
+        let pricing_changed = {
+            let current = self.config.read().expect("config lock poisoned");
+            current.pricing.sync_enabled != next.pricing.sync_enabled
+                || current.pricing.sync_interval_secs != next.pricing.sync_interval_secs
+                || current.pricing.source_url != next.pricing.source_url
+        };
+
+        *self.config.write().expect("config lock poisoned") = next.clone();
+
+        if pricing_changed {
+            self.pricing_sync_trigger.notify_one();
+        }
+
+        Ok(next)
     }
 
     pub fn connections(&self) -> ConnectionRepository {
@@ -109,6 +161,11 @@ impl AppState {
 
     pub fn usage(&self) -> UsageRepository {
         UsageRepository::new(self.pool.clone())
+    }
+
+    /// Dashboard-managed setting overrides.
+    pub fn settings(&self) -> SettingsRepository {
+        SettingsRepository::new(self.pool.clone())
     }
 
     /// Loads a routing snapshot and builds a resolver over it.

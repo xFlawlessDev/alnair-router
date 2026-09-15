@@ -37,6 +37,23 @@ async fn app_with_admin_token(token: &str) -> (axum::Router, Db) {
     app_with_config(config).await
 }
 
+/// Builds a file-backed app: `VACUUM INTO` snapshots need a real database.
+async fn file_app() -> (axum::Router, Db, tempfile::TempDir) {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let mut config = RouterConfig::default();
+    config.secrets.key = Some(TEST_SECRET.to_string());
+    config.server.require_api_key = true;
+    config.storage.url = format!(
+        "sqlite://{}?mode=rwc",
+        directory.path().join("router.sqlite").display()
+    );
+
+    let db = Db::connect(&config).await.expect("db");
+    db.migrate().await.expect("migrate");
+    let state = AppState::new(config, db.clone()).expect("state");
+    (build_router(state), db, directory)
+}
+
 /// Mints a router-issued client key and returns its plaintext secret.
 async fn mint_key(db: &Db, name: &str) -> String {
     ApiKeyRepository::new(db.pool.clone())
@@ -164,6 +181,27 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
         return serde_json::Value::Null;
     }
     serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+}
+
+/// POSTs a raw binary body, for the backup restore endpoint.
+async fn post_bytes(
+    app: &axum::Router,
+    path: &str,
+    bytes: Vec<u8>,
+) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .body(Body::from(bytes))
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+    (response.status(), body_json(response).await)
 }
 
 #[tokio::test]
@@ -1922,4 +1960,206 @@ async fn pricing_match_reports_the_catalog_key() {
 
     let (status, _) = get(&app, "/api/pricing/match?model=%20").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn settings_toggle_client_auth_and_hot_apply() {
+    let (app, _db) = app(false).await;
+
+    let (status, body) = get(&app, "/api/settings").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["server"]["require_api_key"], false);
+    assert_eq!(body["router"]["max_attempts"], 5);
+    assert_eq!(body["deployment"]["binds_loopback"], true);
+    assert!(
+        body["overrides"].as_array().expect("overrides").is_empty(),
+        "nothing customized yet"
+    );
+
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "require_api_key": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["server"]["require_api_key"], true);
+    assert_eq!(
+        body["overrides"],
+        serde_json::json!(["server.require_api_key"])
+    );
+
+    // /api/init reflects the new value immediately.
+    let (status, body) = get(&app, "/api/init").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["require_api_key"], true);
+
+    // /v1 now rejects unauthenticated calls.
+    let (status, _) = get(&app, "/v1/models").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Resetting drops the override and reopens /v1.
+    let response = raw_request_with_auth(&app, "DELETE", "/api/settings", None, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(response).await["server"]["require_api_key"],
+        false
+    );
+
+    let (status, _) = get(&app, "/v1/models").await;
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn settings_admin_token_is_write_only_and_enforced() {
+    let (app, _db) = app(false).await;
+
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "admin_token": "new-secret" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["server"]["admin_token_set"], true);
+    assert!(
+        body["server"].get("admin_token").is_none(),
+        "the token value must never be returned: {body}"
+    );
+
+    // From now on the admin API demands the new token.
+    let (status, _) = get(&app, "/api/settings").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) = get_with_auth(&app, "/api/settings", Some("new-secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["overrides"], serde_json::json!(["server.admin_token"]));
+
+    // A blank string removes the override and reopens the loopback admin API.
+    let (status, _) = json_request_with_auth(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "admin_token": "" }),
+        Some("new-secret"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = get(&app, "/api/settings").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["server"]["admin_token_set"], false);
+}
+
+#[tokio::test]
+async fn settings_reject_unsafe_or_malformed_values() {
+    let mut config = RouterConfig::default();
+    config.server.host = "0.0.0.0".to_string();
+    config.server.admin_token = Some("admin-secret".to_string());
+    let (app, _db) = app_with_config(config).await;
+
+    // Clearing the only admin token would leave a public admin API open.
+    let (status, body) = json_request_with_auth(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "admin_token": null }),
+        Some("admin-secret"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+
+    // Zero fallback tiers is nonsense.
+    let (status, body) = json_request_with_auth(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "max_attempts": 0 }),
+        Some("admin-secret"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("max_attempts"),
+        "message should name the field: {body}"
+    );
+}
+
+#[tokio::test]
+async fn backup_downloads_a_snapshot_that_restore_accepts() {
+    let (app, db, _directory) = file_app().await;
+    let secret = mint_key(&db, "keep-me").await;
+
+    let response = raw_request_with_auth(&app, "GET", "/api/backup", None, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/octet-stream")
+    );
+    assert!(
+        response.headers().contains_key(header::CONTENT_DISPOSITION),
+        "the download should carry a filename"
+    );
+    let backup = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    assert!(
+        backup.starts_with(b"SQLite format 3\0"),
+        "the download must be a SQLite database"
+    );
+
+    // Drop the key, then bring it back through a restore.
+    let (status, keys) = get(&app, "/api/keys").await;
+    assert_eq!(status, StatusCode::OK);
+    let key_id = keys[0]["id"].as_str().expect("key id").to_string();
+    let response =
+        raw_request_with_auth(&app, "DELETE", &format!("/api/keys/{key_id}"), None, None).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let (status, _) = get_with_auth(&app, "/v1/models", Some(&secret)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "the key is gone");
+
+    let (status, body) = post_bytes(&app, "/api/restore", backup.to_vec()).await;
+    assert_eq!(status, StatusCode::OK, "restore failed: {body}");
+    assert_eq!(body["total_rows"], 1);
+
+    let (status, keys) = get(&app, "/api/keys").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(keys.as_array().expect("array").len(), 1);
+
+    // The restored key authenticates again.
+    let (status, _) = get_with_auth(&app, "/v1/models", Some(&secret)).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn restore_rejects_invalid_uploads() {
+    let (app, _db, _directory) = file_app().await;
+
+    let (status, body) =
+        post_bytes(&app, "/api/restore", b"definitely not a database".to_vec()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+
+    let (status, body) = post_bytes(&app, "/api/restore", Vec::new()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("empty"),
+        "message should say the upload is empty: {body}"
+    );
 }

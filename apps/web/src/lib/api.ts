@@ -22,6 +22,9 @@ import type {
   ModelPriceInput,
   PriceMatch,
   PricingSyncStatus,
+  RestoreSummary,
+  SettingsPatch,
+  SettingsResponse,
   UpstreamModelsResponse,
   UsageRecord,
   UsageFacets,
@@ -117,6 +120,40 @@ async function request<T>(method: string, path: string, options: RequestOptions 
   return payload as T;
 }
 
+/** Sends a non-JSON request (binary backup download/upload). */
+async function rawRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers: Record<string, string> = {
+    ...((init.headers as Record<string, string> | undefined) ?? {}),
+  };
+  const token = getAdminToken();
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  let response: Response;
+  try {
+    response = await fetch(path, { ...init, headers });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new ApiError('Cannot reach the router. Is it running?', 0);
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let payload: unknown;
+    try {
+      payload = text ? JSON.parse(text) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiError(
+      errorMessage(payload) ?? `Request failed with status ${response.status}`,
+      response.status,
+      errorType(payload),
+    );
+  }
+
+  return response;
+}
+
 export const api = {
   health: () => request<HealthResponse>('GET', '/api/health'),
   version: () => request<VersionResponse>('GET', '/api/version'),
@@ -198,4 +235,24 @@ export const api = {
     request<PriceMatch>('GET', '/api/pricing/match', { query: { model } }),
   activity: (events = 100) =>
     request<ActivitySnapshot>('GET', '/api/activity', { query: { limit: events } }),
+
+  settings: () => request<SettingsResponse>('GET', '/api/settings'),
+  updateSettings: (body: SettingsPatch) =>
+    request<SettingsResponse>('PATCH', '/api/settings', { body }),
+  resetSettings: () => request<SettingsResponse>('DELETE', '/api/settings'),
+
+  downloadBackup: async (): Promise<Blob> => {
+    const response = await rawRequest('/api/backup', {
+      headers: { accept: 'application/octet-stream' },
+    });
+    return response.blob();
+  },
+  restoreBackup: async (file: File): Promise<RestoreSummary> => {
+    const response = await rawRequest('/api/restore', {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: file,
+    });
+    return (await response.json()) as RestoreSummary;
+  },
 };

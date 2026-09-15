@@ -8,6 +8,7 @@
 //! versioned and tested on its own. All access to it is funnelled through
 //! [`upstream::chat_backend`].
 
+pub mod backup;
 pub mod cli;
 pub mod config;
 pub mod crypto;
@@ -24,6 +25,7 @@ pub mod policy;
 pub mod pricing;
 pub mod protocol;
 pub mod server;
+pub mod settings;
 pub mod state;
 pub mod telemetry;
 pub mod upstream;

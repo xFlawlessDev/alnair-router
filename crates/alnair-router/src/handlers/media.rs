@@ -31,6 +31,8 @@ async fn resolve_target(state: &AppState, model: Option<&str>) -> Result<Resolve
         Some(model) if !model.trim().is_empty() => model.to_string(),
         _ => state
             .config
+            .read()
+            .expect("config lock poisoned")
             .router
             .default_connection
             .clone()

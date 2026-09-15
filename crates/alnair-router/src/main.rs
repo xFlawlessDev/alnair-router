@@ -199,19 +199,33 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
         );
     }
 
-    let address = format!("{}:{}", config.server.host, config.server.port);
+    let state = AppState::new(config, db)?;
+
+    // Dashboard overrides win over file/env values and persist in the database.
+    let overrides = state.settings().get().await?;
+    if !overrides.is_empty() {
+        state.apply_overrides(&overrides).await.map_err(|error| {
+            Error::Config(format!(
+                "stored dashboard settings are invalid: {error}. \
+                 Fix them in the `settings` table or reset them from the dashboard."
+            ))
+        })?;
+        tracing::info!(keys = ?overrides.keys(), "applied dashboard settings");
+    }
+
+    let effective = state.config_snapshot();
+    let address = format!("{}:{}", effective.server.host, effective.server.port);
     let listener = tokio::net::TcpListener::bind(&address)
         .await
         .map_err(|error| Error::Config(format!("cannot bind {address}: {error}")))?;
 
     tracing::info!(
         address = %address,
-        require_api_key = config.server.require_api_key,
-        admin_token = config.server.requires_admin_token(),
+        require_api_key = effective.server.require_api_key,
+        admin_token = effective.server.requires_admin_token(),
         "alnair-router listening"
     );
 
-    let state = AppState::new(config, db)?;
     spawn_pricing_sync(&state);
     let app = build_router(state);
 
@@ -223,19 +237,28 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
     Ok(())
 }
 
-/// Crawls the pricing catalog in the background when `pricing.sync_enabled`.
+/// Crawls the pricing catalog in the background while `pricing.sync_enabled`.
+///
+/// The loop re-reads the live configuration each iteration, so enabling or
+/// reconfiguring sync from the dashboard takes effect without a restart; the
+/// settings handler wakes it through `pricing_sync_trigger`.
 fn spawn_pricing_sync(state: &AppState) {
-    if !state.config.pricing.sync_enabled {
-        return;
-    }
-
-    let cache = state.pricing_cache.clone();
-    let url = state.config.pricing.source_url.clone();
-    let interval = std::time::Duration::from_secs(state.config.pricing.sync_interval_secs.max(60));
+    let state = state.clone();
 
     tokio::spawn(async move {
         loop {
-            match alnair_router::pricing::sync_from_source(&cache, &url).await {
+            let pricing = state.config_snapshot().pricing;
+            if !pricing.sync_enabled {
+                state.pricing_sync_trigger.notified().await;
+                continue;
+            }
+
+            match alnair_router::pricing::sync_from_source(
+                &state.pricing_cache,
+                &pricing.source_url,
+            )
+            .await
+            {
                 Ok(status) => tracing::info!(
                     source = %status.source,
                     models = status.model_count,
@@ -243,7 +266,13 @@ fn spawn_pricing_sync(state: &AppState) {
                 ),
                 Err(error) => tracing::warn!(%error, "pricing sync failed"),
             }
-            tokio::time::sleep(interval).await;
+
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(
+                    pricing.sync_interval_secs.max(60),
+                )) => {},
+                _ = state.pricing_sync_trigger.notified() => {},
+            }
         }
     });
 }

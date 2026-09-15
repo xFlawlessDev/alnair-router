@@ -16,30 +16,57 @@ pub struct LimitPermit {
     _connection: Option<OwnedSemaphorePermit>,
 }
 
+struct LimiterState {
+    global: Option<Arc<Semaphore>>,
+    per_connection_limit: usize,
+    per_connection: HashMap<String, Arc<Semaphore>>,
+    timeout: Option<Duration>,
+}
+
+/// The semaphores one request waits on, plus the acquire timeout.
+type Slots = (
+    Option<Arc<Semaphore>>,
+    Option<Arc<Semaphore>>,
+    Option<Duration>,
+);
+
+impl LimiterState {
+    fn from_config(config: &LimitsConfig) -> Self {
+        Self {
+            global: (config.max_concurrent > 0)
+                .then(|| Arc::new(Semaphore::new(config.max_concurrent))),
+            per_connection_limit: config.max_concurrent_per_connection,
+            per_connection: HashMap::new(),
+            timeout: (config.acquire_timeout_ms > 0)
+                .then(|| Duration::from_millis(config.acquire_timeout_ms)),
+        }
+    }
+}
+
 /// Caps concurrent upstream calls globally and per connection.
 #[derive(Clone)]
 pub struct UpstreamLimiter {
-    global: Option<Arc<Semaphore>>,
-    per_connection_limit: usize,
-    per_connection: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
-    timeout: Option<Duration>,
+    state: Arc<Mutex<LimiterState>>,
 }
 
 impl UpstreamLimiter {
     pub fn new(config: &LimitsConfig) -> Self {
         Self {
-            global: (config.max_concurrent > 0)
-                .then(|| Arc::new(Semaphore::new(config.max_concurrent))),
-            per_connection_limit: config.max_concurrent_per_connection,
-            per_connection: Arc::new(Mutex::new(HashMap::new())),
-            timeout: (config.acquire_timeout_ms > 0)
-                .then(|| Duration::from_millis(config.acquire_timeout_ms)),
+            state: Arc::new(Mutex::new(LimiterState::from_config(config))),
         }
+    }
+
+    /// Replaces the caps in place; permits already held stay valid until their
+    /// streams finish.
+    pub fn apply(&self, config: &LimitsConfig) {
+        let mut state = self.state.lock().expect("limiter map poisoned");
+        *state = LimiterState::from_config(config);
     }
 
     /// True when either cap is configured; with none, `acquire` is free.
     pub fn is_enabled(&self) -> bool {
-        self.global.is_some() || self.per_connection_limit > 0
+        let state = self.state.lock().expect("limiter map poisoned");
+        state.global.is_some() || state.per_connection_limit > 0
     }
 
     /// Acquires a global slot and a per-connection slot.
@@ -47,60 +74,81 @@ impl UpstreamLimiter {
     /// Waits up to `limits.acquire_timeout_ms`; a request that cannot get a
     /// slot in time fails with `429 Too Many Requests`.
     pub async fn acquire(&self, connection_key: &str) -> Result<LimitPermit> {
-        if !self.is_enabled() {
+        let Some((global, connection, timeout)) = self.slots(connection_key) else {
             return Ok(LimitPermit {
                 _global: None,
                 _connection: None,
             });
-        }
+        };
 
-        match self.timeout {
-            Some(timeout) => tokio::time::timeout(timeout, self.acquire_inner(connection_key))
-                .await
-                .map_err(|_| Error::RateLimited {
-                    message: "upstream concurrency limit reached".to_string(),
-                    retry_after_secs: 1,
-                })?,
-            None => self.acquire_inner(connection_key).await,
+        let acquire = acquire_slots(global, connection);
+        match timeout {
+            Some(timeout) => {
+                tokio::time::timeout(timeout, acquire)
+                    .await
+                    .map_err(|_| Error::RateLimited {
+                        message: "upstream concurrency limit reached".to_string(),
+                        retry_after_secs: 1,
+                    })?
+            }
+            None => acquire.await,
         }
     }
 
-    async fn acquire_inner(&self, connection_key: &str) -> Result<LimitPermit> {
-        let global = match &self.global {
-            Some(semaphore) => Some(
-                semaphore
-                    .clone()
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| limiter_closed())?,
-            ),
-            None => None,
-        };
+    /// Snapshots the semaphores to wait on, creating per-connection ones on
+    /// first use. `None` means no caps are configured.
+    fn slots(&self, connection_key: &str) -> Option<Slots> {
+        let mut state = self.state.lock().expect("limiter map poisoned");
+        if state.global.is_none() && state.per_connection_limit == 0 {
+            return None;
+        }
 
-        let connection = if self.per_connection_limit > 0 {
-            let semaphore = self.semaphore_for(connection_key);
+        let global = state.global.clone();
+        let connection = if state.per_connection_limit > 0 {
+            let limit = state.per_connection_limit;
             Some(
-                semaphore
-                    .acquire_owned()
-                    .await
-                    .map_err(|_| limiter_closed())?,
+                state
+                    .per_connection
+                    .entry(connection_key.to_string())
+                    .or_insert_with(|| Arc::new(Semaphore::new(limit)))
+                    .clone(),
             )
         } else {
             None
         };
 
-        Ok(LimitPermit {
-            _global: global,
-            _connection: connection,
-        })
+        Some((global, connection, state.timeout))
     }
+}
 
-    fn semaphore_for(&self, connection_key: &str) -> Arc<Semaphore> {
-        let mut map = self.per_connection.lock().expect("limiter map poisoned");
-        map.entry(connection_key.to_string())
-            .or_insert_with(|| Arc::new(Semaphore::new(self.per_connection_limit)))
-            .clone()
-    }
+async fn acquire_slots(
+    global: Option<Arc<Semaphore>>,
+    connection: Option<Arc<Semaphore>>,
+) -> Result<LimitPermit> {
+    let global = match global {
+        Some(semaphore) => Some(
+            semaphore
+                .acquire_owned()
+                .await
+                .map_err(|_| limiter_closed())?,
+        ),
+        None => None,
+    };
+
+    let connection = match connection {
+        Some(semaphore) => Some(
+            semaphore
+                .acquire_owned()
+                .await
+                .map_err(|_| limiter_closed())?,
+        ),
+        None => None,
+    };
+
+    Ok(LimitPermit {
+        _global: global,
+        _connection: connection,
+    })
 }
 
 fn limiter_closed() -> Error {
@@ -144,8 +192,7 @@ impl BudgetMode {
 #[derive(Clone)]
 pub struct RateLimiter {
     buckets: Arc<Mutex<HashMap<String, TokenBucket>>>,
-    default_rpm: u32,
-    burst: u32,
+    defaults: Arc<Mutex<(u32, u32)>>,
 }
 
 #[derive(Debug)]
@@ -158,9 +205,15 @@ impl RateLimiter {
     pub fn new(config: &RateLimitConfig) -> Self {
         Self {
             buckets: Arc::new(Mutex::new(HashMap::new())),
-            default_rpm: config.requests_per_minute,
-            burst: config.burst,
+            defaults: Arc::new(Mutex::new((config.requests_per_minute, config.burst))),
         }
+    }
+
+    /// Replaces the default rate and burst; existing buckets keep their state
+    /// and pick up the new rate on the next check.
+    pub fn apply(&self, config: &RateLimitConfig) {
+        let mut defaults = self.defaults.lock().expect("rate limiter poisoned");
+        *defaults = (config.requests_per_minute, config.burst);
     }
 
     /// Consumes one token for `key_id`, or fails with `429`.
@@ -170,18 +223,18 @@ impl RateLimiter {
 
     /// Testable variant with an injectable clock.
     fn check_at(&self, key_id: &str, override_rpm: Option<u32>, now: Instant) -> Result<()> {
+        let (default_rpm, burst) = {
+            let defaults = self.defaults.lock().expect("rate limiter poisoned");
+            *defaults
+        };
         let rpm = override_rpm
             .filter(|value| *value > 0)
-            .unwrap_or(self.default_rpm);
+            .unwrap_or(default_rpm);
         if rpm == 0 {
             return Ok(());
         }
 
-        let capacity = if self.burst > 0 {
-            self.burst as f64
-        } else {
-            rpm as f64
-        };
+        let capacity = if burst > 0 { burst as f64 } else { rpm as f64 };
         let rate_per_sec = rpm as f64 / 60.0;
 
         let mut buckets = self.buckets.lock().expect("rate limiter poisoned");

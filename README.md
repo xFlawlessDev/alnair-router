@@ -233,6 +233,17 @@ Key settings:
 checks the database. `GET /api/metrics` exposes Prometheus-style counters and is
 guarded like the rest of `/api/*`.
 
+A subset of the settings above — client/admin auth, routing, limits, rate limits
+and pricing — can be edited from the dashboard's **Settings** page. Overrides
+live in the router database, apply immediately without a restart, and take
+precedence over `config.toml`/env until you reset them.
+
+The same page backs up and restores data: **Download backup** streams a
+consistent SQLite snapshot (`GET /api/backup`) and **Import backup** replaces
+every data table inside one transaction (`POST /api/restore`). Imports validate
+the file and its credentials, and leave runtime settings and the admin token
+untouched.
+
 See `crates/alnair-router/router.example.toml` for every option.
 
 ## Provider support

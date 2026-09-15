@@ -355,3 +355,100 @@ export interface ActivitySnapshot {
   connections: ConnectionActivity[];
   events: ActivityEvent[];
 }
+
+/** Dashboard-managed settings: effective values from `GET /api/settings`. */
+export interface ServerSettings {
+  require_api_key: boolean;
+  readiness_upstream_checks: boolean;
+  /** Whether an admin token is configured; the value itself is write-only. */
+  admin_token_set: boolean;
+}
+
+export interface RouterSettings {
+  default_connection: string | null;
+  max_attempts: number;
+  max_retries_per_tier: number;
+  max_retry_delay_ms: number;
+  catalog_ttl_ms: number;
+  connect_timeout_ms: number;
+  idle_timeout_ms: number;
+}
+
+export interface LimitsSettings {
+  max_concurrent: number;
+  max_concurrent_per_connection: number;
+  acquire_timeout_ms: number;
+}
+
+export interface RateLimitSettings {
+  requests_per_minute: number;
+  burst: number;
+}
+
+export interface PricingSettings {
+  sync_enabled: boolean;
+  sync_interval_secs: number;
+  source_url: string;
+}
+
+/** Values that only change by editing `config.toml` and restarting. */
+export interface DeploymentInfo {
+  host: string;
+  port: number;
+  binds_loopback: boolean;
+  serve_dashboard: boolean;
+  tray: boolean;
+  allow_unauthenticated_admin: boolean;
+  cors_origins: string[];
+  database_url: string;
+  secrets_key_set: boolean;
+}
+
+export interface SettingsResponse {
+  server: ServerSettings;
+  router: RouterSettings;
+  limits: LimitsSettings;
+  rate_limit: RateLimitSettings;
+  pricing: PricingSettings;
+  /** Dotted keys the dashboard has customized, e.g. `server.require_api_key`. */
+  overrides: string[];
+  deployment: DeploymentInfo;
+}
+
+/** Row count for one table replaced by a restore. */
+export interface RestoreTableCount {
+  table: string;
+  rows: number;
+}
+
+/** Result of importing a database backup. */
+export interface RestoreSummary {
+  tables: RestoreTableCount[];
+  total_rows: number;
+}
+
+/**
+ * `PATCH /api/settings` body: absent fields stay untouched. A `null` or blank
+ * `admin_token` forces "no admin token", and a `null` `default_connection`
+ * forces "no default connection".
+ */
+export interface SettingsPatch {
+  require_api_key?: boolean;
+  admin_token?: string | null;
+  readiness_upstream_checks?: boolean;
+  default_connection?: string | null;
+  max_attempts?: number;
+  max_retries_per_tier?: number;
+  max_retry_delay_ms?: number;
+  catalog_ttl_ms?: number;
+  connect_timeout_ms?: number;
+  idle_timeout_ms?: number;
+  max_concurrent?: number;
+  max_concurrent_per_connection?: number;
+  acquire_timeout_ms?: number;
+  requests_per_minute?: number;
+  burst?: number;
+  pricing_sync_enabled?: boolean;
+  pricing_sync_interval_secs?: number;
+  pricing_source_url?: string;
+}

@@ -30,13 +30,29 @@ struct Cached {
     loaded_at: Instant,
 }
 
+/// Routing knobs read from the live config each time a snapshot is built.
+#[derive(Clone)]
+struct CacheOptions {
+    default_connection: Option<String>,
+    max_attempts: usize,
+    ttl: Duration,
+}
+
+impl CacheOptions {
+    fn from_config(config: &RouterConfig) -> Self {
+        Self {
+            default_connection: config.router.default_connection.clone(),
+            max_attempts: config.router.max_attempts,
+            ttl: Duration::from_millis(config.router.catalog_ttl_ms),
+        }
+    }
+}
+
 /// Caches the routing catalog.
 pub struct CatalogCache {
     pool: SqlitePool,
     cipher: Arc<CredentialCipher>,
-    default_connection: Option<String>,
-    max_attempts: usize,
-    ttl: Duration,
+    options: std::sync::RwLock<CacheOptions>,
     inner: RwLock<Option<Cached>>,
 }
 
@@ -45,11 +61,22 @@ impl CatalogCache {
         Self {
             pool,
             cipher,
-            default_connection: config.router.default_connection.clone(),
-            max_attempts: config.router.max_attempts,
-            ttl: Duration::from_millis(config.router.catalog_ttl_ms),
+            options: std::sync::RwLock::new(CacheOptions::from_config(config)),
             inner: RwLock::new(None),
         }
+    }
+
+    /// Replaces the routing knobs and drops the snapshot so the next request
+    /// rebuilds its resolver from the new values.
+    pub async fn apply(&self, config: &RouterConfig) {
+        {
+            let mut options = self
+                .options
+                .write()
+                .expect("catalog cache options poisoned");
+            *options = CacheOptions::from_config(config);
+        }
+        self.invalidate().await;
     }
 
     /// Returns the cached snapshot, reloading it when stale.
@@ -64,9 +91,10 @@ impl CatalogCache {
             return Ok(snapshot_of(cached));
         }
 
+        let options = self.options();
         let catalog = Arc::new(Catalog::load(&self.pool, &self.cipher).await?);
         let resolver =
-            Arc::new(catalog.resolver(self.default_connection.clone(), self.max_attempts));
+            Arc::new(catalog.resolver(options.default_connection.clone(), options.max_attempts));
         *guard = Some(Cached {
             catalog: catalog.clone(),
             resolver: resolver.clone(),
@@ -91,7 +119,15 @@ impl CatalogCache {
 
     /// A zero TTL means "cache until explicitly invalidated".
     fn is_fresh(&self, cached: &Cached) -> bool {
-        self.ttl.is_zero() || cached.loaded_at.elapsed() < self.ttl
+        let ttl = self.options().ttl;
+        ttl.is_zero() || cached.loaded_at.elapsed() < ttl
+    }
+
+    fn options(&self) -> CacheOptions {
+        self.options
+            .read()
+            .expect("catalog cache options poisoned")
+            .clone()
     }
 }
 
@@ -193,5 +229,18 @@ mod tests {
 
         let cached = cache.snapshot().await.expect("cached");
         assert!(Arc::ptr_eq(&first.catalog, &cached.catalog));
+    }
+
+    #[tokio::test]
+    async fn apply_invalidates_and_reloads() {
+        let (cache, db, cipher) = cache(0).await;
+        let first = cache.snapshot().await.expect("first");
+
+        add_connection(&db, &cipher, "late").await;
+        cache.apply(&config(60_000)).await;
+
+        let refreshed = cache.snapshot().await.expect("refreshed");
+        assert!(!Arc::ptr_eq(&first.catalog, &refreshed.catalog));
+        assert_eq!(refreshed.catalog.connections.len(), 1);
     }
 }

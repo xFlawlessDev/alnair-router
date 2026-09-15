@@ -101,7 +101,7 @@ impl Default for ExecutorSettings {
 #[derive(Clone)]
 pub struct Executor {
     registry: Arc<ProviderRegistry>,
-    settings: ExecutorSettings,
+    settings: Arc<std::sync::RwLock<ExecutorSettings>>,
 }
 
 impl Executor {
@@ -111,7 +111,28 @@ impl Executor {
 
     /// Builds an executor with explicit retry, concurrency, timeout and metrics.
     pub fn with_settings(registry: Arc<ProviderRegistry>, settings: ExecutorSettings) -> Self {
-        Self { registry, settings }
+        Self {
+            registry,
+            settings: Arc::new(std::sync::RwLock::new(settings)),
+        }
+    }
+
+    /// Re-reads the retry policy and timeouts from the live configuration.
+    /// Concurrency and metrics are shared components and update themselves.
+    pub fn apply(&self, config: &RouterConfig) {
+        let mut settings = self.settings.write().expect("executor settings poisoned");
+        settings.retry = RetryPolicy {
+            max_retries_per_tier: config.router.max_retries_per_tier,
+            max_retry_delay_ms: config.router.max_retry_delay_ms,
+        };
+        settings.timeouts = UpstreamTimeouts::from_config(config);
+    }
+
+    fn settings(&self) -> ExecutorSettings {
+        self.settings
+            .read()
+            .expect("executor settings poisoned")
+            .clone()
     }
 
     /// Opens a stream from the first target that yields a first chunk without
@@ -131,6 +152,10 @@ impl Executor {
             return Err(Error::NoRoute("no resolved targets".to_string()));
         }
 
+        // One snapshot per request: a settings save mid-request must not mix
+        // retry policies between tiers.
+        let settings = self.settings();
+
         let mut attempts = Vec::with_capacity(targets.len());
         let mut last_error: Option<String> = None;
 
@@ -142,15 +167,15 @@ impl Executor {
             // only when the response finishes or is dropped. A timeout here is
             // a service-level condition, not an upstream fault, so it fails
             // the request instead of walking further tiers.
-            let permit = match self.settings.limiter.acquire(&target.connection_id).await {
+            let permit = match settings.limiter.acquire(&target.connection_id).await {
                 Ok(permit) => permit,
                 Err(error) => {
-                    self.settings.metrics.record_rate_limited();
+                    settings.metrics.record_rate_limited();
                     return Err(error);
                 }
             };
 
-            let attempt_token = self.settings.telemetry.begin_attempt(
+            let attempt_token = settings.telemetry.begin_attempt(
                 &target.connection_id,
                 &target.connection_name,
                 &target.model,
@@ -161,7 +186,7 @@ impl Executor {
             // Connections may pin a catalog id for relays whose upstream model
             // path does not match any priced key.
             let pricing_key = target.pricing_model.as_deref().unwrap_or(&target.model);
-            let price = match &self.settings.pricing {
+            let price = match &settings.pricing {
                 Some(pricing) => pricing.price_for(pricing_key).await,
                 None => None,
             };
@@ -174,7 +199,7 @@ impl Executor {
                 messages.clone(),
                 target.api_key.as_deref(),
                 options,
-                self.settings.retry,
+                settings.retry,
                 streaming,
                 tools.clone(),
                 target.custom_headers.clone(),
@@ -184,11 +209,9 @@ impl Executor {
             let stream = match built {
                 Ok(stream) => stream,
                 Err(error) => {
-                    self.settings.telemetry.finish_attempt(
-                        attempt_token,
-                        false,
-                        &error.to_string(),
-                    );
+                    settings
+                        .telemetry
+                        .finish_attempt(attempt_token, false, &error.to_string());
                     // A malformed provider type is a configuration fault, not a
                     // transient upstream failure: fail loudly instead of
                     // silently walking the rest of the chain.
@@ -208,18 +231,16 @@ impl Executor {
             let mut stream = stream;
             let connect_timeout_ms = target
                 .connect_timeout_ms
-                .unwrap_or(self.settings.timeouts.connect_timeout_ms);
+                .unwrap_or(settings.timeouts.connect_timeout_ms);
             let first = match wait_for_chunk(&mut stream, connect_timeout_ms).await {
                 ChunkWait::Ready(item) => item,
                 ChunkWait::TimedOut => {
                     let error = Error::Upstream(format!(
                         "upstream did not respond within {connect_timeout_ms} ms"
                     ));
-                    self.settings.telemetry.finish_attempt(
-                        attempt_token,
-                        false,
-                        &error.to_string(),
-                    );
+                    settings
+                        .telemetry
+                        .finish_attempt(attempt_token, false, &error.to_string());
                     tracing::warn!(
                         attempt = index + 1,
                         source = %target.source,
@@ -235,11 +256,9 @@ impl Executor {
 
             match first {
                 Some(Err(error)) => {
-                    self.settings.telemetry.finish_attempt(
-                        attempt_token,
-                        false,
-                        &error.to_string(),
-                    );
+                    settings
+                        .telemetry
+                        .finish_attempt(attempt_token, false, &error.to_string());
                     tracing::warn!(
                         attempt = index + 1,
                         source = %target.source,
@@ -251,11 +270,9 @@ impl Executor {
                     attempts.push(failed_attempt(index, target, &error, started));
                 }
                 first => {
-                    self.settings.telemetry.finish_attempt(
-                        attempt_token,
-                        true,
-                        "first chunk ready",
-                    );
+                    settings
+                        .telemetry
+                        .finish_attempt(attempt_token, true, "first chunk ready");
                     let latency_ms = started.elapsed().as_millis() as u64;
                     attempts.push(Attempt {
                         index: index + 1,
@@ -276,11 +293,11 @@ impl Executor {
                     };
                     let idle_timeout_ms = target
                         .idle_timeout_ms
-                        .unwrap_or(self.settings.timeouts.idle_timeout_ms);
+                        .unwrap_or(settings.timeouts.idle_timeout_ms);
                     let rest = with_idle_timeout(rest, idle_timeout_ms);
                     let rest = hold_permit(rest, permit);
 
-                    self.settings.metrics.record_attempts(&attempts);
+                    settings.metrics.record_attempts(&attempts);
 
                     return Ok(ExecutedStream {
                         stream: rest,
@@ -292,7 +309,7 @@ impl Executor {
             }
         }
 
-        self.settings.metrics.record_attempts(&attempts);
+        settings.metrics.record_attempts(&attempts);
 
         Err(Error::AllAttemptsFailed(
             last_error.unwrap_or_else(|| "unknown failure".to_string()),

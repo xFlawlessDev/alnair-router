@@ -37,7 +37,13 @@ pub async fn require_api_key(
     let path = request.uri().path().to_string();
     let started = std::time::Instant::now();
 
-    if !state.config.server.require_api_key {
+    if !state
+        .config
+        .read()
+        .expect("config lock poisoned")
+        .server
+        .require_api_key
+    {
         request.extensions_mut().insert(None::<AuthenticatedKey>);
         let response = next.run(request).await;
         record_http(&state, &method, &path, response.status(), started);
@@ -221,22 +227,22 @@ pub async fn require_admin_token(
     request: Request,
     next: Next,
 ) -> Result<Response, Error> {
-    if !state.config.server.requires_admin_token() {
-        return Ok(next.run(request).await);
-    }
+    // Copy the expected token out of the lock before awaiting anything.
+    let expected = {
+        let config = state.config.read().expect("config lock poisoned");
+        config.server.admin_token().map(str::to_string)
+    };
 
-    // `requires_admin_token` is true only when a non-blank token is configured.
-    let expected = state
-        .config
-        .server
-        .admin_token()
-        .ok_or_else(|| Error::Unauthorized("admin token is required".to_string()))?;
+    // A blank or absent token keeps the documented loopback posture.
+    let Some(expected) = expected else {
+        return Ok(next.run(request).await);
+    };
 
     let provided = extract_bearer(request.headers()).ok_or_else(|| {
         Error::Unauthorized("missing Authorization: Bearer <admin token> header".to_string())
     })?;
 
-    if !tokens_match(&provided, expected) {
+    if !tokens_match(&provided, &expected) {
         return Err(Error::Unauthorized("invalid admin token".to_string()));
     }
 

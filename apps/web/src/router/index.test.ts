@@ -11,6 +11,7 @@ describe('router', () => {
       'combos',
       'keys',
       'pricing',
+      'settings',
       'usage',
       'console',
       'guide',

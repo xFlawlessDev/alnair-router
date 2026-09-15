@@ -91,6 +91,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/pricing/match", get(handlers::admin::match_pricing))
         .route("/api/activity", get(handlers::admin::activity))
         .route("/api/metrics", get(handlers::admin::metrics))
+        .route(
+            "/api/settings",
+            get(handlers::settings::get_settings)
+                .patch(handlers::settings::update_settings)
+                .delete(handlers::settings::reset_settings),
+        )
+        .route("/api/backup", get(handlers::backup::download_backup))
+        .route("/api/restore", post(handlers::backup::restore_backup))
         // Enforced only when `server.admin_token` is configured; loopback
         // without a token keeps the documented frictionless posture.
         .route_layer(axum_middleware::from_fn_with_state(
@@ -134,7 +142,13 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     let mut app = Router::new().merge(probes).merge(admin).merge(v1);
-    if state.config.server.serve_dashboard {
+    let serve_dashboard = state
+        .config
+        .read()
+        .expect("config lock poisoned")
+        .server
+        .serve_dashboard;
+    if serve_dashboard {
         // Unmatched paths fall through to the embedded dashboard (SPA routes
         // resolve to index.html; missing files 404).
         app = app.fallback(handlers::web::serve_asset);

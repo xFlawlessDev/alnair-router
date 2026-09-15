@@ -134,6 +134,8 @@ onMounted(load);
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
               {{ initState?.require_api_key ? 'Bearer key needed on /v1' : 'No key needed on /v1' }}
+              ·
+              <RouterLink to="/settings" class="underline underline-offset-4">Configure</RouterLink>
             </p>
           </CardContent>
         </Card>

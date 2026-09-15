@@ -112,11 +112,13 @@ crates/alnair-router/
 │   ├── lib.rs               # module tree + shallow re-exports
 │   ├── config.rs            # file + ALNAIR_ROUTER__SECTION__KEY env
 │   ├── crypto.rs            # AES-256-GCM credential encryption + key parsing
+│   ├── backup.rs            # VACUUM INTO snapshots + transactional restore
 │   ├── limits.rs            # concurrency semaphores + token buckets + budget mode
 │   ├── metrics.rs           # atomic counters + Prometheus text exposition
 │   ├── telemetry.rs         # in-memory activity feed (attempts, HTTP, events)
 │   ├── error.rs             # scoped Error → OpenAI-shaped JSON error body
 │   ├── state.rs             # AppState: config, pool, cipher, executor, repos
+│   ├── settings.rs          # dashboard setting overrides + `settings` table repo
 │   ├── middleware.rs        # bearer auth + rate/budget checks for /v1/* and /api/*
 │   ├── server.rs            # route table (public probes, guarded admin, SPA fallback)
 │   ├── model/
@@ -162,6 +164,44 @@ POST /v1/chat/completions { "model": "free-forever" }
 | `combo_entries` | Ordered tiers. `model_ref` can be an alias ref, a bare model, or another combo. |
 | `api_keys` | Router-issued client keys. Stores SHA-256 `key_hash`, never the secret. |
 | `usage_records` | One row per attempt — failures included, not just successes. |
+| `settings` | Single JSON row of dashboard-managed overrides (migration `0010_settings.sql`). |
+
+### Runtime settings
+
+`config.toml` and `ALNAIR_ROUTER__*` env vars define the **base** configuration,
+loaded once at startup and validated before the listener binds. The dashboard's
+Settings page stores sparse overrides in the `settings` table; at startup they
+are merged over the base and hot-applied, and `PATCH /api/settings` re-applies
+them without a restart. `DELETE /api/settings` drops every override. The admin
+token is write-only: `GET /api/settings` reports only whether one is set.
+
+Managed fields: `server.require_api_key`, `server.admin_token`,
+`server.readiness_upstream_checks`, all of `router.*` and `limits.*`,
+`rate_limit.*`, and `pricing.*`. Applying an override pushes the new values into
+the live components (`UpstreamLimiter`, `RateLimiter`, `Executor`,
+`CatalogCache`) and swaps `AppState::config`; the pricing sync loop re-reads the
+config each iteration and is woken by `AppState::pricing_sync_trigger`.
+
+Deployment-only values (`server.host`/`port`, `server.tray`,
+`server.serve_dashboard`, `storage.url`, `secrets.key`, `server.cors_origins`)
+stay read-only in the API and are surfaced in the `deployment` block.
+
+### Backup and restore
+
+`GET /api/backup` writes a consistent SQLite snapshot with `VACUUM INTO` to a
+temp file (streamed to the browser, deleted when the response ends). The
+snapshot's `settings` row is deleted first, so a downloaded file never carries
+the admin token. `POST /api/restore` streams the upload to a temp file (512 MiB
+cap) and imports it: it verifies `quick_check`, the foreign-key graph, that the
+backup's `_sqlx_migrations` set matches the running schema, and that every
+connection credential decrypts with the current `secrets.key`. It then attaches
+the file and, inside one transaction with `defer_foreign_keys`, deletes and
+re-inserts every data table (`connections`, `aliases`, `combos`,
+`combo_entries`, `key_plans`, `api_keys`, `usage_records`, `model_prices`,
+`pricing_sync_runs`). `settings` is intentionally left alone, and the catalog
+and pricing caches are invalidated afterwards. Note: `VACUUM INTO` is a no-op on
+in-memory SQLite, so snapshots require the file-backed database the router
+normally runs on.
 
 ---
 
