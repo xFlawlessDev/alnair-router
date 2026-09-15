@@ -13,6 +13,7 @@
 - `cargo run -p alnair-router` **refuses to start** without `ALNAIR_ROUTER__SECRETS__KEY` (64 hex or base64). Every config value overrides as `ALNAIR_ROUTER__SECTION__KEY`.
 - Real-provider e2e (opt-in, `#[ignore]`d): `ALNAIR_ROUTER_E2E_OPENAI_API_KEY=... cargo test -p alnair-router --test e2e_real -- --ignored`.
 - Web: in `apps/web` run `pnpm test` and `pnpm run check` (vue-tsc + build). Run `pnpm run build` before a release build so the embedded dashboard is current. Dependency changes must update `pnpm-lock.yaml`. (pnpm settings live in `apps/web/pnpm-workspace.yaml`.)
+- Release (root `npm install` once): `npm run release:dry` then `npm run release` — standard-version bumps, and the `postbump` hook syncs `crates/*/Cargo.toml`, `apps/web/package.json`, and `Cargo.lock`. Pushing the `v*` tag triggers the binary release workflow; `npm run build:binary` builds a local release binary.
 
 ## Hard rules
 

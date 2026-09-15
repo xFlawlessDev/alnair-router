@@ -268,6 +268,34 @@ ALNAIR_ROUTER_E2E_OPENAI_API_KEY=sk-... \
   cargo test -p alnair-router --test e2e_real -- --ignored
 ```
 
+## Releasing
+
+Versioning is driven by [standard-version](https://github.com/conventional-changelog/standard-version)
+from conventional commits (root tooling only — the shipped artifact is the Rust
+binary):
+
+```bash
+npm install            # root release tooling
+npm run release:dry    # preview the bump and changelog
+npm run release        # bump, changelog, sync manifests, commit, tag
+git push --follow-tags origin main
+```
+
+`scripts/sync-version.mjs` (the `postbump` hook) keeps `crates/*/Cargo.toml`,
+`apps/web/package.json`, and `Cargo.lock` in lockstep and stages them so the
+release commit carries every manifest.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`: it builds the dashboard
+and the router for Linux x86_64, Windows x86_64, and macOS arm64, packages each
+target (`tar.gz`/`zip`), and attaches the archives plus `SHA256SUMS.txt` to the
+GitHub Release for the tag.
+
+For a local release binary with the embedded dashboard:
+
+```bash
+npm run build:binary   # pnpm -C apps/web run build && cargo build --release --locked -p alnair-router
+```
+
 ## License
 
 [MIT](LICENSE). The dashboard under `apps/web` is scaffolded from the EvoFast

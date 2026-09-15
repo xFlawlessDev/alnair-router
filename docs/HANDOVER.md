@@ -346,6 +346,21 @@ ALNAIR_ROUTER_E2E_OPENAI_API_KEY=sk-... \
   cargo test -p alnair-router --test e2e_real -- --ignored
 ```
 
+**Releasing** — root tooling, `standard-version`:
+
+```bash
+npm install
+npm run release:dry     # preview
+npm run release         # bump + CHANGELOG + manifest sync + commit + tag
+git push --follow-tags origin main
+```
+
+`scripts/sync-version.mjs` (`postbump`) syncs `crates/*/Cargo.toml`,
+`apps/web/package.json`, and `Cargo.lock`, and stages them into the release
+commit. A pushed `v*` tag runs `.github/workflows/release.yml`, which builds the
+dashboard + router for Linux/Windows/macOS and attaches the archives and
+`SHA256SUMS.txt` to the GitHub Release. Local binary: `npm run build:binary`.
+
 **Configuration** — `$ALNAIR_ROUTER_HOME/config.toml`, default `~/.alnair-router/`.
 Every value is overridable via `ALNAIR_ROUTER__SECTION__KEY`, e.g.
 `ALNAIR_ROUTER__SERVER__PORT=9000`. `secrets.key` is mandatory; the router

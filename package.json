@@ -1,0 +1,18 @@
+{
+  "name": "alnair-router",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Release tooling for the alnair-router workspace (bump, changelog, tag).",
+  "scripts": {
+    "release": "standard-version",
+    "release:minor": "standard-version --release-as minor",
+    "release:major": "standard-version --release-as major",
+    "release:first": "standard-version --first-release",
+    "release:dry": "standard-version --dry-run",
+    "build:binary": "pnpm -C apps/web run build && cargo build --release --locked -p alnair-router"
+  },
+  "devDependencies": {
+    "standard-version": "^9.5.0"
+  }
+}
