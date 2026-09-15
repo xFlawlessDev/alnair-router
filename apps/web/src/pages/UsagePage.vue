@@ -7,6 +7,9 @@ import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import UsageSummaryCards from '@/components/UsageSummaryCards.vue';
 import ProviderTopology from '@/components/usage/ProviderTopology.vue';
+import UsageBreakdownPopover, {
+  type BreakdownRow,
+} from '@/components/usage/UsageBreakdownPopover.vue';
 import UsageFilterBar from '@/components/usage/UsageFilterBar.vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -78,6 +81,55 @@ let tableTimer: number | undefined;
 
 const nodes = computed(() => activity.value?.connections ?? []);
 const activeNodes = computed(() => nodes.value.filter((node) => node.in_flight > 0));
+
+/** Token rows: cached and reasoning are subsets, the hints say so. */
+function tokenRows(record: UsageRecord): BreakdownRow[] {
+  return [
+    { label: 'Prompt', value: record.prompt_tokens },
+    {
+      label: 'Cached read',
+      value: record.cached_tokens,
+      hint: 'Included in prompt tokens; billed at the cache-read rate.',
+    },
+    { label: 'Completion', value: record.completion_tokens },
+    {
+      label: 'Reasoning',
+      value: record.reasoning_tokens,
+      hint: 'Included in completion tokens; billed at the reasoning rate.',
+    },
+  ].filter((row) => row.value > 0 || row.label === 'Prompt' || row.label === 'Completion');
+}
+
+/** Cost rows: input, output and the reasoning premium that make up the total. */
+function costRows(record: UsageRecord): BreakdownRow[] {
+  const rows: BreakdownRow[] = [
+    { label: 'Input', value: record.cost_input_usd, format: 'cost' },
+    {
+      label: 'Output',
+      value: record.cost_output_usd,
+      format: 'cost',
+      hint: 'Completion tokens at the output rate.',
+    },
+    {
+      label: 'Reasoning premium',
+      value: record.cost_reasoning_usd,
+      format: 'cost',
+      hint: 'Extra rate charged for reasoning tokens.',
+    },
+  ];
+  const known = rows.reduce((sum, row) => sum + row.value, 0);
+  if (known <= 0 && record.cost_usd > 0) {
+    return [
+      {
+        label: 'Recorded total',
+        value: record.cost_usd,
+        format: 'cost',
+        hint: 'This row predates the cost breakdown.',
+      },
+    ];
+  }
+  return rows;
+}
 const updatedLabel = computed(() =>
   updatedAt.value
     ? updatedAt.value.toLocaleTimeString(undefined, { hour12: false })
@@ -392,10 +444,26 @@ onUnmounted(() => {
               </Badge>
             </TableCell>
             <TableCell class="text-xs text-muted-foreground">
-              {{ formatNumber(record.prompt_tokens) }} / {{ formatNumber(record.completion_tokens) }}
-              <span v-if="record.cached_tokens"> · {{ formatNumber(record.cached_tokens) }} cached</span>
+              <UsageBreakdownPopover
+                title="Token breakdown"
+                :total="record.prompt_tokens + record.completion_tokens"
+                :rows="tokenRows(record)"
+              >
+                {{ formatNumber(record.prompt_tokens) }} / {{ formatNumber(record.completion_tokens) }}
+                <span v-if="record.cached_tokens"> · {{ formatNumber(record.cached_tokens) }} cached</span>
+                <span v-if="record.reasoning_tokens"> · {{ formatNumber(record.reasoning_tokens) }} reasoning</span>
+              </UsageBreakdownPopover>
             </TableCell>
-            <TableCell class="text-xs">{{ formatCost(record.cost_usd) }}</TableCell>
+            <TableCell class="text-xs">
+              <UsageBreakdownPopover
+                title="Cost breakdown"
+                total-format="cost"
+                :total="record.cost_usd"
+                :rows="costRows(record)"
+              >
+                {{ formatCost(record.cost_usd) }}
+              </UsageBreakdownPopover>
+            </TableCell>
             <TableCell class="text-xs">{{ formatLatency(record.latency_ms) }}</TableCell>
           </TableRow>
         </TableBody>

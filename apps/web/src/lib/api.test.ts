@@ -121,4 +121,38 @@ describe('api', () => {
     await api.usageSummary({});
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/usage/summary');
   });
+
+  it('upserts pricing overrides and clears a single model', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse({ updated: 1 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.upsertPricing([
+      {
+        model: 'gpt-4o',
+        input_per_million_usd: 2.5,
+        output_per_million_usd: 10,
+        cache_read_per_million_usd: 1.25,
+      },
+    ]);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/pricing');
+    expect(init.method).toBe('PUT');
+    expect(init.body).toBe(
+      JSON.stringify({
+        prices: [
+          {
+            model: 'gpt-4o',
+            input_per_million_usd: 2.5,
+            output_per_million_usd: 10,
+            cache_read_per_million_usd: 1.25,
+          },
+        ],
+      }),
+    );
+
+    await api.deletePricing('gpt-4o');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/pricing?model=gpt-4o');
+  });
 });

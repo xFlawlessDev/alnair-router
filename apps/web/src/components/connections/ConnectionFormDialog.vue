@@ -43,6 +43,7 @@ const headers = ref<HeaderRow[]>([]);
 const enabled = ref(true);
 const connectTimeout = ref('');
 const idleTimeout = ref('');
+const pricingModel = ref('');
 const saving = ref(false);
 
 const isEdit = computed(() => props.connection !== null);
@@ -66,6 +67,7 @@ watch(
       connection?.connect_timeout_ms != null ? String(connection.connect_timeout_ms) : '';
     idleTimeout.value =
       connection?.idle_timeout_ms != null ? String(connection.idle_timeout_ms) : '';
+    pricingModel.value = connection?.pricing_model ?? '';
   },
 );
 
@@ -113,6 +115,7 @@ async function save(): Promise<void> {
     enabled: enabled.value,
     connect_timeout_ms: parseTimeout(connectTimeout.value),
     idle_timeout_ms: parseTimeout(idleTimeout.value),
+    pricing_model: pricingModel.value.trim() || null,
   };
 
   saving.value = true;
@@ -240,6 +243,20 @@ async function save(): Promise<void> {
             />
             <p class="text-xs text-muted-foreground">Max silence between stream chunks.</p>
           </div>
+        </div>
+
+        <div class="grid gap-2">
+          <Label for="connection-pricing-model">Pricing model (optional)</Label>
+          <Input
+            id="connection-pricing-model"
+            v-model="pricingModel"
+            placeholder="gpt-5.6-luna"
+            autocapitalize="off"
+          />
+          <p class="text-xs text-muted-foreground">
+            Catalog id used to price this connection's requests. Set it when the upstream model id
+            differs from the catalog (e.g. relay paths like <code>ocg/openai/gpt-5.6-luna</code>).
+          </p>
         </div>
 
         <div class="grid gap-2">

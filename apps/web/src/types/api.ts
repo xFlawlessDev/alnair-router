@@ -38,6 +38,8 @@ export interface Connection {
   connect_timeout_ms: number | null;
   /** Stream idle timeout override in ms; null inherits the default. */
   idle_timeout_ms: number | null;
+  /** Catalog model id used for price lookups; null uses the upstream id. */
+  pricing_model: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -51,6 +53,23 @@ export interface ConnectionInput {
   enabled?: boolean;
   connect_timeout_ms?: number | null;
   idle_timeout_ms?: number | null;
+  pricing_model?: string | null;
+}
+
+/** Rate shape returned by the pricing match tool. */
+export interface PriceQuote {
+  input_per_million_usd: number;
+  output_per_million_usd: number;
+  cache_read_per_million_usd?: number | null;
+  cache_write_per_million_usd?: number | null;
+  reasoning_per_million_usd?: number | null;
+}
+
+export interface PriceMatch {
+  model: string;
+  matched: string | null;
+  source?: 'override' | 'sync';
+  price?: PriceQuote;
 }
 
 export interface Alias {
@@ -224,7 +243,15 @@ export interface UsageRecord {
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
+  /** Reasoning tokens, included in `completion_tokens`. */
+  reasoning_tokens: number;
   cost_usd: number;
+  /** Input share of `cost_usd`. */
+  cost_input_usd: number;
+  /** Output share, excluding the reasoning premium. */
+  cost_output_usd: number;
+  /** Reasoning premium over the output rate. */
+  cost_reasoning_usd: number;
   latency_ms: number;
 }
 
@@ -235,8 +262,40 @@ export interface UsageSummary {
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
+  reasoning_tokens: number;
   cost_usd: number;
+  cost_input_usd: number;
+  cost_output_usd: number;
+  cost_reasoning_usd: number;
   avg_latency_ms: number;
+}
+
+/** One stored model price (USD per million tokens). */
+export interface ModelPrice {
+  model: string;
+  input_per_million_usd: number;
+  output_per_million_usd: number;
+  cache_read_per_million_usd: number | null;
+  cache_write_per_million_usd: number | null;
+  reasoning_per_million_usd: number | null;
+  /** `override` (set here) or `sync` (crawled catalog). */
+  source: 'override' | 'sync';
+  updated_at: string;
+}
+
+export interface ModelPriceInput {
+  model: string;
+  input_per_million_usd: number;
+  output_per_million_usd: number;
+  cache_read_per_million_usd?: number | null;
+  cache_write_per_million_usd?: number | null;
+  reasoning_per_million_usd?: number | null;
+}
+
+export interface PricingSyncStatus {
+  source: string;
+  synced_at: string;
+  model_count: number;
 }
 
 /** Distinct values seen in usage rows, for the filter pickers. */

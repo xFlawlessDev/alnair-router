@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BookOpen, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Terminal } from '@lucide/vue';
+import { BookOpen, CircleDollarSign, KeyRound, Layers, LayoutDashboard, Plug, ScrollText, Tags, Terminal } from '@lucide/vue';
 import type { Component } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 
@@ -35,6 +35,7 @@ const manageItems: NavItem[] = [
   { label: 'Aliases', to: '/aliases', icon: Tags },
   { label: 'Combos', to: '/combos', icon: Layers },
   { label: 'API Keys', to: '/keys', icon: KeyRound },
+  { label: 'Pricing', to: '/pricing', icon: CircleDollarSign },
 ];
 
 const route = useRoute();

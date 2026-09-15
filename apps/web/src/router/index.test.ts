@@ -10,6 +10,7 @@ describe('router', () => {
       'aliases',
       'combos',
       'keys',
+      'pricing',
       'usage',
       'console',
       'guide',

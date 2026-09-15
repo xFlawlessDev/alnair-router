@@ -18,6 +18,10 @@ import type {
   InitState,
   KeyPlan,
   KeyPlanInput,
+  ModelPrice,
+  ModelPriceInput,
+  PriceMatch,
+  PricingSyncStatus,
   UpstreamModelsResponse,
   UsageRecord,
   UsageFacets,
@@ -182,6 +186,16 @@ export const api = {
       },
     }),
   usageFacets: () => request<UsageFacets>('GET', '/api/usage/facets'),
+
+  listPricing: () => request<ModelPrice[]>('GET', '/api/pricing'),
+  upsertPricing: (prices: ModelPriceInput[]) =>
+    request<{ updated: number }>('PUT', '/api/pricing', { body: { prices } }),
+  deletePricing: (model?: string) =>
+    request<{ deleted: number }>('DELETE', '/api/pricing', { query: { model } }),
+  pricingSyncStatus: () => request<PricingSyncStatus | null>('GET', '/api/pricing/sync'),
+  syncPricing: () => request<PricingSyncStatus>('POST', '/api/pricing/sync'),
+  matchPricing: (model: string) =>
+    request<PriceMatch>('GET', '/api/pricing/match', { query: { model } }),
   activity: (events = 100) =>
     request<ActivitySnapshot>('GET', '/api/activity', { query: { limit: events } }),
 };
