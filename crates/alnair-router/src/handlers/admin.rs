@@ -11,8 +11,10 @@ use crate::db::repos::aliases::{CreateAlias, UpdateAlias};
 use crate::db::repos::api_keys::{CreateApiKey, UpdateApiKey};
 use crate::db::repos::combos::{CreateCombo, UpdateCombo};
 use crate::db::repos::connections::{CreateConnection, UpdateConnection};
+use crate::db::repos::usage::NewUsageRecord;
 use crate::error::{Error, Result};
 use crate::state::AppState;
+use crate::upstream::chat_backend;
 
 #[derive(Debug, Deserialize)]
 pub struct Pagination {
@@ -213,6 +215,258 @@ pub async fn usage_summary(
     Query(pagination): Query<Pagination>,
 ) -> Result<impl IntoResponse> {
     Ok(Json(state.usage().summary(pagination.since).await?))
+}
+
+// ------------------------------------------------------------ upstream probes
+
+/// `GET /api/connections/{id}/models` — lists the models the upstream offers.
+pub async fn connection_models(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse> {
+    let connection = state
+        .connections()
+        .get(&id)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("connection '{id}' not found")))?;
+    let outcome = crate::upstream::probe::fetch_models(&connection).await?;
+
+    Ok(Json(json!({
+        "connection_id": connection.id,
+        "provider_type": connection.provider_type,
+        "base_url": connection.base_url,
+        "latency_ms": outcome.latency_ms,
+        "models": outcome.models,
+    })))
+}
+
+/// `POST /api/connections/{id}/test` — connectivity check via the models probe.
+pub async fn connection_test(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse> {
+    let connection = state
+        .connections()
+        .get(&id)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("connection '{id}' not found")))?;
+    let outcome = crate::upstream::probe::fetch_models(&connection).await?;
+    let count = outcome.models.len();
+
+    Ok(Json(json!({
+        "ok": true,
+        "models_count": count,
+        "latency_ms": outcome.latency_ms,
+        "message": format!("Connected — {count} models available"),
+    })))
+}
+
+/// `POST /api/aliases/{id}/test` — alias state plus upstream model check.
+pub async fn alias_test(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse> {
+    let alias = state
+        .aliases()
+        .get(&id)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("alias '{id}' not found")))?;
+    let connection = state
+        .connections()
+        .get(&alias.connection_id)
+        .await?
+        .ok_or_else(|| {
+            Error::NotFound(format!("connection '{}' not found", alias.connection_id))
+        })?;
+
+    if !alias.is_enabled() {
+        return Ok(Json(test_failure(
+            "alias is disabled",
+            alias.model_override.clone(),
+            None,
+        )));
+    }
+    if !connection.is_enabled() {
+        return Ok(Json(test_failure(
+            &format!("connection '{}' is disabled", connection.name),
+            alias.model_override.clone(),
+            None,
+        )));
+    }
+
+    let outcome = crate::upstream::probe::fetch_models(&connection).await?;
+    let model = alias.model_override.clone();
+    let available = model
+        .as_deref()
+        .map(|model| crate::upstream::probe::model_available(&outcome.models, model));
+
+    let (ok, message) = match (model.as_deref(), available) {
+        (Some(model), Some(true)) => (
+            true,
+            format!(
+                "Connected — '{model}' is available on '{}'",
+                connection.name
+            ),
+        ),
+        (Some(model), _) => (
+            false,
+            format!(
+                "Connected, but '{model}' is not among the {} models offered by '{}'",
+                outcome.models.len(),
+                connection.name
+            ),
+        ),
+        (None, _) => (
+            true,
+            format!(
+                "Connected — prefix '{}' routes any model to '{}'",
+                alias.prefix, connection.name
+            ),
+        ),
+    };
+
+    Ok(Json(json!({
+        "ok": ok,
+        "message": message,
+        "model": model,
+        "model_available": available,
+        "models_count": outcome.models.len(),
+        "latency_ms": outcome.latency_ms,
+    })))
+}
+
+fn test_failure(
+    message: &str,
+    model: Option<String>,
+    available: Option<bool>,
+) -> serde_json::Value {
+    json!({
+        "ok": false,
+        "message": message,
+        "model": model,
+        "model_available": available,
+        "models_count": 0,
+        "latency_ms": 0,
+    })
+}
+
+/// Request body for the alias chat probe.
+#[derive(Debug, Default, Deserialize)]
+pub struct AliasChatTestRequest {
+    /// Prompt to send; defaults to a tiny ping.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// Model segment to use when the alias has no override.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// `POST /api/aliases/{id}/test-chat` — one real non-streaming completion.
+///
+/// Runs through the normal resolver + executor, so it verifies the same path a
+/// client would take. Results come back as `{ ok, message, ... }` with HTTP 200
+/// (except for an unknown alias) so the UI can show diagnostics inline.
+pub async fn alias_chat_test(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<AliasChatTestRequest>,
+) -> Result<impl IntoResponse> {
+    let alias = state
+        .aliases()
+        .get(&id)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("alias '{id}' not found")))?;
+
+    if !alias.is_enabled() {
+        return Ok(Json(json!({ "ok": false, "message": "alias is disabled" })));
+    }
+
+    let Some(model) = input.model.clone().or_else(|| alias.model_override.clone()) else {
+        return Ok(Json(json!({
+            "ok": false,
+            "message": "alias has no model override; pass { \"model\": \"...\" } to test a model",
+        })));
+    };
+
+    let reference = format!("{}/{}", alias.prefix, model);
+    let resolver = state.resolver().await?;
+    let targets = match resolver.resolve(&reference) {
+        Ok(targets) => targets,
+        Err(error) => return Ok(Json(json!({ "ok": false, "message": error.to_string() }))),
+    };
+
+    let prompt = input
+        .prompt
+        .map(|prompt| prompt.trim().to_string())
+        .filter(|prompt| !prompt.is_empty())
+        .unwrap_or_else(|| "Reply with the single word: pong".to_string());
+    let messages = vec![chat_backend::message_text("user", prompt)];
+    let options = chat_backend::GenerationOptions {
+        max_tokens: Some(64),
+        ..Default::default()
+    };
+
+    let started = std::time::Instant::now();
+    let executed = match state
+        .executor
+        .stream(&targets, messages, None, Some(&options), false)
+        .await
+    {
+        Ok(executed) => executed,
+        Err(error) => return Ok(Json(json!({ "ok": false, "message": error.to_string() }))),
+    };
+
+    let target = executed.target.clone();
+    let attempts = executed.attempts.len();
+    let completion = match chat_backend::collect(executed.stream).await {
+        Ok(completion) => completion,
+        Err(error) => {
+            return Ok(Json(json!({
+                "ok": false,
+                "message": error.to_string(),
+                "model": target.model,
+                "source": target.source,
+            })));
+        }
+    };
+
+    let usage = completion.usage.unwrap_or_default();
+    let latency_ms = started.elapsed().as_millis() as u64;
+
+    if let Err(error) = state
+        .usage()
+        .record(NewUsageRecord {
+            api_key_id: None,
+            requested_model: reference,
+            resolved_provider: Some(target.provider_type.clone()),
+            resolved_model: Some(target.model.clone()),
+            attempt: attempts,
+            status: "ok".to_string(),
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            cached_tokens: usage.cached_tokens,
+            cost_usd: usage.cost_usd,
+            latency_ms,
+        })
+        .await
+    {
+        tracing::warn!(error = %error, "failed to record alias test usage");
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "message": format!("Completion from '{}' via {}", target.model, target.source),
+        "content": completion.content,
+        "finish_reason": completion.finish_reason,
+        "model": target.model,
+        "source": target.source,
+        "provider_type": target.provider_type,
+        "attempts": attempts,
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "cost_usd": usage.cost_usd,
+        "latency_ms": latency_ms,
+    })))
 }
 
 // -------------------------------------------------------------------- health

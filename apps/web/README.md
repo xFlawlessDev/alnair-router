@@ -39,8 +39,8 @@ ALNAIR_ROUTER_URL=http://192.168.1.10:7878 pnpm dev
 | Page | Purpose |
 |---|---|
 | **Overview** | Health, connection totals, client-auth posture, and usage rollup. |
-| **Connections** | Upstream endpoints (`openai-compatible`, `anthropic-native`) with keys and custom headers. |
-| **Aliases** | Prefix → connection mappings used by `prefix/model` references. |
+| **Connections** | Upstream endpoints (`openai-compatible`, `anthropic-native`) with keys and custom headers; per-row connectivity test against the upstream's `/models`. |
+| **Aliases** | Prefix → connection mappings; bulk-import selected upstream models as aliases, run a real chat completion from a row, and test resolution + model override. |
 | **Combos** | Ordered fallback chains, reorderable tier by tier. |
 | **API Keys** | Mint router-issued client keys; the secret is shown once. |
 | **Usage** | Per-attempt records with filters and pagination, plus summary aggregates. |

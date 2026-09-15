@@ -1,16 +1,21 @@
 import { getAdminToken } from '@/lib/adminToken';
 import type {
   Alias,
+  AliasChatTestInput,
+  AliasChatTestResult,
   AliasInput,
+  AliasTestResult,
   ApiKey,
   ApiKeyInput,
   ComboWithEntries,
   Connection,
   ConnectionInput,
+  ConnectionTestResult,
   CreatedApiKey,
   HealthResponse,
   ID,
   InitState,
+  UpstreamModelsResponse,
   UsageRecord,
   UsageSummary,
   VersionResponse,
@@ -114,12 +119,19 @@ export const api = {
   updateConnection: (id: ID, body: Partial<ConnectionInput>) =>
     request<Connection>('PATCH', `/api/connections/${id}`, { body }),
   deleteConnection: (id: ID) => request<void>('DELETE', `/api/connections/${id}`),
+  listUpstreamModels: (id: ID) =>
+    request<UpstreamModelsResponse>('GET', `/api/connections/${id}/models`),
+  testConnection: (id: ID) =>
+    request<ConnectionTestResult>('POST', `/api/connections/${id}/test`),
 
   listAliases: () => request<Alias[]>('GET', '/api/aliases'),
   createAlias: (body: AliasInput) => request<Alias>('POST', '/api/aliases', { body }),
   updateAlias: (id: ID, body: Partial<AliasInput>) =>
     request<Alias>('PATCH', `/api/aliases/${id}`, { body }),
   deleteAlias: (id: ID) => request<void>('DELETE', `/api/aliases/${id}`),
+  testAlias: (id: ID) => request<AliasTestResult>('POST', `/api/aliases/${id}/test`),
+  testAliasChat: (id: ID, body: AliasChatTestInput) =>
+    request<AliasChatTestResult>('POST', `/api/aliases/${id}/test-chat`, { body }),
 
   listCombos: () => request<ComboWithEntries[]>('GET', '/api/combos'),
   createCombo: (body: { name: string; description?: string | null; enabled?: boolean; entries?: string[] }) =>

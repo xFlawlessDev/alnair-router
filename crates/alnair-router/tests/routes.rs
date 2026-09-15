@@ -958,3 +958,431 @@ async fn dashboard_is_served_from_the_binary() {
     let (status, _, _) = raw_text(&app, "/missing-asset.js").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// Spawns a minimal upstream that serves an OpenAI-shaped models list.
+async fn spawn_models_upstream(models: Vec<&'static str>) -> String {
+    let ids: Vec<String> = models.into_iter().map(str::to_string).collect();
+    let router = axum::Router::new().route(
+        "/v1/models",
+        axum::routing::get(move || {
+            let ids = ids.clone();
+            async move {
+                let data: Vec<serde_json::Value> = ids
+                    .iter()
+                    .map(|id| serde_json::json!({ "id": id, "object": "model" }))
+                    .collect();
+                axum::Json(serde_json::json!({ "object": "list", "data": data }))
+            }
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}/v1")
+}
+
+async fn create_probe_connection(app: &axum::Router, base_url: &str) -> String {
+    let (status, connection) = json_request(
+        app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": format!("probe-{}", uuid_like()),
+            "provider_type": "openai-compatible",
+            "base_url": base_url,
+            "api_key": "sk-probe"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    connection["id"]
+        .as_str()
+        .expect("connection id")
+        .to_string()
+}
+
+fn uuid_like() -> String {
+    format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    )
+}
+
+#[tokio::test]
+async fn connection_models_probe_lists_upstream_models() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_models_upstream(vec!["gpt-4o", "gpt-4o-mini"]).await;
+    let id = create_probe_connection(&app, &base_url).await;
+
+    let (status, body) = get(&app, &format!("/api/connections/{id}/models")).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<&str> = body["models"]
+        .as_array()
+        .expect("models")
+        .iter()
+        .filter_map(|model| model["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["gpt-4o", "gpt-4o-mini"]);
+}
+
+#[tokio::test]
+async fn connection_test_reports_a_reachable_upstream() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_models_upstream(vec!["gpt-4o"]).await;
+    let id = create_probe_connection(&app, &base_url).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["models_count"], 1);
+    assert!(body["latency_ms"].is_u64());
+}
+
+#[tokio::test]
+async fn connection_test_reports_an_unreachable_upstream() {
+    let (app, _db) = app(false).await;
+    let id = create_probe_connection(&app, "http://127.0.0.1:1/v1").await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("failed") && message.contains("127.0.0.1:1"),
+        "unexpected body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn alias_test_checks_the_override_against_upstream_models() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_models_upstream(vec!["gpt-4o", "gpt-4o-mini"]).await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+
+    let (status, alias) = json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": "probe-ok",
+            "connection_id": connection_id,
+            "model_override": "gpt-4o"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let alias_id = alias["id"].as_str().expect("alias id");
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/aliases/{alias_id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["model_available"], true);
+
+    let (_, missing) = json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": "probe-missing",
+            "connection_id": connection_id,
+            "model_override": "not-a-real-model"
+        }),
+    )
+    .await;
+    let missing_id = missing["id"].as_str().expect("alias id");
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/aliases/{missing_id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["model_available"], false);
+}
+
+#[tokio::test]
+async fn alias_test_reports_a_disabled_alias() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_models_upstream(vec!["gpt-4o"]).await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+
+    let (_, alias) = json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": "probe-off",
+            "connection_id": connection_id,
+            "enabled": false
+        }),
+    )
+    .await;
+    let alias_id = alias["id"].as_str().expect("alias id");
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/aliases/{alias_id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("disabled"),
+        "unexpected body: {body}"
+    );
+}
+
+/// Serves HTML at `/models` and optionally a models list at `/v1/models`.
+async fn spawn_html_upstream(serves_v1: bool) -> String {
+    let mut router = axum::Router::new().route(
+        "/models",
+        axum::routing::get(|| async {
+            (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/html")],
+                "<!DOCTYPE html><html><body>not the api</body></html>",
+            )
+        }),
+    );
+    if serves_v1 {
+        router = router.route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "object": "list",
+                    "data": [{ "id": "gpt-4o" }]
+                }))
+            }),
+        );
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn connection_test_suggests_v1_when_base_url_is_unversioned() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_html_upstream(true).await;
+    let id = create_probe_connection(&app, &base_url).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("base_url") && message.contains("/v1"),
+        "expected an actionable hint, got: {message}"
+    );
+}
+
+#[tokio::test]
+async fn connection_test_summarizes_html_errors() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_html_upstream(false).await;
+    let id = create_probe_connection(&app, &base_url).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("HTML page") && !message.contains("<!DOCTYPE"),
+        "HTML should be summarized, got: {message}"
+    );
+}
+
+/// Serves a one-shot OpenAI-compatible SSE completion that replies "pong".
+async fn spawn_chat_upstream() -> String {
+    let router = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(|| async {
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/event-stream")],
+                concat!(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n"
+                ),
+            )
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}/v1")
+}
+
+async fn create_alias_for(
+    app: &axum::Router,
+    connection_id: &str,
+    prefix: &str,
+    model: Option<&str>,
+) -> String {
+    let (status, alias) = json_request(
+        app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": prefix,
+            "connection_id": connection_id,
+            "model_override": model
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    alias["id"].as_str().expect("alias id").to_string()
+}
+
+#[tokio::test]
+async fn alias_chat_test_returns_a_completion() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    let alias_id =
+        create_alias_for(&app, &connection_id, "chatty", Some("deepseek-v4.1-flash")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/aliases/{alias_id}/test-chat"),
+        serde_json::json!({ "prompt": "ping" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true, "unexpected body: {body}");
+    assert_eq!(body["content"], "pong");
+    assert_eq!(body["model"], "deepseek-v4.1-flash");
+    assert_eq!(body["attempts"], 1);
+    assert_eq!(body["source"], "alias:chatty");
+}
+
+#[tokio::test]
+async fn alias_chat_test_requires_a_model_without_an_override() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    let alias_id = create_alias_for(&app, &connection_id, "bare-prefix", None).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/aliases/{alias_id}/test-chat"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], false);
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no model override"),
+        "unexpected body: {body}"
+    );
+
+    // Passing a model explicitly makes the same alias testable.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/aliases/{alias_id}/test-chat"),
+        serde_json::json!({ "model": "deepseek-v4.1-flash" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true, "unexpected body: {body}");
+}
+
+#[tokio::test]
+async fn bare_alias_name_works_through_chat_completions() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(
+        &app,
+        &connection_id,
+        "bareroute",
+        Some("deepseek-v4.1-flash"),
+    )
+    .await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "bareroute",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["choices"][0]["message"]["content"], "pong");
+}

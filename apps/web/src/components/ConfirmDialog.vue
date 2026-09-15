@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -34,13 +34,15 @@ const emit = defineEmits<{ 'update:open': [boolean]; confirm: [] }>();
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel :disabled="pending">Cancel</AlertDialogCancel>
-        <AlertDialogAction
-          class="bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90"
-          :disabled="pending"
-          @click="emit('confirm')"
-        >
+        <!--
+          Deliberately a plain Button, not AlertDialogAction: the latter closes
+          the dialog as part of its own click handler, so the parent's pending
+          item is cleared before `confirm` runs and deletes become no-ops. The
+          parent closes the dialog by clearing its item after the request.
+        -->
+        <Button variant="destructive" :disabled="pending" @click="emit('confirm')">
           {{ pending ? pendingLabel : confirmLabel }}
-        </AlertDialogAction>
+        </Button>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>

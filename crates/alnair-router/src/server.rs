@@ -31,12 +31,25 @@ pub fn build_router(state: AppState) -> Router {
             delete(handlers::admin::delete_connection).patch(handlers::admin::update_connection),
         )
         .route(
+            "/api/connections/{id}/models",
+            get(handlers::admin::connection_models),
+        )
+        .route(
+            "/api/connections/{id}/test",
+            post(handlers::admin::connection_test),
+        )
+        .route(
             "/api/aliases",
             get(handlers::admin::list_aliases).post(handlers::admin::create_alias),
         )
         .route(
             "/api/aliases/{id}",
             delete(handlers::admin::delete_alias).patch(handlers::admin::update_alias),
+        )
+        .route("/api/aliases/{id}/test", post(handlers::admin::alias_test))
+        .route(
+            "/api/aliases/{id}/test-chat",
+            post(handlers::admin::alias_chat_test),
         )
         .route(
             "/api/combos",

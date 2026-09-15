@@ -211,7 +211,30 @@ impl Resolver {
             }
         }
 
-        // 3. Bare model name → default connection.
+        // 3. A bare alias prefix, but only when it pins a model: the override
+        //    makes the model unambiguous, so `kr` can stand in for `kr/anything`.
+        if !reference.contains('/')
+            && let Some(alias) = self.aliases_by_prefix.get(&reference.to_ascii_lowercase())
+            && let Some(model) = alias.model_override.clone()
+        {
+            let connection = self
+                .connections_by_id
+                .get(&alias.connection_id)
+                .ok_or_else(|| {
+                    Error::NoRoute(format!(
+                        "alias '{reference}' points at a disabled or missing connection"
+                    ))
+                })?;
+
+            out.push(target_from(
+                connection,
+                model,
+                format!("alias:{}", alias.prefix),
+            ));
+            return Ok(());
+        }
+
+        // 4. Bare model name → default connection.
         if !reference.contains('/')
             && let Some(name) = &self.default_connection
             && let Some(connection) = self.connections_by_name.get(name)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Copy, Eye, EyeOff, Pencil, Plug, Plus, RefreshCw, Trash2 } from '@lucide/vue';
+import { Activity, Copy, Eye, EyeOff, Loader2, Pencil, Plug, Plus, RefreshCw, Trash2 } from '@lucide/vue';
 import { onMounted, ref } from 'vue';
 import { toast } from 'vue-sonner';
 
@@ -32,6 +32,7 @@ const editing = ref<Connection | null>(null);
 const deleting = ref<Connection | null>(null);
 const deletingBusy = ref(false);
 const revealed = ref<Set<string>>(new Set());
+const testingId = ref<string | null>(null);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -98,6 +99,22 @@ async function confirmDelete(): Promise<void> {
     toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete connection');
   } finally {
     deletingBusy.value = false;
+  }
+}
+
+async function runTest(connection: Connection): Promise<void> {
+  testingId.value = connection.id;
+  try {
+    const result = await api.testConnection(connection.id);
+    toast.success(
+      `${connection.name} — ${result.message} (${result.latency_ms} ms)`,
+    );
+  } catch (caught) {
+    toast.error(
+      `${connection.name} — ${caught instanceof ApiError ? caught.message : 'Test failed'}`,
+    );
+  } finally {
+    testingId.value = null;
   }
 }
 
@@ -210,6 +227,17 @@ onMounted(load);
             </TableCell>
             <TableCell class="text-right">
               <div class="flex justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :disabled="testingId === connection.id"
+                  :aria-label="`Test ${connection.name}`"
+                  :title="`Test ${connection.name} against its /models endpoint`"
+                  @click="runTest(connection)"
+                >
+                  <Loader2 v-if="testingId === connection.id" class="animate-spin" />
+                  <Activity v-else />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon-sm"

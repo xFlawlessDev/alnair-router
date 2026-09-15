@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Pencil, Plus, RefreshCw, Tags, Trash2 } from '@lucide/vue';
+import { Activity, ListPlus, Loader2, MessageSquare, Pencil, Plus, RefreshCw, Tags, Trash2 } from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { toast } from 'vue-sonner';
 
@@ -8,6 +8,8 @@ import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import AliasFormDialog from '@/components/aliases/AliasFormDialog.vue';
+import AliasChatDialog from '@/components/aliases/AliasChatDialog.vue';
+import ImportAliasesDialog from '@/components/aliases/ImportAliasesDialog.vue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -28,9 +30,13 @@ const connections = ref<Connection[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
+const importOpen = ref(false);
 const editing = ref<Alias | null>(null);
 const deleting = ref<Alias | null>(null);
 const deletingBusy = ref(false);
+const testingId = ref<string | null>(null);
+const chatOpen = ref(false);
+const chatAlias = ref<Alias | null>(null);
 
 const connectionNames = computed(() => {
   const names = new Map<string, string>();
@@ -88,6 +94,24 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
+function openChat(alias: Alias): void {
+  chatAlias.value = alias;
+  chatOpen.value = true;
+}
+
+async function runTest(alias: Alias): Promise<void> {
+  testingId.value = alias.id;
+  try {
+    const result = await api.testAlias(alias.id);
+    if (result.ok) toast.success(`${alias.prefix}/ — ${result.message}`);
+    else toast.warning(`${alias.prefix}/ — ${result.message}`);
+  } catch (caught) {
+    toast.error(caught instanceof ApiError ? caught.message : 'Alias test failed');
+  } finally {
+    testingId.value = null;
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -100,6 +124,14 @@ onMounted(load);
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load">
           <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
+        </Button>
+        <Button
+          variant="outline"
+          :disabled="!connections.length"
+          title="Fetch the connection's /models and create aliases in bulk"
+          @click="importOpen = true"
+        >
+          <ListPlus /> Import models
         </Button>
         <Button @click="openCreate"><Plus /> Add alias</Button>
       </template>
@@ -170,6 +202,26 @@ onMounted(load);
                 <Button
                   variant="ghost"
                   size="icon-sm"
+                  :aria-label="`Chat test ${alias.prefix}`"
+                  :title="`Run a real completion through ${alias.prefix}/`"
+                  @click="openChat(alias)"
+                >
+                  <MessageSquare />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :disabled="testingId === alias.id"
+                  :aria-label="`Test ${alias.prefix}`"
+                  :title="`Test ${alias.prefix}`"
+                  @click="runTest(alias)"
+                >
+                  <Loader2 v-if="testingId === alias.id" class="animate-spin" />
+                  <Activity v-else />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
                   :aria-label="`Edit ${alias.prefix}`"
                   @click="openEdit(alias)"
                 >
@@ -197,6 +249,15 @@ onMounted(load);
       :connections="connections"
       @saved="load"
     />
+
+    <ImportAliasesDialog
+      v-model:open="importOpen"
+      :connections="connections"
+      :existing-prefixes="aliases.map((alias) => alias.prefix)"
+      @saved="load"
+    />
+
+    <AliasChatDialog v-model:open="chatOpen" :alias="chatAlias" />
 
     <ConfirmDialog
       :open="deleting !== null"

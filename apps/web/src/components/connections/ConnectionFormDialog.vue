@@ -186,6 +186,10 @@ async function save(): Promise<void> {
             v-model="baseUrl"
             placeholder="https://api.openai.com/v1"
           />
+          <p class="text-xs text-muted-foreground">
+            Must include the API version path: the router appends
+            <code>/chat/completions</code>, so this usually ends with <code>/v1</code>.
+          </p>
         </div>
 
         <div class="grid gap-2">

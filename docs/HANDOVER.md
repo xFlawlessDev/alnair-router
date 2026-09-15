@@ -27,7 +27,7 @@ The tiered-combo design is modelled on
 
 ## 2. Status right now
 
-- **Builds and tests standalone.** 203 tests green, `cargo clippy --workspace --all-targets` clean.
+- **Builds and tests standalone.** 218 tests green, `cargo clippy --workspace --all-targets` clean.
 - **Self-contained by construction:** no path dependencies anywhere in the
   workspace. `Cargo.lock` resolves entirely from crates.io, so `target/` can be
   deleted and `cargo build --offline` still succeeds.
@@ -128,6 +128,7 @@ crates/alnair-router/
 │   ├── upstream/
 │   │   ├── chat_backend.rs  # ← THE SEAM. Only file that may touch alnair_llm
 │   │   ├── executor.rs      # fallback walk, permits, timeouts, first-chunk peek
+│   │   ├── probe.rs         # admin model listing / connection tests
 │   │   └── media.rs         # HTTP proxying for non-chat endpoints
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
 │   └── handlers/            # chat, messages, responses, models, media, admin, web
@@ -248,6 +249,13 @@ suite should tell you.
     cannot explode; `/api/metrics` is Prometheus text and sits under the admin
     token. (`metrics.rs`)
 
+17. **A bare alias prefix resolves when it pins a model.** `kr` works like
+    `kr/anything` when the alias has a `model_override`; without one, a bare
+    name still goes to `default_connection`. This is what makes imported
+    aliases (`/models` → one alias per model) usable directly. The admin chat
+    probe (`POST /api/aliases/{id}/test-chat`) runs the same resolver +
+    executor path and records a usage row. (`resolver.rs`, `handlers/admin.rs`)
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -297,7 +305,7 @@ public when it stabilises.
 ```bash
 export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"   # required
 cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
-cargo test --workspace        # 203 tests, ~33s (retry backoff + provider tests)
+cargo test --workspace        # 218 tests, ~33s (retry backoff + provider tests)
 cargo clippy --workspace --all-targets
 ```
 
@@ -369,13 +377,13 @@ Response headers report the routing decision:
 | File | Covers |
 |---|---|
 | `crates/alnair-llm/src/**` (81) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff |
-| `tests/resolve.rs` (21) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering |
+| `tests/resolve.rs` (24) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names |
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
-| `tests/routes.rs` (30) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, the seam guard |
+| `tests/routes.rs` (40) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, the seam guard |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
-| `src/**` inline (43) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics |
-| `apps/web/src/**` (21) | API client error/transport handling, formatters, route table, theme store |
+| `src/**` inline (45) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization |
+| `apps/web/src/**` (27) | API client error/transport handling, formatters, route table, theme store, alias prefix helpers, confirm-dialog regression |
 
 ---
 

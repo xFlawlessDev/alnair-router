@@ -72,6 +72,55 @@ export interface AliasInput {
   sort_order?: number;
 }
 
+export interface UpstreamModel {
+  id: string;
+  name: string;
+}
+
+export interface UpstreamModelsResponse {
+  connection_id: ID;
+  provider_type: ProviderType;
+  base_url: string;
+  latency_ms: number;
+  models: UpstreamModel[];
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  models_count: number;
+  latency_ms: number;
+  message: string;
+}
+
+export interface AliasTestResult {
+  ok: boolean;
+  message: string;
+  model: string | null;
+  model_available: boolean | null;
+  models_count: number;
+  latency_ms: number;
+}
+
+export interface AliasChatTestInput {
+  prompt?: string;
+  model?: string;
+}
+
+export interface AliasChatTestResult {
+  ok: boolean;
+  message: string;
+  content?: string;
+  finish_reason?: string | null;
+  model?: string;
+  source?: string;
+  provider_type?: string;
+  attempts?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  cost_usd?: number;
+  latency_ms?: number;
+}
+
 export interface Combo {
   id: ID;
   name: string;

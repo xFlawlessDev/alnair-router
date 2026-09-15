@@ -348,3 +348,38 @@ fn malformed_custom_headers_yield_empty_map() {
     let targets = resolver(&catalog).resolve("glm/glm-5.1").expect("resolve");
     assert!(targets[0].custom_headers.is_empty());
 }
+
+#[test]
+fn bare_alias_prefix_resolves_when_it_pins_a_model() {
+    let catalog = catalog();
+
+    // `kr` has a model override, so it can be used as a bare model name.
+    let targets = resolver(&catalog).resolve("kr").expect("resolve");
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].model, "claude-4.5-sonnet");
+    assert_eq!(targets[0].source, "alias:kr");
+    assert_eq!(targets[0].provider_type, "anthropic-native");
+}
+
+#[test]
+fn bare_alias_prefix_without_override_falls_through_to_the_default() {
+    let catalog = catalog();
+
+    // `glm` has no override; a bare name still uses the default connection.
+    let targets = resolver(&catalog).resolve("glm").expect("resolve");
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].source, "default:openai-main");
+    assert_eq!(targets[0].model, "glm");
+}
+
+#[test]
+fn bare_alias_prefix_is_case_insensitive() {
+    let catalog = catalog();
+
+    let targets = resolver(&catalog).resolve("KR").expect("resolve");
+
+    assert_eq!(targets[0].model, "claude-4.5-sonnet");
+    assert_eq!(targets[0].source, "alias:kr");
+}

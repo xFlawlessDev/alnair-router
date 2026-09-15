@@ -31,6 +31,10 @@ Point any OpenAI-compatible client at the router and use a model reference:
 | `free-forever` | a combo → each entry in order, as fallback tiers |
 | `gpt-4o` | the configured `default_connection` |
 
+An alias that pins a model via its override can also be used as a bare model
+name: with `kr → claude-4.5-sonnet`, `{"model": "kr"}` routes to that model
+directly. Aliases without an override still need `prefix/model`.
+
 When a tier fails **before any content is emitted**, the router transparently
 moves to the next one. Responses report which tier answered via
 `x-router-model`, `x-router-provider`, `x-router-attempt`, and
@@ -137,9 +141,13 @@ docker run --rm -p 7878:7878 \
 | `POST /v1/messages/count_tokens` | Heuristic estimate (no tokenizer dependency). |
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
-`/api/aliases`, `/api/combos`, `/api/keys`, `/api/usage`, `/api/usage/summary`.
-`PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit, and
-monthly budget.
+`/api/aliases`, `/api/combos`, `/api/keys`, `/api/usage`, `/api/usage/summary`,
+`/api/metrics`. `PATCH /api/keys/{id}` edits a key's name, enabled state, rate
+limit, and monthly budget. Upstream diagnostics used by the dashboard:
+`GET /api/connections/{id}/models` lists the models an upstream offers,
+`POST /api/connections/{id}/test` checks connectivity, and
+`POST /api/aliases/{id}/test` verifies an alias' connection and model override;
+`POST /api/aliases/{id}/test-chat` runs one real completion through the alias.
 
 > Admin routes are open on loopback by default, because they mint the keys that
 > authenticate `/v1/*`. Set `server.admin_token` to require
