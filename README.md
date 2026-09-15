@@ -220,7 +220,10 @@ proxy is reachable from the network. In Docker, publish the port explicitly
 split by budget window, for the dashboard's budget monitor), `/api/models`
 (provider + model + price catalog), `/api/pricing`, `/api/pricing/sync`,
 `/api/settings`, `/api/backup`, `/api/restore`, `/api/metrics`,
-`/api/activity`.
+`/api/activity`, `/api/providers` (built-in endpoint presets).
+`/api/connections/{id}/accounts` manages extra API keys for one connection:
+the primary key and enabled accounts rotate round-robin per request, and a
+failing key falls through to the next before the tier is abandoned.
 **Auth:** `/api/auth/status`, `/api/auth/setup`, `/api/auth/login` and
 `/api/auth/refresh` are public; `/api/auth/logout` and
 `PATCH /api/auth/password` need a session. The dashboard signs in with a

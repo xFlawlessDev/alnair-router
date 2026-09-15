@@ -105,13 +105,13 @@ impl MediaProxy {
 fn upstream_headers(target: &ResolvedTarget) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
 
-    if let Some(api_key) = &target.api_key
+    if let Some(api_key) = target.primary_key()
         && !api_key.trim().is_empty()
     {
         // Anthropic-native upstreams expect `x-api-key`; OpenAI-compatible ones
         // expect a bearer token. Sending the wrong one would 401 every request.
         let (name, value) = if target.provider_type == "anthropic-native" {
-            ("x-api-key", api_key.clone())
+            ("x-api-key", api_key.to_string())
         } else {
             ("authorization", format!("Bearer {api_key}"))
         };

@@ -186,8 +186,42 @@ Deployment-only values (`server.host`/`port`, `server.tray`,
 `server.serve_dashboard`, `storage.url`, `secrets.key`) stay read-only in the
 API and are surfaced in the `deployment` block.
 
-### Dashboard authentication
+### Provider presets
 
+`src/providers.rs` ships a built-in catalog (OpenAI, Anthropic, OpenRouter,
+Groq, DeepSeek, Gemini, Z.ai, Moonshot, xAI, Mistral, Together, Fireworks,
+Cerebras, Cohere, NVIDIA, SiliconFlow, Perplexity, Nebius, Chutes, Hyperbolic,
+plus local Ollama/LM Studio/vLLM) with the base URL, wire family and default
+headers each upstream needs. `GET /api/providers` lists it with how many
+connections use each preset. Creating a connection with `provider_id` fills
+`provider_type`, `base_url` and default headers, while anything the user sent
+still wins; migration `0015_connection_provider.sql` stores the label so the
+dashboard can show a provider badge. Endpoint URLs were cross-checked against
+9Router/OmniRoute.
+
+OAuth providers (Claude Code, Codex, GitHub Copilot, …) are the next phase:
+credentials will live in a dedicated table keyed per account (many accounts per
+provider for rotation), with per-request refresh inside `chat_backend` and
+reuse detection; Copilot keeps its dual GitHub→Copilot token exchange cached
+until expiry.
+
+### Extra keys per connection
+
+`connection_accounts` (migration `0016`) attaches more API keys to one
+connection — several keys or quota buckets behind the same endpoint. Writes go
+through `/api/connections/{id}/accounts` and invalidate the routing catalog;
+keys are AES-256-GCM encrypted like the primary one and never serialized back.
+`Catalog::load` decrypts the enabled accounts into `Connection::extra_keys`, so
+`ResolvedTarget` carries `api_keys` (primary first, then accounts) instead of a
+single key. `Executor::stream` snapshots a per-connection cursor from
+`KeyRotator` and tries keys from that offset in a circle: traffic spreads
+round-robin and a key that fails before the first byte falls through to the
+next key before the tier is abandoned. Media proxying uses `primary_key()` and
+does not rotate. The Connections table shows a `+N keys` badge and the edit
+dialog manages the list; adding from a preset auto-suffixes a free name
+(`openai`, `openai-2`, …).
+
+### Dashboard authentication
 The dashboard signs in with a **password only** (no username), stored as an
 Argon2 hash in the single-row `auth` table (migration `0014_auth.sql`). Until
 that row exists, the router prints a one-time setup code at startup

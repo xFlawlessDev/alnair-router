@@ -58,6 +58,10 @@ export interface Connection {
   idle_timeout_ms: number | null;
   /** Catalog model id used for price lookups; null uses the upstream id. */
   pricing_model: string | null;
+  /** Built-in provider preset this connection was created from. */
+  provider_id: string | null;
+  /** Enabled extra API keys rotating behind this connection. */
+  account_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +76,43 @@ export interface ConnectionInput {
   connect_timeout_ms?: number | null;
   idle_timeout_ms?: number | null;
   pricing_model?: string | null;
+  /** Preset to derive the endpoint and wire family from. */
+  provider_id?: string | null;
+}
+
+/** A built-in upstream template shown by the provider picker. */
+export interface ProviderPreset {  id: string;
+  label: string;
+  provider_type: ProviderType;
+  base_url: string;
+  auth: 'api_key' | 'none';
+  default_headers: Record<string, string>;
+  api_key_url: string | null;
+  docs_url: string | null;
+  note: string | null;
+  /** Connections currently using this preset. */
+  configured: number;
+}
+
+export interface ProviderPresetResponse {
+  object: 'list';
+  data: ProviderPreset[];
+}
+
+/** An extra API key attached to a connection; the secret is write-only. */
+export interface ConnectionAccount {
+  id: ID;
+  connection_id: ID;
+  label: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectionAccountInput {
+  label: string;
+  api_key?: string | null;
+  enabled?: boolean;
 }
 
 /** Rate shape returned by the pricing match tool. */

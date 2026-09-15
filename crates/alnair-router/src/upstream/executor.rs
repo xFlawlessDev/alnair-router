@@ -72,6 +72,30 @@ impl AttemptOutcome {
     }
 }
 
+/// Round-robin cursor per connection so extra keys share traffic evenly.
+///
+/// The cursor lives in memory only: after a restart the first key is used
+/// again, which is fine because selection is for load spreading, not state.
+#[derive(Clone, Default)]
+pub struct KeyRotator {
+    cursors: Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
+}
+
+impl KeyRotator {
+    /// Next start offset for a connection holding `len` keys.
+    pub fn next(&self, connection_id: &str, len: usize) -> usize {
+        if len <= 1 {
+            return 0;
+        }
+
+        let mut cursors = self.cursors.lock().expect("key rotator poisoned");
+        let cursor = cursors.entry(connection_id.to_string()).or_insert(0);
+        let offset = *cursor % len;
+        *cursor = (*cursor + 1) % len;
+        offset
+    }
+}
+
 /// Construction settings for an [`Executor`].
 #[derive(Clone)]
 pub struct ExecutorSettings {
@@ -82,6 +106,8 @@ pub struct ExecutorSettings {
     pub telemetry: Arc<crate::telemetry::ActivityTracker>,
     /// Price lookup for the resolved model; absent in unit tests.
     pub pricing: Option<Arc<crate::pricing::PricingCache>>,
+    /// Chooses the first key to try when a connection has several.
+    pub key_rotator: KeyRotator,
 }
 
 impl Default for ExecutorSettings {
@@ -93,6 +119,7 @@ impl Default for ExecutorSettings {
             metrics: Arc::new(crate::metrics::Metrics::default()),
             telemetry: Arc::new(crate::telemetry::ActivityTracker::new()),
             pricing: None,
+            key_rotator: KeyRotator::default(),
         }
     }
 }
@@ -160,151 +187,165 @@ impl Executor {
         let mut last_error: Option<String> = None;
 
         for (index, target) in targets.iter().enumerate() {
-            let started = std::time::Instant::now();
+            // Several keys on one connection (primary + accounts) rotate
+            // round-robin; a request still falls over to the next key when the
+            // current one fails before the first byte.
+            let keys = &target.api_keys;
+            let offset = settings.key_rotator.next(&target.connection_id, keys.len());
+            let tries = keys.len().max(1);
 
-            // A concurrency slot is held for the life of the attempt; on
-            // success it travels with the returned stream so it is released
-            // only when the response finishes or is dropped. A timeout here is
-            // a service-level condition, not an upstream fault, so it fails
-            // the request instead of walking further tiers.
-            let permit = match settings.limiter.acquire(&target.connection_id).await {
-                Ok(permit) => permit,
-                Err(error) => {
-                    settings.metrics.record_rate_limited();
-                    return Err(error);
-                }
-            };
+            for step in 0..tries {
+                let started = std::time::Instant::now();
+                let key = if keys.is_empty() {
+                    None
+                } else {
+                    Some(keys[(offset + step) % keys.len()].as_str())
+                };
 
-            let attempt_token = settings.telemetry.begin_attempt(
-                &target.connection_id,
-                &target.connection_name,
-                &target.model,
-                &target.source,
-                index + 1,
-            );
-
-            // Connections may pin a catalog id for relays whose upstream model
-            // path does not match any priced key.
-            let pricing_key = target.pricing_model.as_deref().unwrap_or(&target.model);
-            let price = match &settings.pricing {
-                Some(pricing) => pricing.price_for(pricing_key).await,
-                None => None,
-            };
-
-            let built = chat_backend::stream(
-                self.registry.clone(),
-                &target.provider_type,
-                &target.base_url,
-                &target.model,
-                messages.clone(),
-                target.api_key.as_deref(),
-                options,
-                settings.retry,
-                streaming,
-                tools.clone(),
-                target.custom_headers.clone(),
-                price,
-            );
-
-            let stream = match built {
-                Ok(stream) => stream,
-                Err(error) => {
-                    settings
-                        .telemetry
-                        .finish_attempt(attempt_token, false, &error.to_string());
-                    // A malformed provider type is a configuration fault, not a
-                    // transient upstream failure: fail loudly instead of
-                    // silently walking the rest of the chain.
-                    if matches!(error, Error::UnsupportedProviderType(_)) {
+                // A concurrency slot is held for the life of the attempt; on
+                // success it travels with the returned stream so it is released
+                // only when the response finishes or is dropped. A timeout here
+                // is a service-level condition, not an upstream fault, so it
+                // fails the request instead of walking further tiers.
+                let permit = match settings.limiter.acquire(&target.connection_id).await {
+                    Ok(permit) => permit,
+                    Err(error) => {
+                        settings.metrics.record_rate_limited();
                         return Err(error);
                     }
-                    last_error = Some(error.to_string());
-                    attempts.push(failed_attempt(index, target, &error, started));
-                    continue;
-                }
-            };
+                };
 
-            // Peek the first chunk: this is where connection/auth failures land.
-            // `ChunkStream` is `Pin<Box<dyn Stream>>`, so it is already `Unpin`
-            // and can be advanced without pinning the local binding. The wait is
-            // bounded by the connection's connect timeout.
-            let mut stream = stream;
-            let connect_timeout_ms = target
-                .connect_timeout_ms
-                .unwrap_or(settings.timeouts.connect_timeout_ms);
-            let first = match wait_for_chunk(&mut stream, connect_timeout_ms).await {
-                ChunkWait::Ready(item) => item,
-                ChunkWait::TimedOut => {
-                    let error = Error::Upstream(format!(
-                        "upstream did not respond within {connect_timeout_ms} ms"
-                    ));
-                    settings
-                        .telemetry
-                        .finish_attempt(attempt_token, false, &error.to_string());
-                    tracing::warn!(
-                        attempt = index + 1,
-                        source = %target.source,
-                        model = %target.model,
-                        timeout_ms = connect_timeout_ms,
-                        "upstream connect timeout; falling through"
-                    );
-                    last_error = Some(error.to_string());
-                    attempts.push(failed_attempt(index, target, &error, started));
-                    continue;
-                }
-            };
+                let attempt_token = settings.telemetry.begin_attempt(
+                    &target.connection_id,
+                    &target.connection_name,
+                    &target.model,
+                    &target.source,
+                    index + 1,
+                );
 
-            match first {
-                Some(Err(error)) => {
-                    settings
-                        .telemetry
-                        .finish_attempt(attempt_token, false, &error.to_string());
-                    tracing::warn!(
-                        attempt = index + 1,
-                        source = %target.source,
-                        model = %target.model,
-                        error = %error,
-                        "upstream attempt failed on first chunk; falling through"
-                    );
-                    last_error = Some(error.to_string());
-                    attempts.push(failed_attempt(index, target, &error, started));
-                }
-                first => {
-                    settings
-                        .telemetry
-                        .finish_attempt(attempt_token, true, "first chunk ready");
-                    let latency_ms = started.elapsed().as_millis() as u64;
-                    attempts.push(Attempt {
-                        index: index + 1,
-                        source: target.source.clone(),
-                        provider_type: target.provider_type.clone(),
-                        connection_name: target.connection_name.clone(),
-                        model: target.model.clone(),
-                        outcome: AttemptOutcome::Succeeded,
-                        latency_ms,
-                    });
+                // Connections may pin a catalog id for relays whose upstream model
+                // path does not match any priced key.
+                let pricing_key = target.pricing_model.as_deref().unwrap_or(&target.model);
+                let price = match &settings.pricing {
+                    Some(pricing) => pricing.price_for(pricing_key).await,
+                    None => None,
+                };
 
-                    // Re-attach the peeked chunk to the front of the stream.
-                    let rest: BoxStream<'static, Result<StreamChunk>> = match first {
-                        Some(Ok(chunk)) => futures::stream::once(async move { Ok(chunk) })
-                            .chain(stream)
-                            .boxed(),
-                        _ => stream.boxed(),
-                    };
-                    let idle_timeout_ms = target
-                        .idle_timeout_ms
-                        .unwrap_or(settings.timeouts.idle_timeout_ms);
-                    let rest = with_idle_timeout(rest, idle_timeout_ms);
-                    let rest = hold_permit(rest, permit);
+                let built = chat_backend::stream(
+                    self.registry.clone(),
+                    &target.provider_type,
+                    &target.base_url,
+                    &target.model,
+                    messages.clone(),
+                    key,
+                    options,
+                    settings.retry,
+                    streaming,
+                    tools.clone(),
+                    target.custom_headers.clone(),
+                    price,
+                );
 
-                    settings.metrics.record_attempts(&attempts);
+                let stream = match built {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        settings
+                            .telemetry
+                            .finish_attempt(attempt_token, false, &error.to_string());
+                        // A malformed provider type is a configuration fault, not a
+                        // transient upstream failure: fail loudly instead of
+                        // silently walking the rest of the chain.
+                        if matches!(error, Error::UnsupportedProviderType(_)) {
+                            return Err(error);
+                        }
+                        last_error = Some(error.to_string());
+                        attempts.push(failed_attempt(index, target, &error, started));
+                        continue;
+                    }
+                };
 
-                    return Ok(ExecutedStream {
-                        stream: rest,
-                        target: target.clone(),
-                        attempts,
-                        latency_ms,
-                    });
+                // Peek the first chunk: this is where connection/auth failures land.
+                // `ChunkStream` is `Pin<Box<dyn Stream>>`, so it is already `Unpin`
+                // and can be advanced without pinning the local binding. The wait is
+                // bounded by the connection's connect timeout.
+                let mut stream = stream;
+                let connect_timeout_ms = target
+                    .connect_timeout_ms
+                    .unwrap_or(settings.timeouts.connect_timeout_ms);
+                let first = match wait_for_chunk(&mut stream, connect_timeout_ms).await {
+                    ChunkWait::Ready(item) => item,
+                    ChunkWait::TimedOut => {
+                        let error = Error::Upstream(format!(
+                            "upstream did not respond within {connect_timeout_ms} ms"
+                        ));
+                        settings
+                            .telemetry
+                            .finish_attempt(attempt_token, false, &error.to_string());
+                        tracing::warn!(
+                            attempt = index + 1,
+                            source = %target.source,
+                            model = %target.model,
+                            timeout_ms = connect_timeout_ms,
+                            "upstream connect timeout; falling through"
+                        );
+                        last_error = Some(error.to_string());
+                        attempts.push(failed_attempt(index, target, &error, started));
+                        continue;
+                    }
+                };
+
+                match first {
+                    Some(Err(error)) => {
+                        settings
+                            .telemetry
+                            .finish_attempt(attempt_token, false, &error.to_string());
+                        tracing::warn!(
+                            attempt = index + 1,
+                            source = %target.source,
+                            model = %target.model,
+                            error = %error,
+                            "upstream attempt failed on first chunk; falling through"
+                        );
+                        last_error = Some(error.to_string());
+                        attempts.push(failed_attempt(index, target, &error, started));
+                    }
+                    first => {
+                        settings
+                            .telemetry
+                            .finish_attempt(attempt_token, true, "first chunk ready");
+                        let latency_ms = started.elapsed().as_millis() as u64;
+                        attempts.push(Attempt {
+                            index: index + 1,
+                            source: target.source.clone(),
+                            provider_type: target.provider_type.clone(),
+                            connection_name: target.connection_name.clone(),
+                            model: target.model.clone(),
+                            outcome: AttemptOutcome::Succeeded,
+                            latency_ms,
+                        });
+
+                        // Re-attach the peeked chunk to the front of the stream.
+                        let rest: BoxStream<'static, Result<StreamChunk>> = match first {
+                            Some(Ok(chunk)) => futures::stream::once(async move { Ok(chunk) })
+                                .chain(stream)
+                                .boxed(),
+                            _ => stream.boxed(),
+                        };
+                        let idle_timeout_ms = target
+                            .idle_timeout_ms
+                            .unwrap_or(settings.timeouts.idle_timeout_ms);
+                        let rest = with_idle_timeout(rest, idle_timeout_ms);
+                        let rest = hold_permit(rest, permit);
+
+                        settings.metrics.record_attempts(&attempts);
+
+                        return Ok(ExecutedStream {
+                            stream: rest,
+                            target: target.clone(),
+                            attempts,
+                            latency_ms,
+                        });
+                    }
                 }
             }
         }
@@ -397,5 +438,34 @@ fn failed_attempt(
         model: target.model.clone(),
         outcome: AttemptOutcome::Failed(error.to_string()),
         latency_ms: started.elapsed().as_millis() as u64,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KeyRotator;
+
+    #[test]
+    fn key_rotator_cycles_offsets_per_connection() {
+        let rotator = KeyRotator::default();
+
+        assert_eq!(rotator.next("c1", 1), 0);
+        assert_eq!(rotator.next("c1", 1), 0);
+
+        assert_eq!(rotator.next("c2", 3), 0);
+        assert_eq!(rotator.next("c2", 3), 1);
+        assert_eq!(rotator.next("c2", 3), 2);
+        assert_eq!(rotator.next("c2", 3), 0);
+
+        // Cursors are independent per connection.
+        assert_eq!(rotator.next("c3", 2), 0);
+        assert_eq!(rotator.next("c2", 3), 1);
+    }
+
+    #[test]
+    fn key_rotator_without_keys_is_a_no_op() {
+        let rotator = KeyRotator::default();
+        assert_eq!(rotator.next("c1", 0), 0);
+        assert_eq!(rotator.next("c1", 0), 0);
     }
 }

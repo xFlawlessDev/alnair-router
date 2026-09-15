@@ -16,7 +16,7 @@ use alnair_router::limits::UpstreamLimiter;
 use alnair_router::model::Catalog;
 use alnair_router::upstream::chat_backend::RetryPolicy;
 use alnair_router::upstream::chat_backend::{self, ProviderRegistry};
-use alnair_router::upstream::{Executor, ExecutorSettings, UpstreamTimeouts};
+use alnair_router::upstream::{Executor, ExecutorSettings, KeyRotator, UpstreamTimeouts};
 use axum::Router;
 use axum::routing::post;
 use futures::StreamExt;
@@ -154,6 +154,7 @@ async fn combo_falls_through_to_the_second_tier() {
 
             idle_timeout_ms: None,
             pricing_model: None,
+            provider_id: None,
         })
         .await
         .expect("create dead");
@@ -172,6 +173,7 @@ async fn combo_falls_through_to_the_second_tier() {
 
             idle_timeout_ms: None,
             pricing_model: None,
+            provider_id: None,
         })
         .await
         .expect("create good");
@@ -265,6 +267,7 @@ async fn all_tiers_failing_reports_the_last_error() {
 
             idle_timeout_ms: None,
             pricing_model: None,
+            provider_id: None,
         })
         .await
         .expect("create flaky");
@@ -323,6 +326,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             connect_timeout_ms: Some(50),
             idle_timeout_ms: None,
             pricing_model: None,
+            provider_id: None,
         })
         .await
         .expect("create slow");
@@ -358,6 +362,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             metrics: Arc::new(alnair_router::metrics::Metrics::default()),
             telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
             pricing: None,
+            key_rotator: KeyRotator::default(),
         },
     );
 
@@ -401,6 +406,7 @@ async fn idle_streams_error_after_the_timeout() {
             connect_timeout_ms: Some(0),
             idle_timeout_ms: Some(50),
             pricing_model: None,
+            provider_id: None,
         })
         .await
         .expect("create trickle");
@@ -424,6 +430,7 @@ async fn idle_streams_error_after_the_timeout() {
             metrics: Arc::new(alnair_router::metrics::Metrics::default()),
             telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
             pricing: None,
+            key_rotator: KeyRotator::default(),
         },
     );
 

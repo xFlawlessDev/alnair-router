@@ -21,6 +21,9 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         connect_timeout_ms: None,
         idle_timeout_ms: None,
         pricing_model: None,
+        provider_id: None,
+        extra_keys: Vec::new(),
+        account_count: 0,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }
@@ -103,7 +106,7 @@ fn alias_resolves_model_from_reference() {
     assert_eq!(targets[0].provider_type, "openai-compatible");
     assert_eq!(targets[0].base_url, "https://openai.test/v1");
     assert_eq!(targets[0].model, "glm-5.1");
-    assert_eq!(targets[0].api_key.as_deref(), Some("key-c1"));
+    assert_eq!(targets[0].primary_key(), Some("key-c1"));
     assert_eq!(targets[0].source, "alias:glm");
 }
 

@@ -62,6 +62,18 @@ describe('api', () => {
     expect(failure).toMatchObject({ status: 0 });
   });
 
+  it('rejects non-JSON success bodies instead of returning undefined', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('<!doctype html><html></html>', { status: 200 })),
+    );
+
+    const failure = await api.listConnections().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 200 });
+    expect((failure as ApiError).message).toContain('non-JSON');
+  });
+
   it('resolves 204 responses to undefined', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
     await expect(api.deleteAlias('alias-1')).resolves.toBeUndefined();

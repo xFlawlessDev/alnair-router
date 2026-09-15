@@ -21,7 +21,9 @@ pub struct ResolvedTarget {
     pub provider_type: String,
     pub base_url: String,
     pub model: String,
-    pub api_key: Option<String>,
+    /// Credentials to try for this target, in rotation order. The primary
+    /// connection key comes first, then enabled extra accounts.
+    pub api_keys: Vec<String>,
     pub custom_headers: BTreeMap<String, String>,
     /// Connect/first-byte timeout override, in milliseconds; `None` inherits the
     /// router default and `Some(0)` disables the timeout.
@@ -42,6 +44,13 @@ pub struct Catalog {
     pub aliases: Vec<Alias>,
     pub combos: Vec<Combo>,
     pub combo_entries: Vec<ComboEntry>,
+}
+
+impl ResolvedTarget {
+    /// First configured key. Non-rotating callers (media proxying) use this.
+    pub fn primary_key(&self) -> Option<&str> {
+        self.api_keys.first().map(String::as_str)
+    }
 }
 
 /// Resolves model references against a [`Catalog`].
@@ -257,13 +266,21 @@ impl Resolver {
 }
 
 fn target_from(connection: &Connection, model: String, source: String) -> ResolvedTarget {
+    let mut api_keys = Vec::new();
+    if let Some(key) = &connection.api_key
+        && !key.trim().is_empty()
+    {
+        api_keys.push(key.clone());
+    }
+    api_keys.extend(connection.extra_keys.iter().cloned());
+
     ResolvedTarget {
         connection_id: connection.id.clone(),
         connection_name: connection.name.clone(),
         provider_type: connection.provider_type.clone(),
         base_url: connection.base_url.clone(),
         model,
-        api_key: connection.api_key.clone(),
+        api_keys,
         custom_headers: connection.headers(),
         connect_timeout_ms: non_negative(connection.connect_timeout_ms),
         idle_timeout_ms: non_negative(connection.idle_timeout_ms),

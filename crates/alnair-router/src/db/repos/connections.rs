@@ -29,6 +29,16 @@ pub struct Connection {
     /// Model id used for price lookups when the upstream id differs from the
     /// catalog (e.g. relay paths). NULL falls back to the upstream model id.
     pub pricing_model: Option<String>,
+    /// Built-in preset this connection was created from, if any.
+    pub provider_id: Option<String>,
+    /// Enabled extra keys from `connection_accounts`; loaded by the catalog and
+    /// never serialized into API responses.
+    #[sqlx(skip)]
+    #[serde(skip_serializing, default)]
+    pub extra_keys: Vec<String>,
+    /// Enabled extra-key count for the dashboard; `0` when none.
+    #[sqlx(default)]
+    pub account_count: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -55,7 +65,11 @@ impl Connection {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateConnection {
     pub name: String,
+    /// Wire family; filled from `provider_id` when omitted.
+    #[serde(default)]
     pub provider_type: String,
+    /// Upstream root URL; filled from `provider_id` when omitted.
+    #[serde(default)]
     pub base_url: String,
     #[serde(default)]
     pub api_key: Option<String>,
@@ -69,6 +83,10 @@ pub struct CreateConnection {
     pub idle_timeout_ms: Option<i64>,
     #[serde(default)]
     pub pricing_model: Option<String>,
+    /// Preset to derive `provider_type`, `base_url` and default headers from.
+    /// Filled fields may still be overridden.
+    #[serde(default)]
+    pub provider_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -91,6 +109,9 @@ pub struct UpdateConnection {
     pub idle_timeout_ms: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub pricing_model: Option<Option<String>>,
+    /// Set or clear the preset this connection is labelled with.
+    #[serde(default)]
+    pub provider_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -123,66 +144,123 @@ impl ConnectionRepository {
     }
 
     pub async fn list(&self) -> Result<Vec<Connection>> {
-        let rows = sqlx::query_as::<_, Connection>("SELECT * FROM connections ORDER BY name ASC")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query_as::<_, Connection>(
+            "SELECT c.*,
+                    (SELECT COUNT(*) FROM connection_accounts a
+                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count
+             FROM connections c ORDER BY c.name ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         rows.into_iter().map(|row| self.decrypt(row)).collect()
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<Connection>> {
-        let row = sqlx::query_as::<_, Connection>("SELECT * FROM connections WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as::<_, Connection>(
+            "SELECT c.*,
+                    (SELECT COUNT(*) FROM connection_accounts a
+                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count
+             FROM connections c WHERE c.id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
 
         row.map(|row| self.decrypt(row)).transpose()
     }
 
     pub async fn get_by_name(&self, name: &str) -> Result<Option<Connection>> {
-        let row = sqlx::query_as::<_, Connection>("SELECT * FROM connections WHERE name = ?")
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as::<_, Connection>(
+            "SELECT c.*,
+                    (SELECT COUNT(*) FROM connection_accounts a
+                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count
+             FROM connections c WHERE c.name = ?",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
 
         row.map(|row| self.decrypt(row)).transpose()
     }
 
     pub async fn create(&self, input: CreateConnection) -> Result<Connection> {
-        validate_provider_type(&input.provider_type)?;
+        let preset = match input
+            .provider_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(id) => Some(
+                crate::providers::find(id)
+                    .ok_or_else(|| Error::BadRequest(format!("unknown provider preset '{id}'")))?,
+            ),
+            None => None,
+        };
+
+        let provider_type = match input.provider_type.trim() {
+            "" => preset
+                .as_ref()
+                .map(|preset| preset.provider_type.to_string())
+                .unwrap_or_default(),
+            value => value.to_string(),
+        };
+        validate_provider_type(&provider_type)?;
+
         let name = input.name.trim();
         if name.is_empty() {
             return Err(Error::BadRequest("name is required".to_string()));
         }
-        if input.base_url.trim().is_empty() {
+
+        let base_url = match input.base_url.trim() {
+            "" => preset
+                .as_ref()
+                .map(|preset| preset.base_url)
+                .unwrap_or_default(),
+            value => value,
+        };
+        if base_url.is_empty() {
             return Err(Error::BadRequest("base_url is required".to_string()));
+        }
+
+        // Preset headers are defaults: whatever the user sent wins.
+        let mut headers = input.custom_headers.clone();
+        if let Some(preset) = &preset {
+            for (key, value) in &preset.default_headers {
+                headers
+                    .entry((*key).to_string())
+                    .or_insert_with(|| (*value).to_string());
+            }
         }
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        let headers = serde_json::to_string(&input.custom_headers)
+        let headers = serde_json::to_string(&headers)
             .map_err(|error| Error::BadRequest(format!("invalid custom_headers: {error}")))?;
         let api_key = match normalized_secret(input.api_key.as_deref()) {
             Some(value) => Some(self.cipher.encrypt(&value)?),
             None => None,
         };
+        let provider_id = preset.as_ref().map(|preset| preset.id.to_string());
 
         sqlx::query(
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
-                 connect_timeout_ms, idle_timeout_ms, pricing_model, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 connect_timeout_ms, idle_timeout_ms, pricing_model, provider_id,
+                 created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
-        .bind(&input.provider_type)
-        .bind(input.base_url.trim())
+        .bind(&provider_type)
+        .bind(base_url)
         .bind(&api_key)
         .bind(headers)
         .bind(i64::from(input.enabled))
         .bind(normalized_timeout(input.connect_timeout_ms)?)
         .bind(normalized_timeout(input.idle_timeout_ms)?)
         .bind(normalized_model(input.pricing_model.as_deref()))
+        .bind(&provider_id)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -253,11 +331,21 @@ impl ConnectionRepository {
             Some(value) => normalized_model(value.as_deref()),
             None => existing.pricing_model.clone(),
         };
+        let provider_id = match input.provider_id.as_deref().map(str::trim) {
+            Some("") => None,
+            Some(id) => {
+                crate::providers::find(id)
+                    .ok_or_else(|| Error::BadRequest(format!("unknown provider preset '{id}'")))?;
+                Some(id.to_string())
+            }
+            None => existing.provider_id.clone(),
+        };
 
         sqlx::query(
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
-                 connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, updated_at = ?
+                 connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, provider_id = ?,
+                 updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -269,6 +357,7 @@ impl ConnectionRepository {
         .bind(connect_timeout)
         .bind(idle_timeout)
         .bind(pricing_model)
+        .bind(&provider_id)
         .bind(Utc::now())
         .bind(id)
         .execute(&self.pool)

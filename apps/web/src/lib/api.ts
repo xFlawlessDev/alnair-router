@@ -14,6 +14,8 @@ import type {
   AuthStatus,
   ComboWithEntries,
   Connection,
+  ConnectionAccount,
+  ConnectionAccountInput,
   ConnectionInput,
   ConnectionTestResult,
   CreatedApiKey,
@@ -28,6 +30,7 @@ import type {
   ModelPriceInput,
   MyUsageResponse,
   PriceMatch,
+  ProviderPresetResponse,
   PublicCatalogResponse,
   PricingSyncStatus,
   RestoreSummary,
@@ -159,9 +162,11 @@ async function request<T>(method: string, path: string, options: RequestOptions 
 
   const text = await response.text();
   let payload: unknown;
+  let parsed = true;
   try {
     payload = text ? JSON.parse(text) : undefined;
   } catch {
+    parsed = false;
     payload = undefined;
   }
 
@@ -170,6 +175,16 @@ async function request<T>(method: string, path: string, options: RequestOptions 
       errorMessage(payload) ?? `Request failed with status ${response.status}`,
       response.status,
       errorType(payload),
+    );
+  }
+
+  // A 200 that is not JSON usually means an older router answered through the
+  // SPA fallback (or a proxy returned an error page); fail loudly instead of
+  // handing callers an `undefined` payload.
+  if (!parsed && text.trim() !== '') {
+    throw new ApiError(
+      `Unexpected non-JSON response from ${path}. Is the router up to date?`,
+      response.status,
     );
   }
 
@@ -232,6 +247,7 @@ export const api = {
     }),
 
   listConnections: () => request<Connection[]>('GET', '/api/connections'),
+  listProviders: () => request<ProviderPresetResponse>('GET', '/api/providers'),
   createConnection: (body: ConnectionInput) =>
     request<Connection>('POST', '/api/connections', { body }),
   updateConnection: (id: ID, body: Partial<ConnectionInput>) =>
@@ -241,6 +257,14 @@ export const api = {
     request<UpstreamModelsResponse>('GET', `/api/connections/${id}/models`),
   testConnection: (id: ID) =>
     request<ConnectionTestResult>('POST', `/api/connections/${id}/test`),
+  listConnectionAccounts: (id: ID) =>
+    request<ConnectionAccount[]>('GET', `/api/connections/${id}/accounts`),
+  createConnectionAccount: (id: ID, body: ConnectionAccountInput) =>
+    request<ConnectionAccount>('POST', `/api/connections/${id}/accounts`, { body }),
+  updateConnectionAccount: (id: ID, accountId: ID, body: Partial<ConnectionAccountInput>) =>
+    request<ConnectionAccount>('PATCH', `/api/connections/${id}/accounts/${accountId}`, { body }),
+  deleteConnectionAccount: (id: ID, accountId: ID) =>
+    request<void>('DELETE', `/api/connections/${id}/accounts/${accountId}`),
 
   listAliases: () => request<Alias[]>('GET', '/api/aliases'),
   createAlias: (body: AliasInput) => request<Alias>('POST', '/api/aliases', { body }),

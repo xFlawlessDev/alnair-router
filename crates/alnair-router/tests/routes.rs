@@ -3162,3 +3162,175 @@ async fn settings_toggle_lan_access_hot() {
     let (status, _) = get(&app, "/api/connections").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn provider_presets_fill_connection_defaults() {
+    let (app, _db) = app(false).await;
+
+    let (status, body) = get(&app, "/api/providers").await;
+    assert_eq!(status, StatusCode::OK);
+    let presets = body["data"].as_array().expect("presets");
+    assert!(presets.len() >= 20, "expected a real catalog");
+    assert!(presets.iter().any(|preset| preset["id"] == "openai"));
+    assert!(
+        presets.iter().all(|preset| preset["configured"] == 0),
+        "nothing configured yet"
+    );
+
+    // Creating from a preset fills the endpoint and wire family.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({ "name": "openai-main", "provider_id": "openai" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body}");
+    assert_eq!(body["provider_type"], "openai-compatible");
+    assert_eq!(body["base_url"], "https://api.openai.com/v1");
+    assert_eq!(body["provider_id"], "openai");
+
+    // The catalog reports the new connection.
+    let (_, body) = get(&app, "/api/providers").await;
+    let openai = body["data"]
+        .as_array()
+        .expect("presets")
+        .iter()
+        .find(|preset| preset["id"] == "openai")
+        .expect("openai preset");
+    assert_eq!(openai["configured"], 1);
+
+    // Unknown presets are rejected.
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({ "name": "nope", "provider_id": "does-not-exist" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // An explicit wire family still has to be supported.
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "bad",
+            "provider_id": "openai",
+            "provider_type": "not-a-type"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn provider_presets_keep_user_overrides() {
+    let (app, _db) = app(false).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "custom-openai",
+            "provider_id": "openai",
+            "base_url": "https://proxy.example.com/v1",
+            "provider_type": "anthropic-native",
+            "custom_headers": { "X-Org": "acme" }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["base_url"], "https://proxy.example.com/v1");
+    assert_eq!(body["provider_type"], "anthropic-native");
+
+    let headers: serde_json::Value = serde_json::from_str(
+        body["custom_headers"]
+            .as_str()
+            .expect("custom_headers string"),
+    )
+    .expect("headers json");
+    assert_eq!(headers["X-Org"], "acme");
+}
+
+#[tokio::test]
+async fn connection_accounts_round_trip_and_invalidate() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "openai-main",
+            "provider_id": "openai",
+            "api_key": "sk-primary"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+    assert_eq!(connection["account_count"], 0);
+
+    let (status, account) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{connection_id}/accounts"),
+        serde_json::json!({ "label": "backup", "api_key": "sk-backup" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {account}");
+    assert!(
+        account.get("api_key").is_none(),
+        "the extra key must never be returned: {account}"
+    );
+    let account_id = account["id"].as_str().expect("account id");
+
+    // The connection list reports the enabled account count.
+    let (status, list) = get(&app, "/api/connections").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list[0]["account_count"], 1);
+
+    // Duplicate labels are rejected.
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{connection_id}/accounts"),
+        serde_json::json!({ "label": "backup", "api_key": "sk-other" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Disabling an account drops it from the rotation count.
+    let (status, _) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/connections/{connection_id}/accounts/{account_id}"),
+        serde_json::json!({ "enabled": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = get(&app, "/api/connections").await;
+    assert_eq!(list[0]["account_count"], 0);
+
+    let response = raw_request_with_auth(
+        &app,
+        "DELETE",
+        &format!("/api/connections/{connection_id}/accounts/{account_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Accounts need an existing connection.
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/api/connections/does-not-exist/accounts",
+        serde_json::json!({ "label": "x", "api_key": "sk-y" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

@@ -25,6 +25,7 @@ pub mod model;
 pub mod policy;
 pub mod pricing;
 pub mod protocol;
+pub mod providers;
 pub mod server;
 pub mod settings;
 pub mod state;

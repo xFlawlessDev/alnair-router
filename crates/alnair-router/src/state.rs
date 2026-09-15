@@ -12,6 +12,7 @@ use crate::db::Db;
 use crate::db::repos::aliases::AliasRepository;
 use crate::db::repos::api_keys::ApiKeyRepository;
 use crate::db::repos::combos::ComboRepository;
+use crate::db::repos::connection_accounts::ConnectionAccountRepository;
 use crate::db::repos::connections::ConnectionRepository;
 use crate::db::repos::key_plans::KeyPlanRepository;
 use crate::db::repos::usage::UsageRepository;
@@ -22,7 +23,7 @@ use crate::pricing::{PricingCache, PricingRepository};
 use crate::settings::{SettingsOverrides, SettingsRepository};
 use crate::telemetry::ActivityTracker;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
-use crate::upstream::{Executor, ExecutorSettings, UpstreamTimeouts};
+use crate::upstream::{Executor, ExecutorSettings, KeyRotator, UpstreamTimeouts};
 
 /// State shared by every handler.
 #[derive(Clone)]
@@ -86,6 +87,7 @@ impl AppState {
                     metrics: metrics.clone(),
                     telemetry: telemetry.clone(),
                     pricing: Some(pricing_cache.clone()),
+                    key_rotator: KeyRotator::default(),
                 },
             ),
             limiter,
@@ -175,6 +177,11 @@ impl AppState {
 
     pub fn connections(&self) -> ConnectionRepository {
         ConnectionRepository::new(self.pool.clone(), self.cipher.clone())
+    }
+
+    /// Extra API keys attached to connections.
+    pub fn connection_accounts(&self) -> ConnectionAccountRepository {
+        ConnectionAccountRepository::new(self.pool.clone(), self.cipher.clone())
     }
 
     pub fn aliases(&self) -> AliasRepository {

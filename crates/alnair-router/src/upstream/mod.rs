@@ -7,6 +7,7 @@ pub mod media;
 pub mod probe;
 
 pub use executor::{
-    Attempt, AttemptOutcome, ExecutedStream, Executor, ExecutorSettings, UpstreamTimeouts,
+    Attempt, AttemptOutcome, ExecutedStream, Executor, ExecutorSettings, KeyRotator,
+    UpstreamTimeouts,
 };
 pub use probe::{ProbeOutcome, UpstreamModel, model_available};

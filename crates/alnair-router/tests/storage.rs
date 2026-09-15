@@ -38,6 +38,7 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         connect_timeout_ms: None,
         idle_timeout_ms: None,
         pricing_model: None,
+        provider_id: None,
     }
 }
 
@@ -1182,6 +1183,7 @@ async fn connections_round_trip_a_pricing_model_pin() {
             connect_timeout_ms: None,
             idle_timeout_ms: None,
             pricing_model: Some("gpt-5.6-luna".to_string()),
+            provider_id: None,
         })
         .await
         .expect("create");

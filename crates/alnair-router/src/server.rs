@@ -32,6 +32,7 @@ pub fn build_router(state: AppState) -> Router {
     let admin = Router::new()
         .route("/api/version", get(handlers::admin::version))
         .route("/api/init", get(handlers::admin::init_state))
+        .route("/api/providers", get(handlers::providers::list_providers))
         .route(
             "/api/connections",
             get(handlers::admin::list_connections).post(handlers::admin::create_connection),
@@ -43,6 +44,14 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/connections/{id}/models",
             get(handlers::admin::connection_models),
+        )
+        .route(
+            "/api/connections/{id}/accounts",
+            get(handlers::accounts::list_accounts).post(handlers::accounts::create_account),
+        )
+        .route(
+            "/api/connections/{id}/accounts/{account_id}",
+            delete(handlers::accounts::delete_account).patch(handlers::accounts::update_account),
         )
         .route(
             "/api/connections/{id}/test",

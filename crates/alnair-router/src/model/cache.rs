@@ -177,6 +177,7 @@ mod tests {
                 connect_timeout_ms: None,
                 idle_timeout_ms: None,
                 pricing_model: None,
+                provider_id: None,
             })
             .await
             .expect("create connection");

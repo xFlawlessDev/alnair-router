@@ -8,6 +8,7 @@ import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import ConnectionFormDialog from '@/components/connections/ConnectionFormDialog.vue';
+import ProviderPickerDialog from '@/components/connections/ProviderPickerDialog.vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,12 +23,15 @@ import {
 } from '@/components/ui/table';
 import { ApiError, api } from '@/lib/api';
 import { formatDateTime, isEnabled, maskSecret, parseHeaders } from '@/lib/format';
-import type { Connection } from '@/types/api';
+import type { Connection, ProviderPreset } from '@/types/api';
 
 const connections = ref<Connection[]>([]);
+const presets = ref<ProviderPreset[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
+const pickerOpen = ref(false);
+const selectedPreset = ref<ProviderPreset | null>(null);
 const editing = ref<Connection | null>(null);
 const deleting = ref<Connection | null>(null);
 const deletingBusy = ref(false);
@@ -38,7 +42,12 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    connections.value = await api.listConnections();
+    const [connectionList, providerList] = await Promise.all([
+      api.listConnections(),
+      api.listProviders(),
+    ]);
+    connections.value = connectionList;
+    presets.value = providerList.data;
   } catch (caught) {
     error.value = caught instanceof ApiError ? caught.message : 'Failed to load connections';
   } finally {
@@ -47,13 +56,49 @@ async function load(): Promise<void> {
 }
 
 function openCreate(): void {
+  selectedPreset.value = null;
   editing.value = null;
   formOpen.value = true;
 }
 
+function openPicker(): void {
+  pickerOpen.value = true;
+}
+
+function onPresetSelected(preset: ProviderPreset): void {
+  selectedPreset.value = preset;
+  editing.value = null;
+  pickerOpen.value = false;
+  formOpen.value = true;
+}
+
 function openEdit(connection: Connection): void {
+  selectedPreset.value = null;
   editing.value = connection;
   formOpen.value = true;
+}
+
+function providerLabel(connection: Connection): string {
+  if (!connection.provider_id) return '';
+  return (
+    presets.value.find((preset) => preset.id === connection.provider_id)?.label ??
+    connection.provider_id
+  );
+}
+
+/** Free connection name for a preset, suffixed when the base name is taken. */
+function suggestName(preset: ProviderPreset): string {
+  const base = preset.label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  const taken = new Set(connections.value.map((connection) => connection.name.toLowerCase()));
+  if (!taken.has(base)) return base;
+
+  for (let index = 2; ; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 function headerCount(connection: Connection): number {
@@ -131,7 +176,8 @@ onMounted(load);
         <Button variant="outline" :disabled="loading" @click="load">
           <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
         </Button>
-        <Button @click="openCreate"><Plus /> Add connection</Button>
+        <Button variant="outline" @click="openCreate"><Plus /> Add connection</Button>
+        <Button @click="openPicker"><Plug /> Add provider</Button>
       </template>
     </PageHeader>
 
@@ -148,7 +194,10 @@ onMounted(load);
     >
       <template #icon><Plug class="size-5" /></template>
       <template #action>
-        <Button @click="openCreate"><Plus /> Add connection</Button>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          <Button @click="openPicker"><Plug /> Add provider</Button>
+          <Button variant="outline" @click="openCreate"><Plus /> Add connection</Button>
+        </div>
       </template>
     </EmptyState>
 
@@ -171,7 +220,19 @@ onMounted(load);
             <TableCell>
               <div class="flex flex-col gap-1">
                 <span class="font-medium">{{ connection.name }}</span>
-                <Badge variant="outline" class="w-fit">{{ connection.provider_type }}</Badge>
+                <div class="flex flex-wrap items-center gap-1">
+                  <Badge v-if="connection.provider_id" variant="secondary">
+                    {{ providerLabel(connection) }}
+                  </Badge>
+                  <Badge variant="outline">{{ connection.provider_type }}</Badge>
+                  <Badge
+                    v-if="connection.account_count"
+                    variant="secondary"
+                    :title="`${connection.account_count} extra key(s) rotate behind this connection`"
+                  >
+                    +{{ connection.account_count }} keys
+                  </Badge>
+                </div>
               </div>
             </TableCell>
             <TableCell class="max-w-64 truncate font-mono text-xs" :title="connection.base_url">
@@ -262,9 +323,13 @@ onMounted(load);
       </Table>
     </Card>
 
+    <ProviderPickerDialog v-model:open="pickerOpen" @select="onPresetSelected" />
+
     <ConnectionFormDialog
       v-model:open="formOpen"
       :connection="editing"
+      :preset="selectedPreset"
+      :default-name="selectedPreset ? suggestName(selectedPreset) : ''"
       @saved="load"
     />
 

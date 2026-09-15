@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub mod aliases;
 pub mod api_keys;
 pub mod combos;
+pub mod connection_accounts;
 pub mod connections;
 pub mod key_plans;
 pub mod usage;
