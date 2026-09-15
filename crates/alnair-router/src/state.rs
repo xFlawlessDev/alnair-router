@@ -14,8 +14,9 @@ use crate::db::repos::connections::ConnectionRepository;
 use crate::db::repos::usage::UsageRepository;
 use crate::error::Result;
 use crate::limits::{RateLimiter, UpstreamLimiter};
-use crate::upstream::Executor;
+use crate::metrics::Metrics;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
+use crate::upstream::{Executor, ExecutorSettings, UpstreamTimeouts};
 
 /// State shared by every handler.
 #[derive(Clone)]
@@ -26,6 +27,8 @@ pub struct AppState {
     pub executor: Executor,
     pub limiter: UpstreamLimiter,
     pub rate_limiter: RateLimiter,
+    pub metrics: Arc<Metrics>,
+    catalog_cache: Arc<crate::model::CatalogCache>,
 }
 
 impl AppState {
@@ -41,6 +44,13 @@ impl AppState {
         };
         let limiter = UpstreamLimiter::new(&config.limits);
         let rate_limiter = RateLimiter::new(&config.rate_limit);
+        let timeouts = UpstreamTimeouts::from_config(&config);
+        let metrics = Arc::new(Metrics::default());
+        let catalog_cache = Arc::new(crate::model::CatalogCache::new(
+            &config,
+            db.pool.clone(),
+            cipher.clone(),
+        ));
 
         Ok(Self {
             config: Arc::new(config),
@@ -48,11 +58,17 @@ impl AppState {
             cipher,
             executor: Executor::with_settings(
                 Arc::new(ProviderRegistry::with_defaults()),
-                retry,
-                limiter.clone(),
+                ExecutorSettings {
+                    retry,
+                    limiter: limiter.clone(),
+                    timeouts,
+                    metrics: metrics.clone(),
+                },
             ),
             limiter,
             rate_limiter,
+            metrics,
+            catalog_cache,
         })
     }
 
@@ -77,11 +93,19 @@ impl AppState {
     }
 
     /// Loads a routing snapshot and builds a resolver over it.
-    pub async fn resolver(&self) -> Result<crate::model::Resolver> {
-        let catalog = crate::model::Catalog::load(&self.pool, &self.cipher).await?;
-        Ok(catalog.resolver(
-            self.config.router.default_connection.clone(),
-            self.config.router.max_attempts,
-        ))
+    ///
+    /// The snapshot is cached; admin writes invalidate it explicitly.
+    pub async fn resolver(&self) -> Result<Arc<crate::model::Resolver>> {
+        Ok(self.catalog_snapshot().await?.resolver)
+    }
+
+    /// Returns the cached catalog snapshot, reloading when stale.
+    pub async fn catalog_snapshot(&self) -> Result<crate::model::CatalogSnapshot> {
+        self.catalog_cache.snapshot().await
+    }
+
+    /// Drops the cached routing catalog; called by every admin mutation.
+    pub async fn invalidate_catalog(&self) {
+        self.catalog_cache.invalidate().await;
     }
 }

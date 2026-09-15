@@ -3,6 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 
 const adminEndpoints = [
   ['GET /api/health', 'Liveness probe plus service version.'],
+  ['GET /api/ready', 'Readiness: database check plus optional upstream reachability.'],
+  ['GET /api/metrics', 'Prometheus text counters for routing and usage.'],
   ['GET /api/init', 'Whether at least one enabled connection exists.'],
   ['GET·POST /api/connections', 'Upstream endpoints and their credentials.'],
   ['PATCH·DELETE /api/connections/{id}', 'Update or remove a connection.'],

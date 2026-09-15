@@ -18,6 +18,8 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         api_key: Some(format!("key-{id}")),
         custom_headers: "{}".to_string(),
         enabled: 1,
+        connect_timeout_ms: None,
+        idle_timeout_ms: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }

@@ -41,6 +41,8 @@ const apiKey = ref('');
 const clearApiKey = ref(false);
 const headers = ref<HeaderRow[]>([]);
 const enabled = ref(true);
+const connectTimeout = ref('');
+const idleTimeout = ref('');
 const saving = ref(false);
 
 const isEdit = computed(() => props.connection !== null);
@@ -60,8 +62,19 @@ watch(
       ? Object.entries(parseHeaders(connection.custom_headers)).map(([key, value]) => ({ key, value }))
       : [];
     enabled.value = connection ? connection.enabled !== 0 : true;
+    connectTimeout.value =
+      connection?.connect_timeout_ms != null ? String(connection.connect_timeout_ms) : '';
+    idleTimeout.value =
+      connection?.idle_timeout_ms != null ? String(connection.idle_timeout_ms) : '';
   },
 );
+
+function parseTimeout(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
 
 function addHeader(): void {
   headers.value.push({ key: '', value: '' });
@@ -83,12 +96,23 @@ async function save(): Promise<void> {
     if (key) customHeaders[key] = row.value.trim();
   }
 
+  if (connectTimeout.value.trim() && parseTimeout(connectTimeout.value) === null) {
+    toast.error('Connect timeout must be zero or more milliseconds');
+    return;
+  }
+  if (idleTimeout.value.trim() && parseTimeout(idleTimeout.value) === null) {
+    toast.error('Idle timeout must be zero or more milliseconds');
+    return;
+  }
+
   const body = {
     name: name.value.trim(),
     provider_type: providerType.value,
     base_url: baseUrl.value.trim(),
     custom_headers: customHeaders,
     enabled: enabled.value,
+    connect_timeout_ms: parseTimeout(connectTimeout.value),
+    idle_timeout_ms: parseTimeout(idleTimeout.value),
   };
 
   saving.value = true;
@@ -186,6 +210,31 @@ async function save(): Promise<void> {
               A key is configured.
               <button class="underline" type="button" @click="clearApiKey = true">Clear it</button>
             </template>
+          </div>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="grid gap-2">
+            <Label for="connection-connect-timeout">Connect timeout (ms)</Label>
+            <Input
+              id="connection-connect-timeout"
+              v-model="connectTimeout"
+              type="number"
+              min="0"
+              placeholder="Inherit server default"
+            />
+            <p class="text-xs text-muted-foreground">0 disables the timeout.</p>
+          </div>
+          <div class="grid gap-2">
+            <Label for="connection-idle-timeout">Idle timeout (ms)</Label>
+            <Input
+              id="connection-idle-timeout"
+              v-model="idleTimeout"
+              type="number"
+              min="0"
+              placeholder="Inherit server default"
+            />
+            <p class="text-xs text-muted-foreground">Max silence between stream chunks.</p>
           </div>
         </div>
 

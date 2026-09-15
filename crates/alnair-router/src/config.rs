@@ -46,6 +46,8 @@ pub struct ServerConfig {
     /// Extra origins permitted to call the API cross-origin. The embedded UI is
     /// served same-origin and needs none of this, so the default is empty.
     pub cors_origins: Vec<String>,
+    /// Include best-effort upstream TCP reachability in `/api/ready`.
+    pub readiness_upstream_checks: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -102,6 +104,15 @@ pub struct RoutingConfig {
     pub max_retries_per_tier: usize,
     /// Upper bound for the exponential provider retry delay, in milliseconds.
     pub max_retry_delay_ms: u64,
+    /// Routing-catalog cache TTL in milliseconds. 0 caches until an admin write
+    /// invalidates it.
+    pub catalog_ttl_ms: u64,
+    /// Default upstream connect/first-byte timeout in milliseconds (0 disables).
+    /// Connections can override this.
+    pub connect_timeout_ms: u64,
+    /// Default upstream idle timeout between stream chunks in milliseconds
+    /// (0 disables). Connections can override this.
+    pub idle_timeout_ms: u64,
 }
 
 impl Default for ServerConfig {
@@ -113,6 +124,7 @@ impl Default for ServerConfig {
             admin_token: None,
             allow_unauthenticated_admin: false,
             cors_origins: Vec::new(),
+            readiness_upstream_checks: false,
         }
     }
 }
@@ -124,6 +136,9 @@ impl Default for RoutingConfig {
             max_attempts: 5,
             max_retries_per_tier: 2,
             max_retry_delay_ms: 30_000,
+            catalog_ttl_ms: 1_000,
+            connect_timeout_ms: 10_000,
+            idle_timeout_ms: 60_000,
         }
     }
 }
@@ -362,5 +377,13 @@ mod tests {
         let routing = RoutingConfig::default();
         assert_eq!(routing.max_retries_per_tier, 2);
         assert_eq!(routing.max_retry_delay_ms, 30_000);
+    }
+
+    #[test]
+    fn catalog_and_timeout_defaults_are_pinned() {
+        let routing = RoutingConfig::default();
+        assert_eq!(routing.catalog_ttl_ms, 1_000);
+        assert_eq!(routing.connect_timeout_ms, 10_000);
+        assert_eq!(routing.idle_timeout_ms, 60_000);
     }
 }

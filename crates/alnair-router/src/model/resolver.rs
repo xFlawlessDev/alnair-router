@@ -21,6 +21,11 @@ pub struct ResolvedTarget {
     pub model: String,
     pub api_key: Option<String>,
     pub custom_headers: BTreeMap<String, String>,
+    /// Connect/first-byte timeout override, in milliseconds; `None` inherits the
+    /// router default and `Some(0)` disables the timeout.
+    pub connect_timeout_ms: Option<u64>,
+    /// Stream idle timeout override, in milliseconds; `None` inherits.
+    pub idle_timeout_ms: Option<u64>,
     /// Provenance, e.g. `alias:glm` or `combo:free-forever#2`.
     pub source: String,
 }
@@ -231,6 +236,12 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         model,
         api_key: connection.api_key.clone(),
         custom_headers: connection.headers(),
+        connect_timeout_ms: non_negative(connection.connect_timeout_ms),
+        idle_timeout_ms: non_negative(connection.idle_timeout_ms),
         source,
     }
+}
+
+fn non_negative(value: Option<i64>) -> Option<u64> {
+    value.and_then(|value| u64::try_from(value).ok())
 }

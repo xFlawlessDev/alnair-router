@@ -789,3 +789,122 @@ async fn connection_patch_clears_api_key_when_sent_null() {
         "null should clear the stored key: {body}"
     );
 }
+
+#[tokio::test]
+async fn admin_writes_invalidate_the_routing_cache() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "cached",
+            "provider_type": "openai-compatible",
+            "base_url": "https://example.invalid/v1"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({ "prefix": "one", "connection_id": connection_id }),
+    )
+    .await;
+
+    let model_ids = |body: &serde_json::Value| -> Vec<String> {
+        body["data"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .filter_map(|entry| entry["id"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    let (_, first) = get(&app, "/v1/models").await;
+    assert!(model_ids(&first).contains(&"one".to_string()));
+
+    // A second admin write must be visible immediately, not after the TTL.
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({ "prefix": "two", "connection_id": connection_id }),
+    )
+    .await;
+
+    let (_, second) = get(&app, "/v1/models").await;
+    let ids = model_ids(&second);
+    assert!(
+        ids.contains(&"one".to_string()) && ids.contains(&"two".to_string()),
+        "admin writes should invalidate the cached catalog: {ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn probes_are_public_and_report_readiness() {
+    let (app, _db) = app_with_admin_token("admin-secret").await;
+
+    // No token needed for liveness/readiness even when admin auth is on.
+    let (status, body) = get(&app, "/api/health").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "ok");
+
+    let (status, body) = get(&app, "/api/ready").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["database"], "ok");
+}
+
+#[tokio::test]
+async fn readiness_reports_unreachable_upstreams_when_enabled() {
+    let mut config = RouterConfig::default();
+    config.server.readiness_upstream_checks = true;
+    let (app, _db) = app_with_config(config).await;
+
+    json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "dead-endpoint",
+            "provider_type": "openai-compatible",
+            "base_url": "http://127.0.0.1:1/v1"
+        }),
+    )
+    .await;
+
+    let (status, body) = get(&app, "/api/ready").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["upstreams"]["unreachable"], 1);
+    assert_eq!(body["upstreams"]["reachable"], 0);
+}
+
+#[tokio::test]
+async fn metrics_endpoint_exposes_prometheus_text() {
+    let (app, _db) = app(false).await;
+
+    let response = raw_request_with_auth(&app, "GET", "/api/metrics", None, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .starts_with("text/plain"),
+        "metrics should be text/plain"
+    );
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("alnair_router_requests_total"));
+    assert!(text.contains("# TYPE alnair_router_attempts_total counter"));
+}

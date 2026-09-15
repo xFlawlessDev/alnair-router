@@ -46,7 +46,10 @@ pub async fn require_api_key(
     state.api_keys().touch(&key.id).await?;
 
     // Cheap in-memory check first, then the budget rollup.
-    state.rate_limiter.check(&key.id, key.rate_limit())?;
+    if let Err(error) = state.rate_limiter.check(&key.id, key.rate_limit()) {
+        state.metrics.record_rate_limited();
+        return Err(error);
+    }
     let budget_warning = check_budget(&state, &key).await?;
 
     request.extensions_mut().insert(Some(AuthenticatedKey(key)));
@@ -83,12 +86,15 @@ async fn check_budget(state: &AppState, key: &ApiKey) -> Result<Option<String>> 
     }
 
     match mode {
-        BudgetMode::Block => Err(Error::BudgetExceeded {
-            message: format!(
-                "monthly budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
-                key.name
-            ),
-        }),
+        BudgetMode::Block => {
+            state.metrics.record_budget_blocked();
+            Err(Error::BudgetExceeded {
+                message: format!(
+                    "monthly budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
+                    key.name
+                ),
+            })
+        }
         BudgetMode::Warn => Ok(Some(format!("spent ${spent:.2} of ${limit:.2}"))),
         BudgetMode::Off => Ok(None),
     }

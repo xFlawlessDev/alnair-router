@@ -11,10 +11,15 @@ use crate::state::AppState;
 
 /// Builds the application router with all routes wired.
 pub fn build_router(state: AppState) -> Router {
-    // Admin and health routes are unauthenticated: they manage the keys used to
-    // authenticate `/v1/*`, so they cannot themselves require one.
-    let admin = Router::new()
+    // Liveness/readiness probes stay public: container and load-balancer
+    // healthchecks cannot easily carry a bearer token.
+    let probes = Router::new()
         .route("/api/health", get(handlers::admin::health))
+        .route("/api/ready", get(handlers::admin::ready));
+
+    // Admin and management routes are unauthenticated on loopback; when
+    // `server.admin_token` is configured the token is enforced on all of them.
+    let admin = Router::new()
         .route("/api/version", get(handlers::admin::version))
         .route("/api/init", get(handlers::admin::init_state))
         .route(
@@ -51,6 +56,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/usage", get(handlers::admin::list_usage))
         .route("/api/usage/summary", get(handlers::admin::usage_summary))
+        .route("/api/metrics", get(handlers::admin::metrics))
         // Enforced only when `server.admin_token` is configured; loopback
         // without a token keeps the documented frictionless posture.
         .route_layer(axum_middleware::from_fn_with_state(
@@ -94,6 +100,7 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     Router::new()
+        .merge(probes)
         .merge(admin)
         .merge(v1)
         .layer(

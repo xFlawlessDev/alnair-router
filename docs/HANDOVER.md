@@ -27,7 +27,7 @@ The tiered-combo design is modelled on
 
 ## 2. Status right now
 
-- **Builds and tests standalone.** 190 tests green, `cargo clippy --all-targets` clean.
+- **Builds and tests standalone.** 202 tests green, `cargo clippy --all-targets` clean.
 - **Self-contained by construction:** no path dependencies anywhere in the
   workspace. `Cargo.lock` resolves entirely from crates.io, so `target/` can be
   deleted and `cargo build --offline` still succeeds.
@@ -63,6 +63,16 @@ roadmap):
 - Anthropic has a real `stream: false` path (`LlmProvider::complete`), and
   non-streaming responses on every endpoint now surface tool calls.
 
+**P2 is done** (2026-09-15):
+
+- The routing catalog is cached and invalidated by every admin write
+  (`model/cache.rs`); `router.catalog_ttl_ms` is a backstop for out-of-band edits.
+- Provider files are module folders, all under the 800-LOC cap.
+- `src/metrics.rs` + `GET /api/metrics` expose Prometheus-style counters.
+- `/api/health` is liveness, `/api/ready` checks the database and optionally
+  upstream reachability; both probes are public.
+- Per-connection connect/idle timeouts are enforced in the executor.
+
 ---
 
 ## 3. Architecture
@@ -75,6 +85,7 @@ crates/alnair-router/
 ├── Cargo.toml
 ├── migrations/0001_init.sql  # 6 tables
 ├── migrations/0002_api_key_limits.sql
+├── migrations/0003_connection_timeouts.sql
 ├── router.example.toml       # every config option
 ├── src/
 │   ├── main.rs              # load config → cipher → connect DB → migrate → serve
@@ -82,23 +93,25 @@ crates/alnair-router/
 │   ├── config.rs            # file + ALNAIR_ROUTER__SECTION__KEY env
 │   ├── crypto.rs            # AES-256-GCM credential encryption + key parsing
 │   ├── limits.rs            # concurrency semaphores + token buckets + budget mode
+│   ├── metrics.rs           # atomic counters + Prometheus text exposition
 │   ├── error.rs             # scoped Error → OpenAI-shaped JSON error body
 │   ├── state.rs             # AppState: config, pool, cipher, executor, repos
-│   ├── middleware.rs        # bearer auth for /v1/* and /api/*
-│   ├── server.rs            # route table
+│   ├── middleware.rs        # bearer auth + rate/budget checks for /v1/* and /api/*
+│   ├── server.rs            # route table (public probes, guarded admin)
 │   ├── model/
+│   │   ├── cache.rs         # catalog cache: TTL + explicit invalidation
 │   │   ├── catalog.rs       # loads connections/aliases/combos from DB
 │   │   └── resolver.rs      # pure: reference → ordered Vec<ResolvedTarget>
 │   ├── db/
-│   │   ├── mod.rs           # pool + embedded migrations
+│   │   ├── mod.rs           # pool + embedded migrations + credential migration
 │   │   └── repos/           # connections, aliases, combos, api_keys, usage
 │   ├── upstream/
 │   │   ├── chat_backend.rs  # ← THE SEAM. Only file that may touch crate::llm
-│   │   ├── executor.rs      # fallback walk + first-chunk peek
+│   │   ├── executor.rs      # fallback walk, permits, timeouts, first-chunk peek
 │   │   └── media.rs         # HTTP proxying for non-chat endpoints
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
 │   ├── handlers/            # chat, messages, responses, models, media, admin, shared
-│   └── llm/                 # VENDORED provider stack — see §5
+│   └── llm/                 # VENDORED provider stack — module folders, see §5
 └── tests/                   # resolve, storage, fallback, routes
 ```
 
@@ -108,7 +121,8 @@ crates/alnair-router/
 POST /v1/chat/completions { "model": "free-forever" }
   │
   ├─ middleware::require_api_key      (skipped if require_api_key = false)
-  ├─ state.resolver()                 → loads catalog from SQLite EVERY REQUEST
+  │    └─ token bucket + monthly budget checks (429 / 402)
+  ├─ state.resolver()                 → cached catalog snapshot (admin writes invalidate)
   ├─ Resolver::resolve("free-forever")→ Vec<ResolvedTarget>, ordered
   ├─ Executor::stream(targets, ...)
   │    └─ for each target: chat_backend::stream(...) → peek FIRST chunk
@@ -198,6 +212,23 @@ suite should tell you.
     SSE stream. `collect` aggregates tool calls instead of erroring, which is
     what makes tool use work with `stream: false`.
 
+14. **Catalog invalidation is explicit, the TTL is a backstop.** Every admin
+    mutation calls `AppState::invalidate_catalog`; `router.catalog_ttl_ms`
+    exists for out-of-band edits. If you add a new write path that changes
+    connections, aliases or combos, invalidate there too. (`model/cache.rs`,
+    `handlers/admin.rs`)
+
+15. **Timeouts live in the executor, not the providers.** A tier must produce
+    its first chunk within `connect_timeout_ms` (per-connection override beats
+    the router default); after that, silence longer than `idle_timeout_ms`
+    fails the stream. Both are `0`-disabled by default *per connection*, and
+    enforced at the seam so every provider gets them for free. (`executor.rs`)
+
+16. **Metrics are deliberately label-free.** Coarse counters only (requests,
+    attempts, failures, failover, tokens, cost, rejections) so cardinality
+    cannot explode; `/api/metrics` is Prometheus text and sits under the admin
+    token. (`metrics.rs`)
+
 ---
 
 ## 5. The vendored `src/llm/` layer — read this
@@ -215,8 +246,9 @@ dependency on anything outside this repository.
 
 - **Staleness.** There is no external upstream to sync fixes from; this copy is
   the source of truth. See roadmap P3.3.
-- **Size.** `src/llm/providers/openai.rs` (~1745 LOC) and `anthropic.rs` (~1006 LOC)
-  are the two largest files in the package and exceed the project's 800-LOC guideline.
+- **Size, handled.** The providers were split into module folders under the
+  800-LOC cap: `openai/{mod,request,chunks,tests}` and
+  `anthropic/{mod,stream,tests}`. Keep it that way when adding code.
 
 ### The seam (this is the important part)
 
@@ -243,7 +275,7 @@ is a one-file change plus one `Cargo.toml` line.
 ```bash
 export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"   # required
 cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
-cargo test                    # 190 tests, ~31s (retry backoff + vendored provider tests)
+cargo test                    # 202 tests, ~32s (retry backoff + vendored provider tests)
 cargo clippy --all-targets
 ```
 
@@ -298,9 +330,9 @@ Response headers report the routing decision:
 |---|---|
 | `tests/resolve.rs` (21) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering |
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
-| `tests/routes.rs` (25) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, rate limit 429, budget 402/warn, key PATCH, the vendored-layer seam guard |
-| `tests/fallback.rs` (2) | Failover ordering against an in-process mock upstream |
-| `src/**` inline (118) | Vendored provider internals, crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation |
+| `tests/routes.rs` (29) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, the vendored-layer seam guard |
+| `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
+| `src/**` inline (124) | Vendored provider internals (split over `openai/{request,chunks,tests}` and `anthropic/{stream,tests}`), crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics |
 | `apps/web/src/**` (21) | API client error/transport handling, formatters, route table, theme store |
 
 ---

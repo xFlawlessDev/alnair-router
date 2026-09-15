@@ -5,7 +5,6 @@ use axum::extract::State;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::model::Catalog;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -27,7 +26,7 @@ pub struct ModelObject {
 
 /// Lists every model reference a caller can ask for.
 pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList>> {
-    let catalog = Catalog::load(&state.pool, &state.cipher).await?;
+    let catalog = state.catalog_snapshot().await?.catalog;
     let created = chrono::Utc::now().timestamp();
 
     let mut data = Vec::new();
@@ -92,11 +91,9 @@ pub struct ModelInfoList {
 
 /// Per-reference metadata for the configured aliases and combos.
 pub async fn models_info(State(state): State<AppState>) -> Result<Json<ModelInfoList>> {
-    let catalog = Catalog::load(&state.pool, &state.cipher).await?;
-    let resolver = catalog.resolver(
-        state.config.router.default_connection.clone(),
-        state.config.router.max_attempts,
-    );
+    let snapshot = state.catalog_snapshot().await?;
+    let catalog = snapshot.catalog;
+    let resolver = snapshot.resolver.as_ref();
 
     let mut data = Vec::new();
 

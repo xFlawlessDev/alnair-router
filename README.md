@@ -153,6 +153,17 @@ Key settings:
 - `rate_limit.requests_per_minute` — default per-key token bucket (0 = off);
   keys can override it, and can carry a monthly budget with `off`/`warn`/`block`
   enforcement.
+- `router.catalog_ttl_ms` (default 1000) — routing-catalog cache; admin writes
+  invalidate it immediately.
+- `router.connect_timeout_ms` / `router.idle_timeout_ms` — default upstream
+  first-byte and stream-idle timeouts; each connection can override or disable
+  them (`0`).
+- `server.readiness_upstream_checks` — makes `/api/ready` report TCP
+  reachability counts for enabled connections.
+
+`GET /api/health` is a liveness probe (no database touch); `GET /api/ready`
+checks the database. `GET /api/metrics` exposes Prometheus-style counters and is
+guarded like the rest of `/api/*`.
 
 See `crates/alnair-router/router.example.toml` for every option.
 

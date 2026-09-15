@@ -5,4 +5,6 @@ pub mod chat_backend;
 pub mod executor;
 pub mod media;
 
-pub use executor::{Attempt, AttemptOutcome, ExecutedStream, Executor};
+pub use executor::{
+    Attempt, AttemptOutcome, ExecutedStream, Executor, ExecutorSettings, UpstreamTimeouts,
+};

@@ -7,16 +7,45 @@
 //! chunk, not by whether `stream()` returned `Ok`.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
+use crate::config::RouterConfig;
 use crate::error::{Error, Result};
 use crate::limits::{LimitPermit, UpstreamLimiter};
 use crate::model::ResolvedTarget;
 use crate::upstream::chat_backend::{
     self, ChunkStream, GenerationOptions, ProviderRegistry, RetryPolicy, RouterMessage, StreamChunk,
 };
+
+/// Router-wide upstream timeouts, in milliseconds. Zero disables one.
+#[derive(Debug, Clone, Copy)]
+pub struct UpstreamTimeouts {
+    /// Time allowed for connect + first byte before the tier fails.
+    pub connect_timeout_ms: u64,
+    /// Maximum silence between stream chunks before the stream errors.
+    pub idle_timeout_ms: u64,
+}
+
+impl Default for UpstreamTimeouts {
+    fn default() -> Self {
+        Self {
+            connect_timeout_ms: 10_000,
+            idle_timeout_ms: 60_000,
+        }
+    }
+}
+
+impl UpstreamTimeouts {
+    pub fn from_config(config: &RouterConfig) -> Self {
+        Self {
+            connect_timeout_ms: config.router.connect_timeout_ms,
+            idle_timeout_ms: config.router.idle_timeout_ms,
+        }
+    }
+}
 
 /// One upstream attempt and its outcome.
 #[derive(Debug, Clone)]
@@ -42,34 +71,41 @@ impl AttemptOutcome {
     }
 }
 
+/// Construction settings for an [`Executor`].
+#[derive(Clone)]
+pub struct ExecutorSettings {
+    pub retry: RetryPolicy,
+    pub limiter: UpstreamLimiter,
+    pub timeouts: UpstreamTimeouts,
+    pub metrics: Arc<crate::metrics::Metrics>,
+}
+
+impl Default for ExecutorSettings {
+    fn default() -> Self {
+        Self {
+            retry: RetryPolicy::default(),
+            limiter: UpstreamLimiter::new(&crate::config::LimitsConfig::default()),
+            timeouts: UpstreamTimeouts::default(),
+            metrics: Arc::new(crate::metrics::Metrics::default()),
+        }
+    }
+}
+
 /// Walks resolved targets until one succeeds.
 #[derive(Clone)]
 pub struct Executor {
     registry: Arc<ProviderRegistry>,
-    retry: RetryPolicy,
-    limiter: UpstreamLimiter,
+    settings: ExecutorSettings,
 }
 
 impl Executor {
     pub fn new(registry: Arc<ProviderRegistry>) -> Self {
-        Self::with_settings(
-            registry,
-            RetryPolicy::default(),
-            UpstreamLimiter::new(&crate::config::LimitsConfig::default()),
-        )
+        Self::with_settings(registry, ExecutorSettings::default())
     }
 
-    /// Builds an executor with an explicit retry policy and concurrency caps.
-    pub fn with_settings(
-        registry: Arc<ProviderRegistry>,
-        retry: RetryPolicy,
-        limiter: UpstreamLimiter,
-    ) -> Self {
-        Self {
-            registry,
-            retry,
-            limiter,
-        }
+    /// Builds an executor with explicit retry, concurrency, timeout and metrics.
+    pub fn with_settings(registry: Arc<ProviderRegistry>, settings: ExecutorSettings) -> Self {
+        Self { registry, settings }
     }
 
     /// Opens a stream from the first target that yields a first chunk without
@@ -100,7 +136,13 @@ impl Executor {
             // only when the response finishes or is dropped. A timeout here is
             // a service-level condition, not an upstream fault, so it fails
             // the request instead of walking further tiers.
-            let permit = self.limiter.acquire(&target.connection_id).await?;
+            let permit = match self.settings.limiter.acquire(&target.connection_id).await {
+                Ok(permit) => permit,
+                Err(error) => {
+                    self.settings.metrics.record_rate_limited();
+                    return Err(error);
+                }
+            };
 
             let built = chat_backend::stream(
                 self.registry.clone(),
@@ -110,7 +152,7 @@ impl Executor {
                 messages.clone(),
                 target.api_key.as_deref(),
                 options,
-                self.retry,
+                self.settings.retry,
                 streaming,
                 tools.clone(),
                 target.custom_headers.clone(),
@@ -133,9 +175,32 @@ impl Executor {
 
             // Peek the first chunk: this is where connection/auth failures land.
             // `ChunkStream` is `Pin<Box<dyn Stream>>`, so it is already `Unpin`
-            // and can be advanced without pinning the local binding.
+            // and can be advanced without pinning the local binding. The wait is
+            // bounded by the connection's connect timeout.
             let mut stream = stream;
-            match stream.next().await {
+            let connect_timeout_ms = target
+                .connect_timeout_ms
+                .unwrap_or(self.settings.timeouts.connect_timeout_ms);
+            let first = match wait_for_chunk(&mut stream, connect_timeout_ms).await {
+                ChunkWait::Ready(item) => item,
+                ChunkWait::TimedOut => {
+                    let error = Error::Upstream(format!(
+                        "upstream did not respond within {connect_timeout_ms} ms"
+                    ));
+                    tracing::warn!(
+                        attempt = index + 1,
+                        source = %target.source,
+                        model = %target.model,
+                        timeout_ms = connect_timeout_ms,
+                        "upstream connect timeout; falling through"
+                    );
+                    last_error = Some(error.to_string());
+                    attempts.push(failed_attempt(index, target, &error, started));
+                    continue;
+                }
+            };
+
+            match first {
                 Some(Err(error)) => {
                     tracing::warn!(
                         attempt = index + 1,
@@ -165,7 +230,13 @@ impl Executor {
                             .boxed(),
                         _ => stream.boxed(),
                     };
+                    let idle_timeout_ms = target
+                        .idle_timeout_ms
+                        .unwrap_or(self.settings.timeouts.idle_timeout_ms);
+                    let rest = with_idle_timeout(rest, idle_timeout_ms);
                     let rest = hold_permit(rest, permit);
+
+                    self.settings.metrics.record_attempts(&attempts);
 
                     return Ok(ExecutedStream {
                         stream: rest,
@@ -176,6 +247,8 @@ impl Executor {
                 }
             }
         }
+
+        self.settings.metrics.record_attempts(&attempts);
 
         Err(Error::AllAttemptsFailed(
             last_error.unwrap_or_else(|| "unknown failure".to_string()),
@@ -190,6 +263,52 @@ pub struct ExecutedStream {
     pub attempts: Vec<Attempt>,
     /// Time to first chunk, in milliseconds.
     pub latency_ms: u64,
+}
+
+/// Result of waiting for a first chunk with a deadline.
+enum ChunkWait {
+    Ready(Option<Result<StreamChunk>>),
+    TimedOut,
+}
+
+/// Waits for the next chunk, bounded by `timeout_ms` (0 waits forever).
+async fn wait_for_chunk(stream: &mut ChunkStream, timeout_ms: u64) -> ChunkWait {
+    if timeout_ms == 0 {
+        return ChunkWait::Ready(stream.next().await);
+    }
+
+    match tokio::time::timeout(Duration::from_millis(timeout_ms), stream.next()).await {
+        Ok(item) => ChunkWait::Ready(item),
+        Err(_) => ChunkWait::TimedOut,
+    }
+}
+
+/// Errs when no chunk arrives for `idle_ms` (0 disables the timeout).
+fn with_idle_timeout(
+    stream: BoxStream<'static, Result<StreamChunk>>,
+    idle_ms: u64,
+) -> BoxStream<'static, Result<StreamChunk>> {
+    if idle_ms == 0 {
+        return stream;
+    }
+
+    futures::stream::unfold((stream, false), move |(mut stream, finished)| async move {
+        if finished {
+            return None;
+        }
+
+        match tokio::time::timeout(Duration::from_millis(idle_ms), stream.next()).await {
+            Ok(Some(item)) => Some((item, (stream, false))),
+            Ok(None) => None,
+            Err(_) => Some((
+                Err(Error::Upstream(format!(
+                    "upstream stream was idle for more than {idle_ms} ms"
+                ))),
+                (stream, true),
+            )),
+        }
+    })
+    .boxed()
 }
 
 /// Keeps limiter permits alive until the stream is exhausted or dropped.

@@ -106,6 +106,14 @@ impl StreamUsage {
         }
 
         let usage = usage.unwrap_or_default();
+        self.state.metrics.record_request(self.latency_ms);
+        self.state.metrics.record_usage(
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.cached_tokens,
+            usage.cost_usd,
+        );
+
         let record = NewUsageRecord {
             api_key_id: self.api_key_id.clone(),
             requested_model: self.requested_model.clone(),

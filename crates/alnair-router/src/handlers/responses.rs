@@ -113,6 +113,14 @@ pub async fn responses(
     let completion = chat_backend::collect(executed.stream).await?;
     let usage = completion.usage.unwrap_or_default();
 
+    state.metrics.record_request(latency_ms);
+    state.metrics.record_usage(
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        usage.cached_tokens,
+        usage.cost_usd,
+    );
+
     state
         .usage()
         .record(NewUsageRecord {

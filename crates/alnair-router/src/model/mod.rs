@@ -5,7 +5,9 @@
 //! 2. It uses a `prefix/model` form that matches an **alias** → that connection.
 //! 3. It is a bare model name → the configured default connection.
 
+pub mod cache;
 pub mod catalog;
 pub mod resolver;
 
+pub use cache::{CatalogCache, CatalogSnapshot};
 pub use resolver::{Catalog, MAX_DEPTH, ResolvedTarget, Resolver};

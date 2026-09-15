@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -40,6 +40,7 @@ pub async fn create_connection(
     Json(input): Json<CreateConnection>,
 ) -> Result<impl IntoResponse> {
     let connection = state.connections().create(input).await?;
+    state.invalidate_catalog().await;
     Ok((StatusCode::CREATED, Json(connection)))
 }
 
@@ -48,7 +49,9 @@ pub async fn update_connection(
     Path(id): Path<String>,
     Json(input): Json<UpdateConnection>,
 ) -> Result<impl IntoResponse> {
-    Ok(Json(state.connections().update(&id, input).await?))
+    let connection = state.connections().update(&id, input).await?;
+    state.invalidate_catalog().await;
+    Ok(Json(connection))
 }
 
 pub async fn delete_connection(
@@ -58,6 +61,7 @@ pub async fn delete_connection(
     if !state.connections().delete(&id).await? {
         return Err(Error::NotFound(format!("connection '{id}' not found")));
     }
+    state.invalidate_catalog().await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -85,6 +89,7 @@ pub async fn create_alias(
         )));
     }
     let alias = state.aliases().create(input).await?;
+    state.invalidate_catalog().await;
     Ok((StatusCode::CREATED, Json(alias)))
 }
 
@@ -100,7 +105,9 @@ pub async fn update_alias(
             "connection '{connection_id}' does not exist"
         )));
     }
-    Ok(Json(state.aliases().update(&id, input).await?))
+    let alias = state.aliases().update(&id, input).await?;
+    state.invalidate_catalog().await;
+    Ok(Json(alias))
 }
 
 pub async fn delete_alias(
@@ -110,6 +117,7 @@ pub async fn delete_alias(
     if !state.aliases().delete(&id).await? {
         return Err(Error::NotFound(format!("alias '{id}' not found")));
     }
+    state.invalidate_catalog().await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -130,6 +138,7 @@ pub async fn create_combo(
     Json(input): Json<CreateCombo>,
 ) -> Result<impl IntoResponse> {
     let combo = state.combos().create(input).await?;
+    state.invalidate_catalog().await;
     Ok((StatusCode::CREATED, Json(combo)))
 }
 
@@ -138,7 +147,9 @@ pub async fn update_combo(
     Path(id): Path<String>,
     Json(input): Json<UpdateCombo>,
 ) -> Result<impl IntoResponse> {
-    Ok(Json(state.combos().update(&id, input).await?))
+    let combo = state.combos().update(&id, input).await?;
+    state.invalidate_catalog().await;
+    Ok(Json(combo))
 }
 
 pub async fn delete_combo(
@@ -148,6 +159,7 @@ pub async fn delete_combo(
     if !state.combos().delete(&id).await? {
         return Err(Error::NotFound(format!("combo '{id}' not found")));
     }
+    state.invalidate_catalog().await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -205,17 +217,91 @@ pub async fn usage_summary(
 
 // -------------------------------------------------------------------- health
 
-pub async fn health(State(state): State<AppState>) -> Result<impl IntoResponse> {
-    // A trivial query proves the pool is live.
-    sqlx::query_scalar::<_, i64>("SELECT 1")
-        .fetch_one(&state.pool)
-        .await?;
-
-    Ok(Json(json!({
+/// Liveness probe: the process is up. Never touches the database, so a slow or
+/// locked database cannot cause a restart loop.
+pub async fn health() -> impl IntoResponse {
+    Json(json!({
         "status": "ok",
         "service": "alnair-router",
         "version": env!("CARGO_PKG_VERSION"),
-    })))
+    }))
+}
+
+/// Readiness probe: checks the database, and optionally TCP reachability of
+/// every enabled connection when `server.readiness_upstream_checks` is set.
+///
+/// Unreachable upstreams do not fail readiness — the router fails over between
+/// tiers — they are reported so a human can see a sick connection.
+pub async fn ready(State(state): State<AppState>) -> Response {
+    if sqlx::query_scalar::<_, i64>("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "not_ready", "database": "error" })),
+        )
+            .into_response();
+    }
+
+    let mut body = json!({ "status": "ready", "database": "ok" });
+    if state.config.server.readiness_upstream_checks {
+        let (reachable, unreachable) = check_upstreams(&state).await;
+        body["upstreams"] = json!({ "reachable": reachable, "unreachable": unreachable });
+    }
+
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// TCP-connects to each enabled connection, bounded to one second each.
+async fn check_upstreams(state: &AppState) -> (usize, usize) {
+    let Ok(snapshot) = state.catalog_snapshot().await else {
+        return (0, 0);
+    };
+
+    let mut reachable = 0usize;
+    let mut unreachable = 0usize;
+
+    for connection in snapshot
+        .catalog
+        .connections
+        .iter()
+        .filter(|connection| connection.is_enabled())
+    {
+        let Some((host, port)) = upstream_endpoint(&connection.base_url) else {
+            continue;
+        };
+
+        let attempt = tokio::net::TcpStream::connect((host.as_str(), port));
+        match tokio::time::timeout(std::time::Duration::from_secs(1), attempt).await {
+            Ok(Ok(_)) => reachable += 1,
+            _ => unreachable += 1,
+        }
+    }
+
+    (reachable, unreachable)
+}
+
+/// Extracts `host:port` from a connection's base URL.
+fn upstream_endpoint(base_url: &str) -> Option<(String, u16)> {
+    let url = url::Url::parse(base_url).ok()?;
+    let host = url.host_str()?.to_string();
+    let port = url.port_or_known_default()?;
+    Some((host, port))
+}
+
+// ------------------------------------------------------------------- metrics
+
+/// Prometheus text exposition of the router's counters.
+pub async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(),
+    )
 }
 
 pub async fn version() -> impl IntoResponse {

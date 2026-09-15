@@ -69,6 +69,15 @@ async fn complete_response(
 
     let completion = chat_backend::collect(executed.stream).await?;
 
+    let usage_snapshot = completion.usage.unwrap_or_default();
+    state.metrics.record_request(latency_ms);
+    state.metrics.record_usage(
+        usage_snapshot.prompt_tokens,
+        usage_snapshot.completion_tokens,
+        usage_snapshot.cached_tokens,
+        usage_snapshot.cost_usd,
+    );
+
     if let Some(usage) = completion.usage {
         state
             .usage()

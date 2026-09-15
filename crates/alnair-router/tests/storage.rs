@@ -30,6 +30,8 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         api_key: Some("sk-test".to_string()),
         custom_headers: Default::default(),
         enabled: true,
+        connect_timeout_ms: None,
+        idle_timeout_ms: None,
     }
 }
 

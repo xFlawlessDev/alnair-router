@@ -15,6 +15,10 @@ and configurable.
 below): upstream concurrency caps, per-key rate limiting, monthly budgets,
 Anthropic non-streaming, and tool calls in non-streaming responses all shipped.
 
+**P2 is closed** (2026-09-15): cached routing catalog with invalidation,
+provider files split under the LOC cap, Prometheus-style counters, a
+liveness/readiness split, and per-connection upstream timeouts.
+
 ---
 
 ## Where things stand
@@ -137,20 +141,31 @@ pick a single provider when there is a live account to test against.
 
 ## P2 — Performance and operations
 
-- [ ] **P2.1 Cache the routing catalog.** `AppState::resolver()` reloads
-      connections + aliases + combos + entries from SQLite on **every request**.
-      Add a generation counter or short TTL, invalidated by admin writes. Keys
-      with budgets also add one spend rollup query per request.
-- [ ] **P2.2 Split the oversized vendored files.** `src/llm/providers/openai.rs`
-      (~1745 LOC) and `anthropic.rs` (~1490 LOC) exceed the project's 800-LOC cap.
-      Convert to module folders before they grow further.
-- [ ] **P2.3 Structured request logging / metrics.** `x-router-*` headers exist,
-      but there are no Prometheus-style counters (requests by tier, failover rate,
-      upstream error rate). Needed to see a bad tier in production.
-- [ ] **P2.4 Health/readiness split.** `/api/health` is a static `ok`. Add
-      readiness that checks DB connectivity and, optionally, upstream reachability.
-- [ ] **P2.5 Graceful upstream timeouts.** Per-connection connect/idle timeout
-      config, surfaced through config rather than hardcoded.
+**All closed (2026-09-15).** Short notes on what landed.
+
+- [x] **P2.1 Cache the routing catalog.** `CatalogCache` serves a shared
+      `Catalog` + `Resolver` snapshot; every admin write to connections, aliases
+      or combos invalidates it, and `router.catalog_ttl_ms` (default 1 s) is a
+      backstop for out-of-band edits. The budget rollup for keys with budgets
+      still runs one query per request — folding it into the cache would need
+      counter invalidation and is left as a follow-up.
+- [x] **P2.2 Split the oversized vendored files.** Both providers are module
+      folders now, with no file over ~620 LOC: `openai/{mod,request,chunks,tests}`
+      and `anthropic/{mod,stream,tests}`.
+- [x] **P2.3 Structured request logging / metrics.** `src/metrics.rs` keeps
+      coarse atomic counters (requests, attempts, failures, failover, tokens,
+      cost, rate-limited, budget-blocked); `GET /api/metrics` renders Prometheus
+      text (0.0.4) under the admin token.
+- [x] **P2.4 Health/readiness split.** `/api/health` is a static liveness probe
+      (no DB); `/api/ready` checks the database and, when
+      `server.readiness_upstream_checks` is on, reports TCP reachability per
+      enabled connection without failing readiness (failover covers upstreams).
+      Both probes are public so healthchecks need no bearer token.
+- [x] **P2.5 Graceful upstream timeouts.** `router.connect_timeout_ms` bounds
+      connect + first byte per tier; `router.idle_timeout_ms` bounds silence
+      between stream chunks. Both are per-connection overridable
+      (`connections.connect_timeout_ms` / `idle_timeout_ms`, `0` disables) and
+      enforced in the executor, so they apply to every provider.
 
 ---
 
@@ -197,8 +212,6 @@ deliberate exclusions so the package stays small:
 
 ## Suggested order
 
-1. P2.1 — the per-request catalog reload is the first thing that will hurt at load.
-2. P3.1, P3.2 — LICENSE and CI, cheap, and unblocks real collaboration.
-3. P2.2, P2.3 — split the oversized vendor files, add metrics.
-4. P3.4, P3.5 remainder, P3.6 — container, dashboard build, e2e tests.
-5. P1.3 — OAuth providers, only with a provider decision and a live account.
+1. P3.1, P3.2 — LICENSE and CI, cheap, and unblocks real collaboration.
+2. P3.4, P3.5 remainder, P3.6 — container, dashboard build, e2e tests.
+3. P1.3 — OAuth providers, only with a provider decision and a live account.

@@ -34,6 +34,10 @@ export interface Connection {
   /** JSON object serialized as a string. */
   custom_headers: string;
   enabled: number;
+  /** Connect/first-byte timeout override in ms; null inherits the default. */
+  connect_timeout_ms: number | null;
+  /** Stream idle timeout override in ms; null inherits the default. */
+  idle_timeout_ms: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -45,6 +49,8 @@ export interface ConnectionInput {
   api_key?: string | null;
   custom_headers?: Record<string, string>;
   enabled?: boolean;
+  connect_timeout_ms?: number | null;
+  idle_timeout_ms?: number | null;
 }
 
 export interface Alias {

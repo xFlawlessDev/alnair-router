@@ -15,6 +15,7 @@ pub mod error;
 pub mod handlers;
 pub mod limits;
 pub mod llm;
+pub mod metrics;
 pub mod middleware;
 pub mod model;
 pub mod protocol;
