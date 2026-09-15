@@ -37,7 +37,7 @@ async function load(): Promise<void> {
       api.health(),
       api.version(),
       api.initState(),
-      api.usageSummary(since.value),
+      api.usageSummary({ since: since.value }),
     ]);
     health.value = healthResponse;
     version.value = versionResponse;
@@ -52,7 +52,7 @@ async function load(): Promise<void> {
 
 async function reloadSummary(): Promise<void> {
   try {
-    summary.value = await api.usageSummary(since.value);
+    summary.value = await api.usageSummary({ since: since.value });
   } catch (caught) {
     error.value = caught instanceof ApiError ? caught.message : 'Failed to load usage';
   }

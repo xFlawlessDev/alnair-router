@@ -216,6 +216,8 @@ export interface UsageRecord {
   requested_model: string;
   resolved_provider: string | null;
   resolved_model: string | null;
+  /** Connection that served the attempt, snapshotted at write time. */
+  connection_name: string | null;
   attempt: number;
   /** `ok` or `error`. */
   status: string;
@@ -235,6 +237,24 @@ export interface UsageSummary {
   cached_tokens: number;
   cost_usd: number;
   avg_latency_ms: number;
+}
+
+/** Distinct values seen in usage rows, for the filter pickers. */
+export interface UsageFacets {
+  /** Requested model references, most used first. */
+  models: string[];
+  providers: string[];
+  /** Connection names that served requests, most used first. */
+  connections: string[];
+}
+
+/** Usage filters; `model` is a case-insensitive substring match. */
+export interface UsageFilter {
+  since?: string | null;
+  api_key_id?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  connection?: string | null;
 }
 
 export interface ActiveAttempt {

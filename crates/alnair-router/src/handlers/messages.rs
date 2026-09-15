@@ -94,6 +94,7 @@ async fn complete_response(
             requested_model: requested_model.clone(),
             resolved_provider: Some(target.provider_type.clone()),
             resolved_model: Some(target.model.clone()),
+            connection_name: Some(target.connection_name.clone()),
             attempt: attempt_count,
             status: "ok".to_string(),
             prompt_tokens: usage.prompt_tokens,

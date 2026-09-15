@@ -150,6 +150,7 @@ mod tests {
             index,
             source: format!("tier{index}"),
             provider_type: "openai-compatible".to_string(),
+            connection_name: "openai-main".to_string(),
             model: "gpt-4o".to_string(),
             outcome: if success {
                 AttemptOutcome::Succeeded

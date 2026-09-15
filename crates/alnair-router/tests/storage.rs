@@ -6,7 +6,7 @@ use alnair_router::db::repos::aliases::{AliasRepository, CreateAlias};
 use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey, UpdateApiKey};
 use alnair_router::db::repos::combos::{ComboRepository, CreateCombo};
 use alnair_router::db::repos::connections::{ConnectionRepository, CreateConnection};
-use alnair_router::db::repos::usage::{NewUsageRecord, UsageRepository};
+use alnair_router::db::repos::usage::{NewUsageRecord, UsageFilter, UsageRepository};
 use alnair_router::limits::BudgetMode;
 use alnair_router::{Error, Result};
 
@@ -493,6 +493,98 @@ async fn api_key_secret_is_never_stored_plaintext() {
 }
 
 #[tokio::test]
+async fn usage_filters_narrow_rows_and_summary() {
+    let db = db().await;
+    let repo = UsageRepository::new(db.pool.clone());
+
+    for (model, provider, connection, cost) in [
+        (
+            "openai/gpt-4o",
+            Some("openai-compatible"),
+            "openai-main",
+            1.0,
+        ),
+        (
+            "anthropic/claude",
+            Some("anthropic-native"),
+            "claude-main",
+            2.0,
+        ),
+        (
+            "openai/gpt-4o-mini",
+            Some("openai-compatible"),
+            "openai-main",
+            3.0,
+        ),
+    ] {
+        repo.record(NewUsageRecord {
+            api_key_id: None,
+            requested_model: model.to_string(),
+            resolved_provider: provider.map(str::to_string),
+            resolved_model: None,
+            connection_name: Some(connection.to_string()),
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cached_tokens: 0,
+            cost_usd: cost,
+            latency_ms: 5,
+        })
+        .await
+        .expect("record");
+    }
+
+    let provider_filter =
+        UsageFilter::new(None, None, Some("anthropic-native".to_string()), None, None);
+    let rows = repo.list(10, 0, &provider_filter).await.expect("list");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].requested_model, "anthropic/claude");
+    let summary = repo.summary(&provider_filter).await.expect("summary");
+    assert_eq!(summary.requests, 1);
+    assert!((summary.cost_usd - 2.0).abs() < f64::EPSILON);
+
+    // Model matching is a case-insensitive substring, so both variants match.
+    let model_filter = UsageFilter::new(None, Some("GPT-4O".to_string()), None, None, None);
+    let rows = repo.list(10, 0, &model_filter).await.expect("list");
+    assert_eq!(rows.len(), 2);
+    let summary = repo.summary(&model_filter).await.expect("summary");
+    assert_eq!(summary.requests, 2);
+
+    // The connection filter is an exact name match.
+    let connection_filter =
+        UsageFilter::new(None, None, None, Some("openai-main".to_string()), None);
+    let rows = repo.list(10, 0, &connection_filter).await.expect("list");
+    assert_eq!(rows.len(), 2);
+    let summary = repo.summary(&connection_filter).await.expect("summary");
+    assert!((summary.cost_usd - 4.0).abs() < f64::EPSILON);
+
+    let facets = repo.facets().await.expect("facets");
+    assert_eq!(facets.models.len(), 3);
+    assert_eq!(
+        facets.providers,
+        vec!["anthropic-native", "openai-compatible"]
+    );
+    assert_eq!(facets.connections, vec!["openai-main", "claude-main"]);
+}
+
+#[tokio::test]
+async fn blank_usage_filters_count_as_unset() {
+    let filter = UsageFilter::new(
+        Some("  ".to_string()),
+        Some(String::new()),
+        Some("\t".to_string()),
+        Some(String::new()),
+        None,
+    );
+
+    assert!(filter.api_key_id.is_none());
+    assert!(filter.model.is_none());
+    assert!(filter.provider.is_none());
+    assert!(filter.connection.is_none());
+}
+
+#[tokio::test]
 async fn usage_summary_rolls_up_counts_and_cost() {
     let db = db().await;
     let repo = UsageRepository::new(db.pool.clone());
@@ -502,6 +594,7 @@ async fn usage_summary_rolls_up_counts_and_cost() {
         requested_model: "fast".to_string(),
         resolved_provider: Some("openai-compatible".to_string()),
         resolved_model: Some("gpt-4o".to_string()),
+        connection_name: None,
         attempt: 1,
         status: "ok".to_string(),
         prompt_tokens: 100,
@@ -518,6 +611,7 @@ async fn usage_summary_rolls_up_counts_and_cost() {
         requested_model: "fast".to_string(),
         resolved_provider: Some("anthropic-native".to_string()),
         resolved_model: Some("claude".to_string()),
+        connection_name: None,
         attempt: 2,
         status: "error".to_string(),
         prompt_tokens: 0,
@@ -529,7 +623,10 @@ async fn usage_summary_rolls_up_counts_and_cost() {
     .await
     .expect("record error");
 
-    let summary = repo.summary(None).await.expect("summary");
+    let summary = repo
+        .summary(&UsageFilter::default())
+        .await
+        .expect("summary");
     assert_eq!(summary.requests, 2);
     assert_eq!(summary.ok_requests, 1);
     assert_eq!(summary.error_requests, 1);
@@ -551,6 +648,7 @@ async fn usage_list_returns_newest_first() -> Result<()> {
             requested_model: model.to_string(),
             resolved_provider: None,
             resolved_model: None,
+            connection_name: None,
             attempt: 1,
             status: "ok".to_string(),
             prompt_tokens: 1,
@@ -562,7 +660,7 @@ async fn usage_list_returns_newest_first() -> Result<()> {
         .await?;
     }
 
-    let rows = repo.list(10, 0).await?;
+    let rows = repo.list(10, 0, &UsageFilter::default()).await?;
     assert_eq!(rows.len(), 2);
     assert!(rows[0].created_at >= rows[1].created_at);
     Ok(())
@@ -660,6 +758,7 @@ async fn usage_spend_since_sums_only_the_matching_key() {
                 requested_model: "m".to_string(),
                 resolved_provider: None,
                 resolved_model: None,
+                connection_name: None,
                 attempt: 1,
                 status: "ok".to_string(),
                 prompt_tokens: 1,

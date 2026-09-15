@@ -62,6 +62,7 @@ async fn record_usage(db: &Db, api_key_id: &str, cost_usd: f64) {
             requested_model: "metered".to_string(),
             resolved_provider: None,
             resolved_model: None,
+            connection_name: None,
             attempt: 1,
             status: "ok".to_string(),
             prompt_tokens: 1,
@@ -1442,6 +1443,102 @@ async fn activity_endpoint_reports_attempts_and_connections() {
             .any(|event| event["kind"] == "request" && event["status"] == 200),
         "expected the HTTP request event: {events:?}"
     );
+}
+
+#[tokio::test]
+async fn usage_filters_and_facets_are_queryable() {
+    let (app, db) = app(false).await;
+    let repo = UsageRepository::new(db.pool.clone());
+
+    for (model, provider, connection) in [
+        ("oa/gpt-4o", "openai-compatible", "openai-main"),
+        ("kr/claude", "anthropic-native", "claude-main"),
+    ] {
+        repo.record(NewUsageRecord {
+            api_key_id: None,
+            requested_model: model.to_string(),
+            resolved_provider: Some(provider.to_string()),
+            resolved_model: None,
+            connection_name: Some(connection.to_string()),
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cached_tokens: 0,
+            cost_usd: 0.5,
+            latency_ms: 5,
+        })
+        .await
+        .expect("record usage");
+    }
+
+    let (status, body) = get(&app, "/api/usage?provider=anthropic-native").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body.as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["requested_model"], "kr/claude");
+
+    let (status, body) = get(&app, "/api/usage?connection=openai-main").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body.as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["connection_name"], "openai-main");
+
+    let (status, body) = get(&app, "/api/usage/summary?model=GPT-4O").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["requests"], 1);
+
+    let (status, body) = get(&app, "/api/usage/facets").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["models"],
+        serde_json::json!(["kr/claude", "oa/gpt-4o"]),
+        "models are ordered by usage count then name"
+    );
+    assert_eq!(
+        body["providers"],
+        serde_json::json!(["anthropic-native", "openai-compatible"])
+    );
+    assert_eq!(
+        body["connections"],
+        serde_json::json!(["claude-main", "openai-main"])
+    );
+}
+
+/// Regression guard: flattened structs made `serde_urlencoded` reject `"100"`
+/// for `i64` fields, so `/api/usage?limit=100` returned 400.
+#[tokio::test]
+async fn usage_query_strings_deserialize() {
+    let (app, db) = app(false).await;
+    UsageRepository::new(db.pool.clone())
+        .record(NewUsageRecord {
+            api_key_id: None,
+            requested_model: "metered".to_string(),
+            resolved_provider: Some("openai-compatible".to_string()),
+            resolved_model: None,
+            connection_name: Some("openai-main".to_string()),
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cached_tokens: 0,
+            cost_usd: 1.0,
+            latency_ms: 5,
+        })
+        .await
+        .expect("record usage");
+
+    let (status, body) = get(&app, "/api/usage?limit=1&offset=0").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body.as_array().map(Vec::len), Some(1));
+
+    let (status, body) = get(
+        &app,
+        "/api/usage/summary?since=2026-01-01T00:00:00Z&model=metered",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["requests"], 1);
 }
 
 // ------------------------------------------------------- key plans and rules

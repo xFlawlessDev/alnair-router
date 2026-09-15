@@ -102,4 +102,23 @@ describe('api', () => {
     expect(init.method).toBe('PATCH');
     expect(init.body).toBe(JSON.stringify({ plan_id: null, allowed_models: null }));
   });
+
+  it('serializes usage filters and skips blanks', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse([])));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.listUsage(100, 0, {
+      since: '2026-01-01T00:00:00Z',
+      api_key_id: 'key-1',
+      model: 'gpt-4o',
+      provider: null,
+      connection: 'openai-main',
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      '/api/usage?limit=100&offset=0&since=2026-01-01T00%3A00%3A00Z&api_key_id=key-1&model=gpt-4o&connection=openai-main',
+    );
+
+    await api.usageSummary({});
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/usage/summary');
+  });
 });

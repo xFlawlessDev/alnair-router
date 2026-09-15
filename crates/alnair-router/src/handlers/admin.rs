@@ -232,22 +232,66 @@ pub async fn delete_plan(
 
 // -------------------------------------------------------------------- usage
 
+/// Usage queries combine pagination with the dashboard's filters.
+///
+/// The pagination fields are repeated here instead of flattening [`Pagination`]:
+/// `serde_urlencoded` cannot coerce `"100"` into `i64` through a flattened map.
+#[derive(Debug, Deserialize)]
+pub struct UsageQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    /// ISO-8601 lower bound for usage queries.
+    #[serde(default)]
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub api_key_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub connection: Option<String>,
+}
+
+impl UsageQuery {
+    fn filter(&self) -> crate::db::repos::usage::UsageFilter {
+        crate::db::repos::usage::UsageFilter::new(
+            self.api_key_id.clone(),
+            self.model.clone(),
+            self.provider.clone(),
+            self.connection.clone(),
+            self.since,
+        )
+    }
+}
+
 pub async fn list_usage(
     State(state): State<AppState>,
-    Query(pagination): Query<Pagination>,
+    Query(query): Query<UsageQuery>,
 ) -> Result<impl IntoResponse> {
     let records = state
         .usage()
-        .list(pagination.limit.clamp(1, 500), pagination.offset.max(0))
+        .list(
+            query.limit.clamp(1, 500),
+            query.offset.max(0),
+            &query.filter(),
+        )
         .await?;
     Ok(Json(records))
 }
 
 pub async fn usage_summary(
     State(state): State<AppState>,
-    Query(pagination): Query<Pagination>,
+    Query(query): Query<UsageQuery>,
 ) -> Result<impl IntoResponse> {
-    Ok(Json(state.usage().summary(pagination.since).await?))
+    Ok(Json(state.usage().summary(&query.filter()).await?))
+}
+
+/// `GET /api/usage/facets` — distinct models and providers for the filter bar.
+pub async fn usage_facets(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    Ok(Json(state.usage().facets().await?))
 }
 
 // ------------------------------------------------------------ upstream probes
@@ -473,6 +517,7 @@ pub async fn alias_chat_test(
             requested_model: reference,
             resolved_provider: Some(target.provider_type.clone()),
             resolved_model: Some(target.model.clone()),
+            connection_name: Some(target.connection_name.clone()),
             attempt: attempts,
             status: "ok".to_string(),
             prompt_tokens: usage.prompt_tokens,

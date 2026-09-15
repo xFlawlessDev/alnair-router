@@ -20,6 +20,8 @@ import type {
   KeyPlanInput,
   UpstreamModelsResponse,
   UsageRecord,
+  UsageFacets,
+  UsageFilter,
   UsageSummary,
   VersionResponse,
 } from '@/types/api';
@@ -157,10 +159,29 @@ export const api = {
     request<KeyPlan>('PATCH', `/api/plans/${id}`, { body }),
   deletePlan: (id: ID) => request<void>('DELETE', `/api/plans/${id}`),
 
-  listUsage: (limit: number, offset: number) =>
-    request<UsageRecord[]>('GET', '/api/usage', { query: { limit, offset } }),
-  usageSummary: (since?: string | null) =>
-    request<UsageSummary>('GET', '/api/usage/summary', { query: { since } }),
+  listUsage: (limit: number, offset: number, filter: UsageFilter = {}) =>
+    request<UsageRecord[]>('GET', '/api/usage', {
+      query: {
+        limit,
+        offset,
+        since: filter.since,
+        api_key_id: filter.api_key_id,
+        model: filter.model,
+        provider: filter.provider,
+        connection: filter.connection,
+      },
+    }),
+  usageSummary: (filter: UsageFilter = {}) =>
+    request<UsageSummary>('GET', '/api/usage/summary', {
+      query: {
+        since: filter.since,
+        api_key_id: filter.api_key_id,
+        model: filter.model,
+        provider: filter.provider,
+        connection: filter.connection,
+      },
+    }),
+  usageFacets: () => request<UsageFacets>('GET', '/api/usage/facets'),
   activity: (events = 100) =>
     request<ActivitySnapshot>('GET', '/api/activity', { query: { limit: events } }),
 };

@@ -38,6 +38,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Thin proxying: embeddings, images, audio (speech + transcription), video (incl. async jobs), search
 - [x] `/v1/web/fetch` with a complete SSRF guard: scheme allowlist, DNS resolution + validation, pinned connections, per-hop redirect checks
 - [x] Admin CRUD + usage stats, bearer auth on `/v1/*`, optional admin-token auth on `/api/*`
+- [x] Usage filtering by API key, model (substring), provider type and connection (snapshotted per row), shared by the table and summary, with `/api/usage/facets` suggestions
 - [x] Router-issued API keys hashed with SHA-256
 - [x] Upstream credentials AES-256-GCM encrypted at rest; mandatory `secrets.key`; boot re-encryption of legacy rows
 - [x] Configurable retry contract with exponential backoff (`router.max_retries_per_tier`, `router.max_retry_delay_ms`)

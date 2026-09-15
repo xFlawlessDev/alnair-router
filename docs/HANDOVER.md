@@ -306,6 +306,17 @@ suite should tell you.
     key to an unknown plan is a 404, not a dangling reference. Wire shapes live
     in `db/repos/key_plans.rs` and mirror the dashboard types.
 
+23. **Usage reads share one filter set.** `UsageFilter` (blank values count as
+    unset; `model` is a case-insensitive substring, the rest exact) is applied
+    by both `/api/usage` and `/api/usage/summary`, and the time range now
+    narrows the table too, not just the cards. Rows snapshot the serving
+    `connection_name` at write time (migration `0005`), so filtering stays
+    meaningful after a connection is renamed or deleted; `resolved_provider`
+    remains the wire protocol, not the connection. `/api/usage/facets` returns
+    the distinct models and connections (most used first) plus providers for the
+    dashboard's suggestions. (`db/repos/usage.rs`, `handlers/admin.rs`,
+    `UsageFilterBar.vue`)
+
 ---
 
 ## 5. The `alnair-llm` crate — read this

@@ -7,6 +7,7 @@ import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import UsageSummaryCards from '@/components/UsageSummaryCards.vue';
 import ProviderTopology from '@/components/usage/ProviderTopology.vue';
+import UsageFilterBar from '@/components/usage/UsageFilterBar.vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -39,17 +40,34 @@ import {
   formatNumber,
 } from '@/lib/format';
 import { USAGE_RANGES, rangeToSince } from '@/lib/ranges';
-import type { ActivitySnapshot, UsageRecord, UsageSummary } from '@/types/api';
+import type {
+  ActivitySnapshot,
+  ApiKey,
+  UsageFacets,
+  UsageFilter,
+  UsageRecord,
+  UsageSummary,
+} from '@/types/api';
+
+/** Sentinel because Select values cannot be empty strings. */
+const ALL = '__all__';
 
 const limits = [50, 100, 200, 500];
 
 const records = ref<UsageRecord[]>([]);
 const summary = ref<UsageSummary | null>(null);
+const keys = ref<ApiKey[]>([]);
+const facets = ref<UsageFacets | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const range = ref('all');
 const limit = ref(100);
 const offset = ref(0);
+const apiKeyId = ref(ALL);
+const model = ref('');
+const provider = ref(ALL);
+const connection = ref(ALL);
+let modelTimer: number | undefined;
 
 // Live activity polling
 const live = ref(true);
@@ -95,6 +113,17 @@ function startPolling(): void {
 
 watch(live, (enabled) => (enabled ? startPolling() : stopPolling()));
 
+/** Current filter set, shared by the table and the summary cards. */
+function currentFilter(): UsageFilter {
+  return {
+    since: rangeToSince(range.value),
+    api_key_id: apiKeyId.value === ALL ? null : apiKeyId.value,
+    model: model.value.trim() || null,
+    provider: provider.value === ALL ? null : provider.value,
+    connection: connection.value === ALL ? null : connection.value,
+  };
+}
+
 /** `silent` refresh keeps the current table on screen without a loading flash. */
 async function load(options: { silent?: boolean } = {}): Promise<void> {
   const silent = options.silent === true;
@@ -102,12 +131,14 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
   error.value = null;
   try {
     const [recordsResponse, summaryResponse] = await Promise.all([
-      api.listUsage(limit.value, offset.value),
-      api.usageSummary(rangeToSince(range.value)),
+      api.listUsage(limit.value, offset.value, currentFilter()),
+      api.usageSummary(currentFilter()),
     ]);
     records.value = recordsResponse;
     summary.value = summaryResponse;
     updatedAt.value = new Date();
+
+    if (!silent) facets.value = await api.usageFacets();
   } catch (caught) {
     if (!silent) {
       error.value = caught instanceof ApiError ? caught.message : 'Failed to load usage';
@@ -118,9 +149,53 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
   }
 }
 
+/** Fetches the filter pickers once, then starts the live refresh loop. */
+async function init(): Promise<void> {
+  try {
+    const [keyList, facetList] = await Promise.all([api.listKeys(), api.usageFacets()]);
+    keys.value = keyList;
+    facets.value = facetList;
+  } catch {
+    // The usage load below surfaces connectivity problems.
+  }
+
+  if (live.value) startPolling();
+  else await load();
+}
+
 function applyFilters(): void {
   offset.value = 0;
   void load();
+}
+
+function onApiKeyFilter(value: string): void {
+  apiKeyId.value = value;
+  applyFilters();
+}
+
+function onProviderFilter(value: string): void {
+  provider.value = value;
+  applyFilters();
+}
+
+function onConnectionFilter(value: string): void {
+  connection.value = value;
+  applyFilters();
+}
+
+/** Typing in the model filter is debounced; picking a suggestion is instant. */
+function onModelFilter(value: string): void {
+  model.value = value;
+  if (modelTimer !== undefined) window.clearTimeout(modelTimer);
+  modelTimer = window.setTimeout(() => applyFilters(), 300);
+}
+
+function clearFilters(): void {
+  apiKeyId.value = ALL;
+  model.value = '';
+  provider.value = ALL;
+  connection.value = ALL;
+  applyFilters();
 }
 
 function previousPage(): void {
@@ -133,11 +208,11 @@ function nextPage(): void {
   void load();
 }
 
-onMounted(() => {
-  if (live.value) startPolling();
-  else void load();
+onMounted(init);
+onUnmounted(() => {
+  if (modelTimer !== undefined) window.clearTimeout(modelTimer);
+  stopPolling();
 });
-onUnmounted(stopPolling);
 </script>
 
 <template>
@@ -208,6 +283,20 @@ onUnmounted(stopPolling);
     </Card>
 
     <UsageSummaryCards :summary="summary" />
+
+    <UsageFilterBar
+      :keys="keys"
+      :facets="facets"
+      :api-key-id="apiKeyId"
+      :model="model"
+      :provider="provider"
+      :connection="connection"
+      @update:api-key-id="onApiKeyFilter"
+      @update:model="onModelFilter"
+      @update:provider="onProviderFilter"
+      @update:connection="onConnectionFilter"
+      @clear="clearFilters"
+    />
 
     <div class="flex flex-wrap items-center gap-3">
       <Select v-model="range" @update:model-value="applyFilters">
@@ -285,7 +374,8 @@ onUnmounted(stopPolling);
               <code class="text-xs">{{ record.requested_model }}</code>
             </TableCell>
             <TableCell>
-              <div v-if="record.resolved_provider || record.resolved_model" class="flex flex-col gap-1">
+              <div v-if="record.connection_name || record.resolved_provider || record.resolved_model" class="flex flex-col gap-1">
+                <code v-if="record.connection_name" class="text-xs">{{ record.connection_name }}</code>
                 <Badge v-if="record.resolved_provider" variant="outline" class="w-fit text-xs">
                   {{ record.resolved_provider }}
                 </Badge>

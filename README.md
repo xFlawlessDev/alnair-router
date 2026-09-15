@@ -153,10 +153,15 @@ docker run --rm -p 7878:7878 \
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/plans`, `/api/usage`,
-`/api/usage/summary`, `/api/metrics`, `/api/activity`. `PATCH /api/keys/{id}`
-edits a key's name, enabled state, rate limit, monthly budget, model allowlist
-and plan; `/api/plans` manages the reusable rule sets. Upstream diagnostics used
-by the dashboard:
+`/api/usage/summary`, `/api/usage/facets`, `/api/metrics`, `/api/activity`.
+`PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit, monthly
+budget, model allowlist and plan; `/api/plans` manages the reusable rule sets.
+Usage reads accept `api_key_id`, `model` (case-insensitive substring),
+`provider` (the wire protocol: `openai-compatible` / `anthropic-native`),
+`connection` (the upstream that served the attempt) and `since`, and
+`/api/usage/facets` lists the distinct models, providers and connections the
+dashboard offers as filter options. Upstream diagnostics used by
+the dashboard:
 `GET /api/connections/{id}/models` lists the models an upstream offers,
 `POST /api/connections/{id}/test` checks connectivity, and
 `POST /api/aliases/{id}/test` verifies an alias' connection and model override;
