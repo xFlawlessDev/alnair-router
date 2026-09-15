@@ -206,10 +206,16 @@ pub struct MessagesResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AnthropicResponseBlock {
-    #[serde(rename = "type")]
-    pub block_type: &'static str,
-    pub text: String,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AnthropicResponseBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Serialize)]

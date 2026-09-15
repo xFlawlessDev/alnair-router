@@ -117,4 +117,18 @@ impl UsageRepository {
         .await?;
         Ok(row)
     }
+
+    /// Total recorded spend for one key since `since`, used for budget checks.
+    pub async fn spend_since(&self, api_key_id: &str, since: DateTime<Utc>) -> Result<f64> {
+        let total: f64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(cost_usd), 0.0)
+             FROM usage_records
+             WHERE api_key_id = ? AND created_at >= ?",
+        )
+        .bind(api_key_id)
+        .bind(since)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(total)
+    }
 }

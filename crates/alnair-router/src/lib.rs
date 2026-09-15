@@ -13,6 +13,7 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod handlers;
+pub mod limits;
 pub mod llm;
 pub mod middleware;
 pub mod model;

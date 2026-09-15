@@ -100,8 +100,23 @@ export interface ApiKey {
   name: string;
   prefix: string;
   enabled: number;
+  /** Per-key requests-per-minute override; null inherits the default. */
+  rate_limit_per_minute: number | null;
+  /** Monthly spend cap in USD; null is uncapped. */
+  monthly_budget_usd: number | null;
+  budget_mode: BudgetMode;
   created_at: string;
   last_used_at: string | null;
+}
+
+export type BudgetMode = 'off' | 'warn' | 'block';
+
+export interface ApiKeyInput {
+  name: string;
+  enabled?: boolean;
+  rate_limit_per_minute?: number | null;
+  monthly_budget_usd?: number | null;
+  budget_mode?: BudgetMode;
 }
 
 export interface CreatedApiKey {

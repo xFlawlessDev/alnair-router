@@ -44,3 +44,17 @@ max_attempts = 5
 max_retries_per_tier = 2
 # Upper bound for the exponential retry delay (500 ms doubling per retry).
 max_retry_delay_ms = 30000
+
+[limits]
+# Upstream concurrency caps. 0 disables the corresponding cap.
+max_concurrent = 0
+max_concurrent_per_connection = 0
+# How long a request waits for a slot before failing with 429. 0 waits forever.
+acquire_timeout_ms = 30000
+
+[rate_limit]
+# Default requests-per-minute allowed per client key. 0 is unlimited.
+# Individual keys can override (or disable) this from the admin API / dashboard.
+requests_per_minute = 0
+# Token-bucket capacity for bursts. 0 uses one minute's worth of requests.
+burst = 0

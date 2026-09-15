@@ -3,9 +3,15 @@
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
+use chrono::Datelike;
 
-use crate::error::Error;
+use crate::db::repos::api_keys::ApiKey;
+use crate::error::{Error, Result};
+use crate::limits::BudgetMode;
 use crate::state::AppState;
+
+/// Response header set on requests that exceed a soft budget.
+const BUDGET_WARNING_HEADER: &str = "x-router-budget-warning";
 
 /// The API key that authenticated the current request.
 #[derive(Debug, Clone)]
@@ -39,9 +45,63 @@ pub async fn require_api_key(
 
     state.api_keys().touch(&key.id).await?;
 
+    // Cheap in-memory check first, then the budget rollup.
+    state.rate_limiter.check(&key.id, key.rate_limit())?;
+    let budget_warning = check_budget(&state, &key).await?;
+
     request.extensions_mut().insert(Some(AuthenticatedKey(key)));
 
-    Ok(next.run(request).await)
+    let mut response = next.run(request).await;
+    if let Some(warning) = budget_warning
+        && let Ok(value) = axum::http::HeaderValue::from_str(&warning)
+    {
+        response.headers_mut().insert(
+            axum::http::HeaderName::from_static(BUDGET_WARNING_HEADER),
+            value,
+        );
+    }
+
+    Ok(response)
+}
+
+/// Enforces a key's monthly budget.
+///
+/// `warn` mode lets the request through and reports the overspend via a
+/// response header; `block` mode fails it with `402 Payment Required`.
+async fn check_budget(state: &AppState, key: &ApiKey) -> Result<Option<String>> {
+    let Some(limit) = key.budget_usd() else {
+        return Ok(None);
+    };
+    let mode = key.budget_mode();
+    if mode == BudgetMode::Off {
+        return Ok(None);
+    }
+
+    let spent = state.usage().spend_since(&key.id, month_start()).await?;
+    if spent < limit {
+        return Ok(None);
+    }
+
+    match mode {
+        BudgetMode::Block => Err(Error::BudgetExceeded {
+            message: format!(
+                "monthly budget of ${limit:.2} exhausted for key '{}' (spent ${spent:.2})",
+                key.name
+            ),
+        }),
+        BudgetMode::Warn => Ok(Some(format!("spent ${spent:.2} of ${limit:.2}"))),
+        BudgetMode::Off => Ok(None),
+    }
+}
+
+/// Start of the current UTC calendar month.
+fn month_start() -> chrono::DateTime<chrono::Utc> {
+    let now = chrono::Utc::now();
+    now.date_naive()
+        .with_day(1)
+        .and_then(|first| first.and_hms_opt(0, 0, 0))
+        .map(|naive| naive.and_utc())
+        .unwrap_or(now)
 }
 
 /// Guards the `/api/*` admin routes with `server.admin_token`.

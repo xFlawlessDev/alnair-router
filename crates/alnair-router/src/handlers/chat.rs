@@ -13,7 +13,7 @@ use crate::handlers::shared::{StreamUsage, record_failed_attempts, router_header
 use crate::middleware::AuthenticatedKey;
 use crate::protocol::openai::{
     ChatChoice, ChatChoiceMessage, ChatCompletionChunk, ChatCompletionRequest,
-    ChatCompletionResponse, ChunkChoice, ChunkDelta, usage_payload,
+    ChatCompletionResponse, ChunkChoice, ChunkDelta, tool_calls_payload, usage_payload,
 };
 use crate::state::AppState;
 use crate::upstream::ExecutedStream;
@@ -38,7 +38,7 @@ pub async fn chat_completions(
 
     let executed = state
         .executor
-        .stream(&targets, messages, tools, Some(&options))
+        .stream(&targets, messages, tools, Some(&options), stream_requested)
         .await?;
 
     // Failures that happened before a tier succeeded are logged immediately.
@@ -97,7 +97,8 @@ async fn complete_response(
             index: 0,
             message: ChatChoiceMessage {
                 role: "assistant",
-                content: completion.content,
+                content: (!completion.content.is_empty()).then(|| completion.content.clone()),
+                tool_calls: tool_calls_payload(&completion.tool_calls),
             },
             finish_reason: completion
                 .finish_reason

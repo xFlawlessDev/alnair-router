@@ -140,6 +140,8 @@ pub struct CompletionResponse {
     pub content: String,
     pub finish_reason: Option<String>,
     pub usage: Option<TokenUsage>,
+    /// Tool calls the model requested, in arrival order.
+    pub tool_calls: Vec<ToolCallSpec>,
 }
 
 /// Generation options in router-owned form.
@@ -236,6 +238,9 @@ fn model_config(
 }
 
 /// Streams a completion through the vendored provider registry.
+///
+/// `streaming` selects the provider's SSE path or its one-shot path; both
+/// surface the same chunk stream.
 #[allow(clippy::too_many_arguments)]
 pub fn stream(
     registry: std::sync::Arc<ProviderRegistry>,
@@ -246,6 +251,7 @@ pub fn stream(
     api_key: Option<&str>,
     options: Option<&GenerationOptions>,
     retry: RetryPolicy,
+    streaming: bool,
     tools: Option<Vec<serde_json::Value>>,
     custom_headers: BTreeMap<String, String>,
 ) -> Result<ChunkStream> {
@@ -277,7 +283,11 @@ pub fn stream(
             return;
         };
 
-        let inner = provider.stream(&config, messages, &stream_options, tools);
+        let inner = if streaming {
+            provider.stream(&config, messages, &stream_options, tools)
+        } else {
+            provider.complete(&config, messages, &stream_options, tools)
+        };
         futures::pin_mut!(inner);
 
         while let Some(chunk) = inner.next().await {
@@ -340,14 +350,25 @@ pub async fn collect(stream: ChunkStream) -> Result<CompletionResponse> {
         match chunk? {
             StreamChunk::Text(text) => response.content.push_str(&text),
             StreamChunk::Thinking(_) => {}
-            StreamChunk::ToolCall { .. } => {
-                return Err(Error::Upstream(
-                    "non-streaming path cannot surface tool calls".to_string(),
-                ));
-            }
+            StreamChunk::ToolCall {
+                id,
+                name,
+                arguments,
+            } => response.tool_calls.push(ToolCallSpec {
+                id,
+                name,
+                arguments,
+            }),
             StreamChunk::Usage(usage) => response.usage = Some(usage),
             StreamChunk::Done => {
-                response.finish_reason = Some("stop".to_string());
+                response.finish_reason = Some(
+                    if response.tool_calls.is_empty() {
+                        "stop"
+                    } else {
+                        "tool_calls"
+                    }
+                    .to_string(),
+                );
                 break;
             }
         }
@@ -396,5 +417,46 @@ mod tests {
 
         assert_eq!(options.max_retries, 3);
         assert_eq!(options.max_retry_delay_ms, 456);
+    }
+
+    #[tokio::test]
+    async fn collect_aggregates_tool_calls_instead_of_failing() {
+        let chunks: ChunkStream = futures::stream::iter(vec![
+            Ok(StreamChunk::Text("calling".to_string())),
+            Ok(StreamChunk::ToolCall {
+                id: "tc1".to_string(),
+                name: "read_file".to_string(),
+                arguments: r#"{"path":"/tmp"}"#.to_string(),
+            }),
+            Ok(StreamChunk::Usage(TokenUsage {
+                prompt_tokens: 5,
+                completion_tokens: 1,
+                ..Default::default()
+            })),
+            Ok(StreamChunk::Done),
+        ])
+        .boxed();
+
+        let completion = collect(chunks).await.expect("collect");
+
+        assert_eq!(completion.content, "calling");
+        assert_eq!(completion.tool_calls.len(), 1);
+        assert_eq!(completion.tool_calls[0].name, "read_file");
+        assert_eq!(completion.finish_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(completion.usage.expect("usage").prompt_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn collect_marks_plain_completions_as_stopped() {
+        let chunks: ChunkStream = futures::stream::iter(vec![
+            Ok(StreamChunk::Text("hello".to_string())),
+            Ok(StreamChunk::Done),
+        ])
+        .boxed();
+
+        let completion = collect(chunks).await.expect("collect");
+
+        assert_eq!(completion.finish_reason.as_deref(), Some("stop"));
+        assert!(completion.tool_calls.is_empty());
     }
 }

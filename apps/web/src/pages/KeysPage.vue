@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { Check, Copy, KeyRound, Plus, RefreshCw, Trash2, TriangleAlert } from '@lucide/vue';
-import { onMounted, ref, watch } from 'vue';
+import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, Trash2, TriangleAlert } from '@lucide/vue';
+import { onMounted, ref } from 'vue';
 import { toast } from 'vue-sonner';
 
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
+import KeyFormDialog from '@/components/keys/KeyFormDialog.vue';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -17,9 +19,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import {
   Table,
   TableBody,
@@ -29,16 +28,14 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ApiError, api } from '@/lib/api';
-import { formatDateTime, isEnabled } from '@/lib/format';
+import { formatDateTime, formatCost, isEnabled } from '@/lib/format';
 import type { ApiKey } from '@/types/api';
 
 const keys = ref<ApiKey[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
-const createOpen = ref(false);
-const creating = ref(false);
-const name = ref('');
-const enabled = ref(true);
+const formOpen = ref(false);
+const editing = ref<ApiKey | null>(null);
 const secret = ref<string | null>(null);
 const copied = ref(false);
 const deleting = ref<ApiKey | null>(null);
@@ -56,31 +53,22 @@ async function load(): Promise<void> {
   }
 }
 
-watch(createOpen, (open) => {
-  if (open) {
-    name.value = '';
-    enabled.value = true;
-  }
-});
+function openCreate(): void {
+  editing.value = null;
+  formOpen.value = true;
+}
 
-async function createKey(): Promise<void> {
-  if (!name.value.trim()) {
-    toast.error('Name is required');
-    return;
-  }
-  creating.value = true;
-  try {
-    const created = await api.createKey({ name: name.value.trim(), enabled: enabled.value });
-    createOpen.value = false;
-    secret.value = created.secret;
+function openEdit(key: ApiKey): void {
+  editing.value = key;
+  formOpen.value = true;
+}
+
+function handleSaved(createdSecret?: string): void {
+  if (createdSecret) {
+    secret.value = createdSecret;
     copied.value = false;
-    await load();
-    toast.success(`Key “${created.key.name}” created`);
-  } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to create key');
-  } finally {
-    creating.value = false;
   }
+  load();
 }
 
 async function copySecret(): Promise<void> {
@@ -123,7 +111,7 @@ onMounted(load);
         <Button variant="outline" :disabled="loading" @click="load">
           <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
         </Button>
-        <Button @click="createOpen = true"><Plus /> Create key</Button>
+        <Button @click="openCreate"><Plus /> Create key</Button>
       </template>
     </PageHeader>
 
@@ -140,7 +128,7 @@ onMounted(load);
     >
       <template #icon><KeyRound class="size-5" /></template>
       <template #action>
-        <Button @click="createOpen = true"><Plus /> Create key</Button>
+        <Button @click="openCreate"><Plus /> Create key</Button>
       </template>
     </EmptyState>
 
@@ -150,6 +138,7 @@ onMounted(load);
           <TableRow>
             <TableHead>Name</TableHead>
             <TableHead>Prefix</TableHead>
+            <TableHead>Limits</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Created</TableHead>
             <TableHead>Last used</TableHead>
@@ -162,6 +151,25 @@ onMounted(load);
             <TableCell>
               <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{{ key.prefix }}…</code>
             </TableCell>
+            <TableCell>
+              <div class="flex flex-wrap items-center gap-1">
+                <Badge v-if="key.rate_limit_per_minute" variant="secondary">
+                  {{ key.rate_limit_per_minute }}/min
+                </Badge>
+                <Badge
+                  v-if="key.monthly_budget_usd && key.budget_mode !== 'off'"
+                  :variant="key.budget_mode === 'block' ? 'destructive' : 'outline'"
+                >
+                  {{ formatCost(key.monthly_budget_usd) }} · {{ key.budget_mode }}
+                </Badge>
+                <span
+                  v-if="!key.rate_limit_per_minute && (!key.monthly_budget_usd || key.budget_mode === 'off')"
+                  class="text-muted-foreground"
+                >
+                  Default
+                </span>
+              </div>
+            </TableCell>
             <TableCell><StatusBadge :enabled="isEnabled(key.enabled)" /></TableCell>
             <TableCell class="text-xs text-muted-foreground">
               {{ formatDateTime(key.created_at) }}
@@ -170,50 +178,32 @@ onMounted(load);
               {{ formatDateTime(key.last_used_at) }}
             </TableCell>
             <TableCell class="text-right">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                class="text-destructive hover:text-destructive"
-                :aria-label="`Delete ${key.name}`"
-                @click="deleting = key"
-              >
-                <Trash2 />
-              </Button>
+              <div class="flex justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :aria-label="`Edit ${key.name}`"
+                  @click="openEdit(key)"
+                >
+                  <Pencil />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-destructive hover:text-destructive"
+                  :aria-label="`Delete ${key.name}`"
+                  @click="deleting = key"
+                >
+                  <Trash2 />
+                </Button>
+              </div>
             </TableCell>
           </TableRow>
         </TableBody>
       </Table>
     </Card>
 
-    <Dialog v-model:open="createOpen">
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Create API key</DialogTitle>
-          <DialogDescription>
-            The plaintext secret is shown exactly once and never stored.
-          </DialogDescription>
-        </DialogHeader>
-        <div class="grid gap-4">
-          <div class="grid gap-2">
-            <Label for="key-name">Name</Label>
-            <Input id="key-name" v-model="name" placeholder="laptop-cli" />
-          </div>
-          <div class="flex items-center justify-between gap-4 rounded-md border p-3">
-            <div>
-              <Label for="key-enabled">Enabled</Label>
-              <p class="text-xs text-muted-foreground">Disabled keys are rejected on /v1.</p>
-            </div>
-            <Switch id="key-enabled" v-model="enabled" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" @click="createOpen = false">Cancel</Button>
-          <Button :disabled="creating" @click="createKey">
-            {{ creating ? 'Creating…' : 'Create key' }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <KeyFormDialog v-model:open="formOpen" :api-key="editing" @saved="handleSaved" />
 
     <Dialog :open="secret !== null" @update:open="secret = null">
       <DialogContent>

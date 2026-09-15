@@ -123,6 +123,7 @@ pub async fn video_status(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Response> {
     let target = resolve_target(&state, None).await?;
+    let _permit = state.limiter.acquire(&target.connection_id).await?;
     let proxy = MediaProxy::new();
     let response = proxy.get(&target, &format!("/videos/{id}")).await?;
     passthrough(response).await
@@ -156,7 +157,7 @@ async fn forward_json(
     path: &str,
     body: serde_json::Value,
 ) -> Result<Response> {
-    let _ = state;
+    let _permit = state.limiter.acquire(&target.connection_id).await?;
     let proxy = MediaProxy::new();
     let response = proxy.post_json(target, path, &body).await?;
     passthrough(response).await
@@ -169,7 +170,7 @@ async fn proxy_raw(
     content_type: Option<&str>,
     body: Bytes,
 ) -> Result<Response> {
-    let _ = state;
+    let _permit = state.limiter.acquire(&target.connection_id).await?;
     let proxy = MediaProxy::new();
     let response = proxy
         .post_raw(target, path, content_type, body.to_vec(), None)
@@ -209,6 +210,7 @@ pub async fn search(
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response> {
     let target = resolve_target(&state, None).await?;
+    let _permit = state.limiter.acquire(&target.connection_id).await?;
     let proxy = MediaProxy::new();
     let response = proxy.post_json(&target, "/search", &body).await?;
     passthrough(response).await

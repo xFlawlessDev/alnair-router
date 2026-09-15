@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::db::repos::aliases::{CreateAlias, UpdateAlias};
-use crate::db::repos::api_keys::CreateApiKey;
+use crate::db::repos::api_keys::{CreateApiKey, UpdateApiKey};
 use crate::db::repos::combos::{CreateCombo, UpdateCombo};
 use crate::db::repos::connections::{CreateConnection, UpdateConnection};
 use crate::error::{Error, Result};
@@ -163,6 +163,14 @@ pub async fn create_key(
 ) -> Result<impl IntoResponse> {
     let created = state.api_keys().create(input).await?;
     Ok((StatusCode::CREATED, Json(created)))
+}
+
+pub async fn update_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateApiKey>,
+) -> Result<impl IntoResponse> {
+    Ok(Json(state.api_keys().update(&id, input).await?))
 }
 
 pub async fn delete_key(

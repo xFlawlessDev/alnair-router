@@ -118,6 +118,8 @@ Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/usage`, `/api/usage/summary`.
+`PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit, and
+monthly budget.
 
 > Admin routes are open on loopback by default, because they mint the keys that
 > authenticate `/v1/*`. Set `server.admin_token` to require
@@ -145,6 +147,12 @@ Key settings:
 - `router.max_retries_per_tier` (default 2) and `router.max_retry_delay_ms`
   (default 30000) — provider retries inside one tier before failover, with
   exponential backoff.
+- `limits.max_concurrent` / `limits.max_concurrent_per_connection` — upstream
+  concurrency caps; a request that cannot get a slot in time gets `429` with
+  `Retry-After`.
+- `rate_limit.requests_per_minute` — default per-key token bucket (0 = off);
+  keys can override it, and can carry a monthly budget with `off`/`warn`/`block`
+  enforcement.
 
 See `crates/alnair-router/router.example.toml` for every option.
 

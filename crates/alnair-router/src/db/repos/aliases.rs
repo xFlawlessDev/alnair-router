@@ -42,7 +42,7 @@ pub struct UpdateAlias {
     pub prefix: Option<String>,
     #[serde(default)]
     pub connection_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub model_override: Option<Option<String>>,
     #[serde(default)]
     pub enabled: Option<bool>,

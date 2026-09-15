@@ -41,7 +41,7 @@ pub async fn messages(
 
     let executed = state
         .executor
-        .stream(&targets, messages, tools, Some(&options))
+        .stream(&targets, messages, tools, Some(&options), stream_requested)
         .await?;
 
     record_failed_attempts(&state, &api_key_id, &requested_model, &executed.attempts).await;
@@ -91,18 +91,36 @@ async fn complete_response(
         tracing::warn!(error = %error, "failed to record usage");
     }
 
+    let mut content = Vec::new();
+    if !completion.content.is_empty() {
+        content.push(AnthropicResponseBlock::Text {
+            text: completion.content.clone(),
+        });
+    }
+    for call in &completion.tool_calls {
+        content.push(AnthropicResponseBlock::ToolUse {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            input: serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null),
+        });
+    }
+
+    let stop_reason = if completion.tool_calls.is_empty() {
+        completion
+            .finish_reason
+            .clone()
+            .unwrap_or_else(|| "end_turn".to_string())
+    } else {
+        "tool_use".to_string()
+    };
+
     let body = MessagesResponse {
         id: message_id(),
         response_type: "message",
         role: "assistant",
         model: requested_model,
-        content: vec![AnthropicResponseBlock {
-            block_type: "text",
-            text: completion.content,
-        }],
-        stop_reason: completion
-            .finish_reason
-            .unwrap_or_else(|| "end_turn".to_string()),
+        content,
+        stop_reason,
         usage: AnthropicUsage {
             input_tokens: usage.prompt_tokens,
             output_tokens: usage.completion_tokens,

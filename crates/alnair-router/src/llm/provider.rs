@@ -16,6 +16,21 @@ pub trait LlmProvider: Send + Sync {
         options: &'a LlmStreamOptions,
         tools: Option<Vec<serde_json::Value>>,
     ) -> BoxStream<'a, Result<LlmStreamChunk, ChatError>>;
+
+    /// One-shot completion, still surfaced as a stream of chunks so the
+    /// executor and collector can treat both paths uniformly.
+    ///
+    /// The default drains [`Self::stream`]; providers with a real
+    /// non-streaming endpoint (no SSE overhead, no chunk reassembly) override it.
+    fn complete<'a>(
+        &'a self,
+        config: &'a ModelConfig,
+        messages: Vec<Message>,
+        options: &'a LlmStreamOptions,
+        tools: Option<Vec<serde_json::Value>>,
+    ) -> BoxStream<'a, Result<LlmStreamChunk, ChatError>> {
+        self.stream(config, messages, options, tools)
+    }
 }
 
 /// Registry mapping provider type to an implementation.

@@ -45,7 +45,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/keys",
             get(handlers::admin::list_keys).post(handlers::admin::create_key),
         )
-        .route("/api/keys/{id}", delete(handlers::admin::delete_key))
+        .route(
+            "/api/keys/{id}",
+            delete(handlers::admin::delete_key).patch(handlers::admin::update_key),
+        )
         .route("/api/usage", get(handlers::admin::list_usage))
         .route("/api/usage/summary", get(handlers::admin::usage_summary))
         // Enforced only when `server.admin_token` is configured; loopback

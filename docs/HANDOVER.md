@@ -27,7 +27,7 @@ The tiered-combo design is modelled on
 
 ## 2. Status right now
 
-- **Builds and tests standalone.** 172 tests green, `cargo clippy --all-targets` clean.
+- **Builds and tests standalone.** 190 tests green, `cargo clippy --all-targets` clean.
 - **Self-contained by construction:** no path dependencies anywhere in the
   workspace. `Cargo.lock` resolves entirely from crates.io, so `target/` can be
   deleted and `cargo build --offline` still succeeds.
@@ -48,8 +48,20 @@ The tiered-combo design is modelled on
    `router.max_retry_delay_ms`) with exponential backoff.
 
 Still not production-ready in the "hardened service" sense: the admin API is
-open on loopback by default, there is no rate limiting (P1.2) or concurrency
-limit (P1.1), and the dashboard is not yet served by the binary (P3.5).
+open on loopback by default and the dashboard is not yet served by the binary
+(P3.5).
+
+**P1 is done except OAuth providers** (P1.3, deferred with a design note in the
+roadmap):
+
+- `limits.max_concurrent` / `max_concurrent_per_connection` cap upstream calls;
+  permits live as long as the stream.
+- Per-key token buckets (`rate_limit.requests_per_minute` + per-key override)
+  return 429 with `Retry-After`.
+- Per-key monthly budgets with `off`/`warn`/`block`; warn adds
+  `x-router-budget-warning`, block returns 402 `insufficient_quota`.
+- Anthropic has a real `stream: false` path (`LlmProvider::complete`), and
+  non-streaming responses on every endpoint now surface tool calls.
 
 ---
 
@@ -62,12 +74,14 @@ apps/web/                     # admin dashboard (Vue 3 + Vite + Tailwind, npm)
 crates/alnair-router/
 ├── Cargo.toml
 ├── migrations/0001_init.sql  # 6 tables
+├── migrations/0002_api_key_limits.sql
 ├── router.example.toml       # every config option
 ├── src/
 │   ├── main.rs              # load config → cipher → connect DB → migrate → serve
 │   ├── lib.rs               # module tree + shallow re-exports
 │   ├── config.rs            # file + ALNAIR_ROUTER__SECTION__KEY env
 │   ├── crypto.rs            # AES-256-GCM credential encryption + key parsing
+│   ├── limits.rs            # concurrency semaphores + token buckets + budget mode
 │   ├── error.rs             # scoped Error → OpenAI-shaped JSON error body
 │   ├── state.rs             # AppState: config, pool, cipher, executor, repos
 │   ├── middleware.rs        # bearer auth for /v1/* and /api/*
@@ -165,6 +179,25 @@ suite should tell you.
     resolver. New `secrets.key` values make old rows fail loudly at boot via
     `Db::migrate_credentials`, which also rewrites legacy plaintext rows.
 
+11. **Concurrency permits ride with the stream.** The executor acquires a global
+    and a per-connection slot before opening each tier and attaches the permit to
+    the returned chunk stream, so a slow consumer still holds its slot. A timeout
+    waiting for a slot is a 429, not a tier failure — walking tiers would just hit
+    the same cap again. (`limits.rs`, `executor.rs`)
+
+12. **Rate limit and budget checks run after authentication.**
+    `require_api_key` checks the token bucket first (in-memory) and then the
+    month-to-date spend (one rollup query, only for keys that carry a budget).
+    `null` on `rate_limit_per_minute` / `monthly_budget_usd` in a PATCH body
+    clears the field; an absent field leaves it alone (`repos::double_option`).
+
+13. **Non-streaming still flows through the chunk pipeline.** Handlers pass the
+    client's `stream` flag to `Executor::stream` → `chat_backend::stream`, which
+    selects `provider.stream` or `provider.complete`. Only Anthropic overrides
+    `complete` (a real `stream: false` request) today; everyone else drains their
+    SSE stream. `collect` aggregates tool calls instead of erroring, which is
+    what makes tool use work with `stream: false`.
+
 ---
 
 ## 5. The vendored `src/llm/` layer — read this
@@ -210,7 +243,7 @@ is a one-file change plus one `Cargo.toml` line.
 ```bash
 export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"   # required
 cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
-cargo test                    # 172 tests, ~35s (retry backoff + vendored provider tests)
+cargo test                    # 190 tests, ~31s (retry backoff + vendored provider tests)
 cargo clippy --all-targets
 ```
 
@@ -264,10 +297,10 @@ Response headers report the routing decision:
 | File | Covers |
 |---|---|
 | `tests/resolve.rs` (21) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering |
-| `tests/storage.rs` (21) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration |
-| `tests/routes.rs` (20) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, the vendored-layer seam guard |
+| `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
+| `tests/routes.rs` (25) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, rate limit 429, budget 402/warn, key PATCH, the vendored-layer seam guard |
 | `tests/fallback.rs` (2) | Failover ordering against an in-process mock upstream |
-| `src/**` inline (108) | Vendored provider internals, crypto round-trips, retry policy, SSRF address checks |
+| `src/**` inline (118) | Vendored provider internals, crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation |
 | `apps/web/src/**` (21) | API client error/transport handling, formatters, route table, theme store |
 
 ---

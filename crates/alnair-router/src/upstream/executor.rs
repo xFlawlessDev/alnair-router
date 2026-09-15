@@ -12,6 +12,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 
 use crate::error::{Error, Result};
+use crate::limits::{LimitPermit, UpstreamLimiter};
 use crate::model::ResolvedTarget;
 use crate::upstream::chat_backend::{
     self, ChunkStream, GenerationOptions, ProviderRegistry, RetryPolicy, RouterMessage, StreamChunk,
@@ -46,16 +47,29 @@ impl AttemptOutcome {
 pub struct Executor {
     registry: Arc<ProviderRegistry>,
     retry: RetryPolicy,
+    limiter: UpstreamLimiter,
 }
 
 impl Executor {
     pub fn new(registry: Arc<ProviderRegistry>) -> Self {
-        Self::with_retry_policy(registry, RetryPolicy::default())
+        Self::with_settings(
+            registry,
+            RetryPolicy::default(),
+            UpstreamLimiter::new(&crate::config::LimitsConfig::default()),
+        )
     }
 
-    /// Builds an executor with an explicit provider retry policy.
-    pub fn with_retry_policy(registry: Arc<ProviderRegistry>, retry: RetryPolicy) -> Self {
-        Self { registry, retry }
+    /// Builds an executor with an explicit retry policy and concurrency caps.
+    pub fn with_settings(
+        registry: Arc<ProviderRegistry>,
+        retry: RetryPolicy,
+        limiter: UpstreamLimiter,
+    ) -> Self {
+        Self {
+            registry,
+            retry,
+            limiter,
+        }
     }
 
     /// Opens a stream from the first target that yields a first chunk without
@@ -69,6 +83,7 @@ impl Executor {
         messages: Vec<RouterMessage>,
         tools: Option<Vec<serde_json::Value>>,
         options: Option<&GenerationOptions>,
+        streaming: bool,
     ) -> Result<ExecutedStream> {
         if targets.is_empty() {
             return Err(Error::NoRoute("no resolved targets".to_string()));
@@ -80,6 +95,13 @@ impl Executor {
         for (index, target) in targets.iter().enumerate() {
             let started = std::time::Instant::now();
 
+            // A concurrency slot is held for the life of the attempt; on
+            // success it travels with the returned stream so it is released
+            // only when the response finishes or is dropped. A timeout here is
+            // a service-level condition, not an upstream fault, so it fails
+            // the request instead of walking further tiers.
+            let permit = self.limiter.acquire(&target.connection_id).await?;
+
             let built = chat_backend::stream(
                 self.registry.clone(),
                 &target.provider_type,
@@ -89,6 +111,7 @@ impl Executor {
                 target.api_key.as_deref(),
                 options,
                 self.retry,
+                streaming,
                 tools.clone(),
                 target.custom_headers.clone(),
             );
@@ -142,6 +165,7 @@ impl Executor {
                             .boxed(),
                         _ => stream.boxed(),
                     };
+                    let rest = hold_permit(rest, permit);
 
                     return Ok(ExecutedStream {
                         stream: rest,
@@ -166,6 +190,17 @@ pub struct ExecutedStream {
     pub attempts: Vec<Attempt>,
     /// Time to first chunk, in milliseconds.
     pub latency_ms: u64,
+}
+
+/// Keeps limiter permits alive until the stream is exhausted or dropped.
+fn hold_permit(
+    stream: BoxStream<'static, Result<StreamChunk>>,
+    permit: LimitPermit,
+) -> BoxStream<'static, Result<StreamChunk>> {
+    futures::stream::unfold((stream, permit), |(mut stream, permit)| async move {
+        stream.next().await.map(|item| (item, (stream, permit)))
+    })
+    .boxed()
 }
 
 fn failed_attempt(

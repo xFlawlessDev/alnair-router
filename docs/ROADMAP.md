@@ -9,8 +9,11 @@ Forward plan for the crate. Status is measured against the code as of
 enforces `server.admin_token` when configured (and refuses non-loopback binds
 without one unless explicitly overridden), `/v1/web/fetch` validates and pins
 every hop, the dead `[queue]` config is gone, and the retry contract is pinned
-and configurable. The router is still developer-facing: no rate limiting, no
-concurrency limiting, and the loopback admin API stays open by design.
+and configurable.
+
+**P1 is closed except P1.3** (OAuth providers, deferred with a design note
+below): upstream concurrency caps, per-key rate limiting, monthly budgets,
+Anthropic non-streaming, and tool calls in non-streaming responses all shipped.
 
 ---
 
@@ -28,6 +31,9 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Router-issued API keys hashed with SHA-256
 - [x] Upstream credentials AES-256-GCM encrypted at rest; mandatory `secrets.key`; boot re-encryption of legacy rows
 - [x] Configurable retry contract with exponential backoff (`router.max_retries_per_tier`, `router.max_retry_delay_ms`)
+- [x] Global and per-connection upstream concurrency caps (`limits.*`), held for the stream lifetime
+- [x] Per-key rate limiting and monthly budgets (`off`/`warn`/`block`) with 429/402 enforcement
+- [x] Anthropic non-streaming (`stream: false`) provider path; tool calls surfaced on all non-streaming endpoints
 - [x] Own SQLite schema, migrations embedded via `sqlx::migrate!`
 
 ---
@@ -78,23 +84,54 @@ math, policy mapping, fallback timing.
 
 ## P1 — Completeness against 9router parity
 
-- [ ] **P1.1 Concurrency limiting.** Add a queue/limiter over upstream calls —
-      per-connection and global. (`[queue]` was deleted in P0.5; this is the real
-      feature.)
-- [ ] **P1.2 Rate limiting per client key.** Currently any valid key can hammer
-      the router. Add token-bucket limits keyed by `api_key_id`, with 429 +
-      `Retry-After`.
-- [ ] **P1.3 OAuth subscription providers.** Claude Code / Codex / Copilot /
-      Kiro. Deferred from v1. Requires login flow, token refresh, and a new
-      `provider_type` that is not API-key based.
-- [ ] **P1.4 Streaming for the non-streaming Anthropic path.** See the
-      `TODO E4: non-streaming path` marker at `src/llm/providers/anthropic.rs:716`.
-- [ ] **P1.5 Budget / quota enforcement.** Tokens and cost are *recorded*; nothing
-      is *enforced*. Add per-key spend caps with a soft-warn and hard-block mode.
-- [ ] **P1.6 Tool-call coverage in the non-streaming path.** `chat_backend::collect`
-      currently errors when a provider emits a tool call and `stream:false` was
-      requested. Decide: aggregate tool calls into the JSON response, or require
-      streaming for tool use.
+- [x] **P1.1 Concurrency limiting.** `limits.max_concurrent` and
+      `limits.max_concurrent_per_connection` cap in-flight upstream calls across
+      the executor and the media proxies. Permits are held for the lifetime of a
+      stream (not just the first chunk), and a request that cannot get a slot in
+      `limits.acquire_timeout_ms` fails with 429 + `Retry-After`.
+- [x] **P1.2 Rate limiting per client key.** Token bucket per API key id
+      (`src/limits.rs`), default via `rate_limit.requests_per_minute`, per-key
+      override on `api_keys.rate_limit_per_minute`; 429 with `Retry-After`.
+- [ ] **P1.3 OAuth subscription providers.** Deferred — design note below.
+- [x] **P1.4 Streaming for the non-streaming Anthropic path.**
+      `LlmProvider::complete` plus a real `stream: false` `/v1/messages` call for
+      `AnthropicNativeProvider`, so non-streaming requests no longer pay SSE
+      overhead or chunk reassembly. Providers without an override fall back to
+      draining their stream.
+- [x] **P1.5 Budget / quota enforcement.** Per-key `monthly_budget_usd` with
+      `budget_mode` (`off`/`warn`/`block`). Warn mode adds an
+      `x-router-budget-warning` header; block mode returns 402
+      `insufficient_quota`. Spend is the calendar-month sum of `usage_records`.
+- [x] **P1.6 Tool-call coverage in the non-streaming path.**
+      `chat_backend::collect` aggregates `ToolCall` chunks instead of erroring:
+      OpenAI gets `message.tool_calls`, Anthropic gets `tool_use` blocks,
+      Responses gets `function_call` items. `finish_reason` reports
+      `tool_calls` / `tool_use` accordingly.
+
+### P1.3 design note — OAuth subscription providers (deferred)
+
+Goal: route Claude Code / Codex / Copilot / Kiro subscription sessions as
+upstreams that are not API-key based.
+
+Pieces required:
+
+1. **Provider type + auth mode.** Either new `provider_type` values
+   (`anthropic-oauth`, `openai-codex`, `github-copilot`, `kiro`) or an
+   `auth_mode` column; `connections.api_key` stops being the only credential.
+2. **Login flows.** Device-code or PKCE per provider. Client ids/secrets are
+   provider-specific and some are extracted from first-party CLIs — that is a
+   ToS/legal decision before any code.
+3. **Token storage + refresh.** Reuse `CredentialCipher` for access/refresh
+   tokens (a JSON credential blob), plus a refresh task with rotation and
+   expiry handling.
+4. **Request signing.** Codex/Copilot add or exchange headers
+   (`ChatGPT-Account-Id`, Copilot token exchange); the seam is
+   `chat_backend.rs`, which already assembles per-connection headers.
+5. **Operations.** Admin API + dashboard for login/refresh state and
+   documented failure modes.
+
+One provider end-to-end is a multi-day feature and cannot be verified offline;
+pick a single provider when there is a live account to test against.
 
 ---
 
@@ -102,9 +139,10 @@ math, policy mapping, fallback timing.
 
 - [ ] **P2.1 Cache the routing catalog.** `AppState::resolver()` reloads
       connections + aliases + combos + entries from SQLite on **every request**.
-      Add a generation counter or short TTL, invalidated by admin writes.
+      Add a generation counter or short TTL, invalidated by admin writes. Keys
+      with budgets also add one spend rollup query per request.
 - [ ] **P2.2 Split the oversized vendored files.** `src/llm/providers/openai.rs`
-      (~1745 LOC) and `anthropic.rs` (~1006 LOC) exceed the project's 800-LOC cap.
+      (~1745 LOC) and `anthropic.rs` (~1490 LOC) exceed the project's 800-LOC cap.
       Convert to module folders before they grow further.
 - [ ] **P2.3 Structured request logging / metrics.** `x-router-*` headers exist,
       but there are no Prometheus-style counters (requests by tier, failover rate,
@@ -161,6 +199,6 @@ deliberate exclusions so the package stays small:
 
 1. P2.1 — the per-request catalog reload is the first thing that will hurt at load.
 2. P3.1, P3.2 — LICENSE and CI, cheap, and unblocks real collaboration.
-3. P1.1, P1.2 — concurrency and rate limiting, in that order.
-4. P1.3 onward — parity features.
-5. P3.4, P3.5 remainder, P3.6 — container, onboarding the dashboard build, e2e tests.
+3. P2.2, P2.3 — split the oversized vendor files, add metrics.
+4. P3.4, P3.5 remainder, P3.6 — container, dashboard build, e2e tests.
+5. P1.3 — OAuth providers, only with a provider decision and a live account.

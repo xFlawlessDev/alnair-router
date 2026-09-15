@@ -3,10 +3,11 @@
 use alnair_router::crypto::CredentialCipher;
 use alnair_router::db::Db;
 use alnair_router::db::repos::aliases::{AliasRepository, CreateAlias};
-use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey};
+use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey, UpdateApiKey};
 use alnair_router::db::repos::combos::{ComboRepository, CreateCombo};
 use alnair_router::db::repos::connections::{ConnectionRepository, CreateConnection};
 use alnair_router::db::repos::usage::{NewUsageRecord, UsageRepository};
+use alnair_router::limits::BudgetMode;
 use alnair_router::{Error, Result};
 
 async fn db() -> Db {
@@ -442,6 +443,9 @@ async fn api_key_lookup_by_secret_only_matches_enabled() {
         .create(CreateApiKey {
             name: "laptop".to_string(),
             enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: None,
+            budget_mode: None,
         })
         .await
         .expect("key");
@@ -471,6 +475,9 @@ async fn api_key_secret_is_never_stored_plaintext() {
         .create(CreateApiKey {
             name: "k".to_string(),
             enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: None,
+            budget_mode: None,
         })
         .await
         .expect("key");
@@ -553,4 +560,108 @@ async fn usage_list_returns_newest_first() -> Result<()> {
     assert_eq!(rows.len(), 2);
     assert!(rows[0].created_at >= rows[1].created_at);
     Ok(())
+}
+
+#[tokio::test]
+async fn api_key_limits_and_budget_round_trip() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone());
+
+    let created = repo
+        .create(CreateApiKey {
+            name: "metered".to_string(),
+            enabled: true,
+            rate_limit_per_minute: Some(30),
+            monthly_budget_usd: Some(5.0),
+            budget_mode: Some("warn".to_string()),
+        })
+        .await
+        .expect("create");
+
+    assert_eq!(created.key.rate_limit(), Some(30));
+    assert_eq!(created.key.budget_usd(), Some(5.0));
+    assert_eq!(created.key.budget_mode(), BudgetMode::Warn);
+
+    let updated = repo
+        .update(
+            &created.key.id,
+            UpdateApiKey {
+                enabled: Some(false),
+                rate_limit_per_minute: Some(None),
+                monthly_budget_usd: Some(None),
+                budget_mode: Some("off".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update");
+
+    assert!(!updated.is_enabled());
+    assert_eq!(updated.rate_limit(), None);
+    assert_eq!(updated.budget_usd(), None);
+    assert_eq!(updated.budget_mode(), BudgetMode::Off);
+}
+
+#[tokio::test]
+async fn api_key_budget_mode_requires_a_budget() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone());
+
+    let error = repo
+        .create(CreateApiKey {
+            name: "bad".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: None,
+            budget_mode: Some("block".to_string()),
+        })
+        .await
+        .expect_err("budget mode without a budget must be refused");
+
+    assert!(matches!(error, Error::BadRequest(_)));
+}
+
+#[tokio::test]
+async fn usage_spend_since_sums_only_the_matching_key() {
+    let db = db().await;
+    let usage = UsageRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone());
+
+    let create_key = |name: &str| CreateApiKey {
+        name: name.to_string(),
+        enabled: true,
+        rate_limit_per_minute: None,
+        monthly_budget_usd: None,
+        budget_mode: None,
+    };
+
+    let key = keys.create(create_key("metered")).await.expect("key");
+    let other = keys.create(create_key("other")).await.expect("key");
+
+    for (api_key_id, cost) in [
+        (Some(key.key.id.clone()), 1.5),
+        (Some(other.key.id.clone()), 9.9),
+    ] {
+        usage
+            .record(NewUsageRecord {
+                api_key_id,
+                requested_model: "m".to_string(),
+                resolved_provider: None,
+                resolved_model: None,
+                attempt: 1,
+                status: "ok".to_string(),
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                cached_tokens: 0,
+                cost_usd: cost,
+                latency_ms: 10,
+            })
+            .await
+            .expect("record");
+    }
+
+    let since = chrono::Utc::now() - chrono::Duration::hours(1);
+    let spent = usage.spend_since(&key.key.id, since).await.expect("spend");
+
+    assert!((spent - 1.5).abs() < 1e-9, "unexpected spend: {spent}");
 }

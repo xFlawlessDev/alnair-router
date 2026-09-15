@@ -1,8 +1,9 @@
 //! Endpoint shape smoke tests: routing, auth, and error bodies.
 
-use alnair_router::config::RouterConfig;
+use alnair_router::config::{RateLimitConfig, RouterConfig};
 use alnair_router::db::Db;
-use alnair_router::db::repos::api_keys::CreateApiKey;
+use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey};
+use alnair_router::db::repos::usage::{NewUsageRecord, UsageRepository};
 use alnair_router::{AppState, build_router};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -11,26 +12,64 @@ use tower::ServiceExt;
 
 const TEST_SECRET: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
-/// Builds an app over a fresh in-memory database.
-async fn app(require_api_key: bool) -> (axum::Router, Db) {
+/// Builds an app over a fresh in-memory database with a test encryption key.
+async fn app_with_config(mut config: RouterConfig) -> (axum::Router, Db) {
     let db = Db::connect_in_memory().await.expect("db");
-    let mut config = RouterConfig::default();
-    config.server.require_api_key = require_api_key;
-    config.secrets.key = Some(TEST_SECRET.to_string());
+    if config.secrets.key.is_none() {
+        config.secrets.key = Some(TEST_SECRET.to_string());
+    }
 
     let state = AppState::new(config, db.clone()).expect("state");
     (build_router(state), db)
 }
 
+/// Builds an app over a fresh in-memory database.
+async fn app(require_api_key: bool) -> (axum::Router, Db) {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = require_api_key;
+    app_with_config(config).await
+}
+
 /// Builds an app whose admin routes are guarded by a bearer token.
 async fn app_with_admin_token(token: &str) -> (axum::Router, Db) {
-    let db = Db::connect_in_memory().await.expect("db");
     let mut config = RouterConfig::default();
     config.server.admin_token = Some(token.to_string());
-    config.secrets.key = Some(TEST_SECRET.to_string());
+    app_with_config(config).await
+}
 
-    let state = AppState::new(config, db.clone()).expect("state");
-    (build_router(state), db)
+/// Mints a router-issued client key and returns its plaintext secret.
+async fn mint_key(db: &Db, name: &str) -> String {
+    ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: name.to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: None,
+            budget_mode: None,
+        })
+        .await
+        .expect("mint key")
+        .secret
+}
+
+/// Records a usage row, used to simulate spend for budget checks.
+async fn record_usage(db: &Db, api_key_id: &str, cost_usd: f64) {
+    UsageRepository::new(db.pool.clone())
+        .record(NewUsageRecord {
+            api_key_id: Some(api_key_id.to_string()),
+            requested_model: "metered".to_string(),
+            resolved_provider: None,
+            resolved_model: None,
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cached_tokens: 0,
+            cost_usd,
+            latency_ms: 5,
+        })
+        .await
+        .expect("record usage");
 }
 
 async fn get(app: &axum::Router, path: &str) -> (StatusCode, serde_json::Value) {
@@ -42,19 +81,35 @@ async fn get_with_auth(
     path: &str,
     bearer: Option<&str>,
 ) -> (StatusCode, serde_json::Value) {
-    let mut builder = Request::builder().uri(path);
+    let response = raw_request_with_auth(app, "GET", path, None, bearer).await;
+    (response.status(), body_json(response).await)
+}
+
+async fn raw_request_with_auth(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+    bearer: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::builder().method(method).uri(path);
+
+    let body = match body {
+        Some(body) => {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+            Body::from(body.to_string())
+        }
+        None => Body::empty(),
+    };
 
     if let Some(token) = bearer {
         builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
     }
 
-    let response = app
-        .clone()
-        .oneshot(builder.body(Body::empty()).unwrap())
+    app.clone()
+        .oneshot(builder.body(body).unwrap())
         .await
-        .expect("request");
-
-    (response.status(), body_json(response).await)
+        .expect("request")
 }
 
 async fn json_request(
@@ -360,6 +415,9 @@ async fn api_key_auth_is_enforced_when_required() {
         .create(CreateApiKey {
             name: "test".to_string(),
             enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: None,
+            budget_mode: None,
         })
         .await
         .expect("mint key");
@@ -561,4 +619,173 @@ fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
             offenders.push(path.display().to_string());
         }
     }
+}
+
+#[tokio::test]
+async fn per_key_rate_limit_returns_429_with_retry_after() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    config.rate_limit = RateLimitConfig {
+        requests_per_minute: 1,
+        burst: 1,
+    };
+    let (app, db) = app_with_config(config).await;
+    let secret = mint_key(&db, "metered").await;
+
+    let first = raw_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        Some(serde_json::json!({ "model": "nope/nothing", "messages": [] })),
+        Some(&secret),
+    )
+    .await;
+    assert_ne!(first.status(), StatusCode::UNAUTHORIZED);
+
+    let second = raw_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        Some(serde_json::json!({ "model": "nope/nothing", "messages": [] })),
+        Some(&secret),
+    )
+    .await;
+
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        second.headers().contains_key(header::RETRY_AFTER),
+        "429 should include Retry-After"
+    );
+}
+
+#[tokio::test]
+async fn budget_block_mode_returns_402() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "budgeted".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: Some(0.001),
+            budget_mode: Some("block".to_string()),
+        })
+        .await
+        .expect("key");
+    record_usage(&db, &created.key.id, 1.0).await;
+
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({ "model": "nope/nothing", "messages": [] }),
+        Some(&created.secret),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(body["error"]["type"], "insufficient_quota");
+}
+
+#[tokio::test]
+async fn budget_warn_mode_passes_with_a_warning_header() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "warned".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: Some(0.001),
+            budget_mode: Some("warn".to_string()),
+        })
+        .await
+        .expect("key");
+    record_usage(&db, &created.key.id, 1.0).await;
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        Some(serde_json::json!({ "model": "nope/nothing", "messages": [] })),
+        Some(&created.secret),
+    )
+    .await;
+
+    assert_ne!(response.status(), StatusCode::PAYMENT_REQUIRED);
+    assert!(
+        response.headers().contains_key("x-router-budget-warning"),
+        "warn mode should set the budget header"
+    );
+}
+
+#[tokio::test]
+async fn key_patch_updates_limits_and_enabled_state() {
+    let (app, db) = app(false).await;
+    let created = ApiKeyRepository::new(db.pool.clone())
+        .create(CreateApiKey {
+            name: "editable".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            monthly_budget_usd: None,
+            budget_mode: None,
+        })
+        .await
+        .expect("key");
+
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/keys/{}", created.key.id),
+        serde_json::json!({
+            "enabled": false,
+            "rate_limit_per_minute": 10,
+            "monthly_budget_usd": 2.5,
+            "budget_mode": "block"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["enabled"], 0);
+    assert_eq!(body["rate_limit_per_minute"], 10);
+    assert_eq!(body["monthly_budget_usd"], 2.5);
+    assert_eq!(body["budget_mode"], "block");
+}
+
+#[tokio::test]
+async fn connection_patch_clears_api_key_when_sent_null() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "clearable",
+            "provider_type": "openai-compatible",
+            "base_url": "https://example.invalid/v1",
+            "api_key": "sk-clear-me"
+        }),
+    )
+    .await;
+    let id = connection["id"].as_str().expect("connection id");
+
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/connections/{id}"),
+        serde_json::json!({ "api_key": null }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["api_key"].is_null(),
+        "null should clear the stored key: {body}"
+    );
 }

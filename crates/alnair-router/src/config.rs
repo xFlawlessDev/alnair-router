@@ -26,6 +26,8 @@ pub struct RouterConfig {
     pub storage: StorageConfig,
     pub router: RoutingConfig,
     pub secrets: SecretsConfig,
+    pub limits: LimitsConfig,
+    pub rate_limit: RateLimitConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -58,6 +60,37 @@ pub struct SecretsConfig {
 #[serde(default)]
 pub struct StorageConfig {
     pub url: String,
+}
+
+/// Upstream concurrency caps. Zeros disable the corresponding cap.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct LimitsConfig {
+    /// Maximum concurrent upstream calls across all connections.
+    pub max_concurrent: usize,
+    /// Maximum concurrent upstream calls per connection.
+    pub max_concurrent_per_connection: usize,
+    /// How long a request waits for a slot before failing with 429. 0 waits forever.
+    pub acquire_timeout_ms: u64,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent: 0,
+            max_concurrent_per_connection: 0,
+            acquire_timeout_ms: 30_000,
+        }
+    }
+}
+
+/// Default per-key request rate. `0` is unlimited; keys can override.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct RateLimitConfig {
+    pub requests_per_minute: u32,
+    /// Token-bucket capacity for bursts. 0 uses one minute's worth of tokens.
+    pub burst: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

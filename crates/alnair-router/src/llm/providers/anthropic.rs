@@ -117,6 +117,33 @@ struct AnthropicErrorObject {
     message: Option<String>,
 }
 
+/// Non-streaming Messages response body.
+#[derive(Debug, Deserialize)]
+struct AnthropicCompletion {
+    #[serde(default)]
+    content: Vec<AnthropicCompletionBlock>,
+    #[serde(default)]
+    usage: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicCompletionBlock {
+    Text {
+        text: String,
+    },
+    Thinking {
+        thinking: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    #[serde(other)]
+    Other,
+}
+
 pub struct AnthropicNativeProvider {
     client: reqwest::Client,
 }
@@ -488,6 +515,39 @@ fn anthropic_usage_chunk(
     }
 }
 
+/// Maps a non-streaming Messages response body into chunks.
+fn anthropic_completion_chunks(
+    completion: AnthropicCompletion,
+    rates: Option<&ModelCostRates>,
+) -> Vec<LlmStreamChunk> {
+    let mut chunks = Vec::new();
+
+    for block in completion.content {
+        match block {
+            AnthropicCompletionBlock::Text { text } if !text.is_empty() => {
+                chunks.push(LlmStreamChunk::Text(text));
+            }
+            AnthropicCompletionBlock::Thinking { thinking } if !thinking.is_empty() => {
+                chunks.push(LlmStreamChunk::Thinking(thinking));
+            }
+            AnthropicCompletionBlock::ToolUse { id, name, input } => {
+                chunks.push(LlmStreamChunk::ToolCall {
+                    id,
+                    name,
+                    arguments: input,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(usage) = completion.usage {
+        chunks.push(anthropic_usage_chunk(&usage, rates));
+    }
+    chunks.push(LlmStreamChunk::Done(None));
+    chunks
+}
+
 fn handle_anthropic_sse_line(
     line: &str,
     pending_tool_uses: &mut HashMap<usize, PendingToolUse>,
@@ -791,6 +851,89 @@ impl LlmProvider for AnthropicNativeProvider {
             }
         })
     }
+
+    /// One-shot `/messages` call with `stream: false`.
+    fn complete<'a>(
+        &'a self,
+        config: &'a ModelConfig,
+        messages: Vec<Message>,
+        options: &'a LlmStreamOptions,
+        tools: Option<Vec<serde_json::Value>>,
+    ) -> BoxStream<'a, Result<LlmStreamChunk, ChatError>> {
+        let mut request = convert_messages_to_anthropic(
+            &messages,
+            tools.as_deref(),
+            options,
+            config.supports_thinking,
+            config.supports_cache_control,
+        );
+        request.model = config.model_id.clone();
+        request.stream = false;
+
+        let endpoint = format!("{}/messages", normalize_base_url(&config.base_url));
+        let api_key = config.api_key.clone();
+        let custom_headers = config.custom_headers.clone();
+        let rates = config.effective_cost_rates();
+
+        Box::pin(async_stream::stream! {
+            let Some(api_key) = api_key.as_deref().filter(|key| !key.trim().is_empty()) else {
+                yield Err(ChatError::BadRequest("Anthropic API key is required".to_string()));
+                return;
+            };
+
+            let response = match send_anthropic_request_with_retry(
+                &self.client,
+                &endpoint,
+                api_key,
+                &custom_headers,
+                &request,
+                options.max_retry_delay_ms,
+                options.max_retries,
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    yield Err(error);
+                    return;
+                }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                let provider_message = serde_json::from_str::<AnthropicErrorEnvelope>(&body)
+                    .ok()
+                    .and_then(|payload| payload.error.and_then(|error| error.message))
+                    .unwrap_or(body);
+                yield Err(ChatError::Provider(format!(
+                    "Anthropic API error {status}: {provider_message}"
+                )));
+                return;
+            }
+
+            let body = match response.text().await {
+                Ok(body) => body,
+                Err(error) => {
+                    yield Err(ChatError::Provider(error.to_string()));
+                    return;
+                }
+            };
+            let parsed: AnthropicCompletion = match serde_json::from_str(&body) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    yield Err(ChatError::Provider(format!(
+                        "Anthropic returned malformed JSON: {error}"
+                    )));
+                    return;
+                }
+            };
+
+            for chunk in anthropic_completion_chunks(parsed, rates.as_ref()) {
+                yield Ok(chunk);
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -802,6 +945,41 @@ mod tests {
 
     fn convert_for_test(messages: &[Message], options: &LlmStreamOptions) -> AnthropicRequest {
         convert_messages_to_anthropic(messages, None, options, true, true)
+    }
+
+    #[test]
+    fn completion_json_maps_to_chunks() {
+        let parsed: AnthropicCompletion = serde_json::from_str(
+            r#"{
+                "content": [
+                    { "type": "thinking", "thinking": "pondering" },
+                    { "type": "text", "text": "hello" },
+                    { "type": "tool_use", "id": "tc1", "name": "read", "input": { "path": "/tmp" } },
+                    { "type": "redacted_thinking", "data": "opaque" }
+                ],
+                "usage": { "input_tokens": 10, "output_tokens": 2 }
+            }"#,
+        )
+        .expect("valid completion");
+
+        let chunks = anthropic_completion_chunks(parsed, None);
+
+        assert!(matches!(&chunks[0], LlmStreamChunk::Thinking(text) if text == "pondering"));
+        assert!(matches!(&chunks[1], LlmStreamChunk::Text(text) if text == "hello"));
+        assert!(matches!(
+            &chunks[2],
+            LlmStreamChunk::ToolCall { id, name, .. } if id == "tc1" && name == "read"
+        ));
+        assert!(matches!(
+            &chunks[3],
+            LlmStreamChunk::Usage {
+                prompt_eval_count: Some(10),
+                eval_count: Some(2),
+                ..
+            }
+        ));
+        assert!(matches!(&chunks[4], LlmStreamChunk::Done(_)));
+        assert_eq!(chunks.len(), 5, "unknown block types are skipped");
     }
 
     #[test]

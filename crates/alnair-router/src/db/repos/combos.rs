@@ -60,7 +60,7 @@ pub struct CreateCombo {
 pub struct UpdateCombo {
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub description: Option<Option<String>>,
     #[serde(default)]
     pub enabled: Option<bool>,

@@ -18,6 +18,15 @@ pub enum Error {
     #[error("unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("rate limited: {message}")]
+    RateLimited {
+        message: String,
+        retry_after_secs: u64,
+    },
+
+    #[error("budget exceeded: {message}")]
+    BudgetExceeded { message: String },
+
     #[error("unknown model reference: {0}")]
     UnknownModel(String),
 
@@ -49,6 +58,8 @@ impl Error {
         match self {
             Error::BadRequest(_) | Error::UnsupportedProviderType(_) => StatusCode::BAD_REQUEST,
             Error::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Error::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+            Error::BudgetExceeded { .. } => StatusCode::PAYMENT_REQUIRED,
             // An unresolvable model reference is reported as 404 so callers can
             // distinguish "you asked for something that does not exist" from a
             // malformed request.
@@ -66,6 +77,8 @@ impl Error {
         match self {
             Error::BadRequest(_) | Error::UnsupportedProviderType(_) => "invalid_request_error",
             Error::Unauthorized(_) => "authentication_error",
+            Error::RateLimited { .. } => "rate_limit_error",
+            Error::BudgetExceeded { .. } => "insufficient_quota",
             Error::UnknownModel(_) | Error::NotFound(_) => "not_found_error",
             Error::NoRoute(_) => "service_unavailable_error",
             Error::AllAttemptsFailed(_) | Error::Upstream(_) => "upstream_error",
@@ -77,6 +90,13 @@ impl Error {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = self.status();
+        let retry_after = match &self {
+            Error::RateLimited {
+                retry_after_secs, ..
+            } => Some(*retry_after_secs),
+            _ => None,
+        };
+
         let body = Json(json!({
             "error": {
                 "message": self.to_string(),
@@ -84,6 +104,15 @@ impl IntoResponse for Error {
                 "code": status.as_u16(),
             }
         }));
-        (status, body).into_response()
+
+        let mut response = (status, body).into_response();
+        if let Some(seconds) = retry_after
+            && let Ok(value) = axum::http::HeaderValue::from_str(&seconds.to_string())
+        {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, value);
+        }
+        response
     }
 }

@@ -3,6 +3,7 @@ import type {
   Alias,
   AliasInput,
   ApiKey,
+  ApiKeyInput,
   ComboWithEntries,
   Connection,
   ConnectionInput,
@@ -130,8 +131,9 @@ export const api = {
   deleteCombo: (id: ID) => request<void>('DELETE', `/api/combos/${id}`),
 
   listKeys: () => request<ApiKey[]>('GET', '/api/keys'),
-  createKey: (body: { name: string; enabled?: boolean }) =>
-    request<CreatedApiKey>('POST', '/api/keys', { body }),
+  createKey: (body: ApiKeyInput) => request<CreatedApiKey>('POST', '/api/keys', { body }),
+  updateKey: (id: ID, body: Partial<ApiKeyInput>) =>
+    request<ApiKey>('PATCH', `/api/keys/${id}`, { body }),
   deleteKey: (id: ID) => request<void>('DELETE', `/api/keys/${id}`),
 
   listUsage: (limit: number, offset: number) =>

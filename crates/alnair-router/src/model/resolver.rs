@@ -13,6 +13,8 @@ pub const MAX_DEPTH: usize = 8;
 /// One upstream the request can be dispatched to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedTarget {
+    /// Source connection id, used for per-connection concurrency caps.
+    pub connection_id: String,
     /// `openai-compatible` or `anthropic-native`.
     pub provider_type: String,
     pub base_url: String,
@@ -223,6 +225,7 @@ impl Resolver {
 
 fn target_from(connection: &Connection, model: String, source: String) -> ResolvedTarget {
     ResolvedTarget {
+        connection_id: connection.id.clone(),
         provider_type: connection.provider_type.clone(),
         base_url: connection.base_url.clone(),
         model,

@@ -13,6 +13,7 @@ use crate::db::repos::combos::ComboRepository;
 use crate::db::repos::connections::ConnectionRepository;
 use crate::db::repos::usage::UsageRepository;
 use crate::error::Result;
+use crate::limits::{RateLimiter, UpstreamLimiter};
 use crate::upstream::Executor;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
 
@@ -23,6 +24,8 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub cipher: Arc<CredentialCipher>,
     pub executor: Executor,
+    pub limiter: UpstreamLimiter,
+    pub rate_limiter: RateLimiter,
 }
 
 impl AppState {
@@ -36,15 +39,20 @@ impl AppState {
             max_retries_per_tier: config.router.max_retries_per_tier,
             max_retry_delay_ms: config.router.max_retry_delay_ms,
         };
+        let limiter = UpstreamLimiter::new(&config.limits);
+        let rate_limiter = RateLimiter::new(&config.rate_limit);
 
         Ok(Self {
             config: Arc::new(config),
             pool: db.pool.clone(),
             cipher,
-            executor: Executor::with_retry_policy(
+            executor: Executor::with_settings(
                 Arc::new(ProviderRegistry::with_defaults()),
                 retry,
+                limiter.clone(),
             ),
+            limiter,
+            rate_limiter,
         })
     }
 

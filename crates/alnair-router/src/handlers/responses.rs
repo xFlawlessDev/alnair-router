@@ -46,12 +46,20 @@ pub struct ResponsesResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ResponsesOutput {
-    #[serde(rename = "type")]
-    pub output_type: &'static str,
-    pub id: String,
-    pub role: &'static str,
-    pub content: Vec<ResponsesContent>,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponsesOutput {
+    Message {
+        id: String,
+        role: &'static str,
+        status: &'static str,
+        content: Vec<ResponsesContent>,
+    },
+    FunctionCall {
+        id: String,
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -96,7 +104,7 @@ pub async fn responses(
 
     let executed = state
         .executor
-        .stream(&targets, messages, None, Some(&options))
+        .stream(&targets, messages, None, Some(&options), false)
         .await?;
 
     let target = executed.target.clone();
@@ -122,21 +130,34 @@ pub async fn responses(
         })
         .await?;
 
+    let mut output = Vec::new();
+    if !completion.content.is_empty() || completion.tool_calls.is_empty() {
+        output.push(ResponsesOutput::Message {
+            id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
+            role: "assistant",
+            status: "completed",
+            content: vec![ResponsesContent {
+                content_type: "output_text",
+                text: completion.content.clone(),
+            }],
+        });
+    }
+    for call in &completion.tool_calls {
+        output.push(ResponsesOutput::FunctionCall {
+            id: format!("fc_{}", uuid::Uuid::new_v4().simple()),
+            call_id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+        });
+    }
+
     Ok(Json(ResponsesResponse {
         id: format!("resp_{}", uuid::Uuid::new_v4().simple()),
         object: "response",
         created_at: chrono::Utc::now().timestamp(),
         model: request.model,
         status: "completed",
-        output: vec![ResponsesOutput {
-            output_type: "message",
-            id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
-            role: "assistant",
-            content: vec![ResponsesContent {
-                content_type: "output_text",
-                text: completion.content,
-            }],
-        }],
+        output,
         usage: ResponsesUsage {
             input_tokens: usage.prompt_tokens,
             output_tokens: usage.completion_tokens,

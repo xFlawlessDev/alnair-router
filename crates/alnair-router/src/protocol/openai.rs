@@ -227,7 +227,45 @@ pub struct ChatChoice {
 #[derive(Debug, Serialize)]
 pub struct ChatChoiceMessage {
     pub role: &'static str,
-    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OpenAiToolCallOut>>,
+}
+
+/// Tool call in OpenAI `message.tool_calls` shape.
+#[derive(Debug, Serialize)]
+pub struct OpenAiToolCallOut {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: &'static str,
+    pub function: OpenAiFunctionOut,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OpenAiFunctionOut {
+    pub name: String,
+    pub arguments: String,
+}
+
+/// Builds the `tool_calls` field, omitting it entirely when there are none.
+pub fn tool_calls_payload(specs: &[ToolCallSpec]) -> Option<Vec<OpenAiToolCallOut>> {
+    if specs.is_empty() {
+        return None;
+    }
+    Some(
+        specs
+            .iter()
+            .map(|spec| OpenAiToolCallOut {
+                id: spec.id.clone(),
+                call_type: "function",
+                function: OpenAiFunctionOut {
+                    name: spec.name.clone(),
+                    arguments: spec.arguments.clone(),
+                },
+            })
+            .collect(),
+    )
 }
 
 #[derive(Debug, Serialize)]

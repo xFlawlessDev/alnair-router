@@ -158,6 +158,7 @@ async fn combo_falls_through_to_the_second_tier() {
             vec![chat_backend::message_text("user", "hi")],
             None,
             None,
+            false,
         )
         .await
         .expect("a tier should succeed");
@@ -222,6 +223,7 @@ async fn all_tiers_failing_reports_the_last_error() {
             vec![chat_backend::message_text("user", "hi")],
             None,
             None,
+            false,
         )
         .await;
 

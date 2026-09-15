@@ -66,7 +66,7 @@ pub struct UpdateConnection {
     pub provider_type: Option<String>,
     #[serde(default)]
     pub base_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub api_key: Option<Option<String>>,
     #[serde(default)]
     pub custom_headers: Option<BTreeMap<String, String>>,
