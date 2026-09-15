@@ -1,0 +1,13 @@
+services:
+  alnair-router:
+    image: ghcr.io/xflawlessdev/alnair-router:latest
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    environment:
+      ALNAIR_ROUTER__SECRETS__KEY: ${ALNAIR_ROUTER__SECRETS__KEY:?set ALNAIR_ROUTER__SECRETS__KEY, e.g. openssl rand -hex 32}
+    volumes:
+      - alnair-data:/data
+
+volumes:
+  alnair-data:
