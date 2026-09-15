@@ -80,6 +80,8 @@ pub struct ExecutorSettings {
     pub timeouts: UpstreamTimeouts,
     pub metrics: Arc<crate::metrics::Metrics>,
     pub telemetry: Arc<crate::telemetry::ActivityTracker>,
+    /// Price lookup for the resolved model; absent in unit tests.
+    pub pricing: Option<Arc<crate::pricing::PricingCache>>,
 }
 
 impl Default for ExecutorSettings {
@@ -90,6 +92,7 @@ impl Default for ExecutorSettings {
             timeouts: UpstreamTimeouts::default(),
             metrics: Arc::new(crate::metrics::Metrics::default()),
             telemetry: Arc::new(crate::telemetry::ActivityTracker::new()),
+            pricing: None,
         }
     }
 }
@@ -155,6 +158,14 @@ impl Executor {
                 index + 1,
             );
 
+            // Connections may pin a catalog id for relays whose upstream model
+            // path does not match any priced key.
+            let pricing_key = target.pricing_model.as_deref().unwrap_or(&target.model);
+            let price = match &self.settings.pricing {
+                Some(pricing) => pricing.price_for(pricing_key).await,
+                None => None,
+            };
+
             let built = chat_backend::stream(
                 self.registry.clone(),
                 &target.provider_type,
@@ -167,6 +178,7 @@ impl Executor {
                 streaming,
                 tools.clone(),
                 target.custom_headers.clone(),
+                price,
             );
 
             let stream = match built {

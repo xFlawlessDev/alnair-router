@@ -153,6 +153,7 @@ async fn combo_falls_through_to_the_second_tier() {
             connect_timeout_ms: None,
 
             idle_timeout_ms: None,
+            pricing_model: None,
         })
         .await
         .expect("create dead");
@@ -170,6 +171,7 @@ async fn combo_falls_through_to_the_second_tier() {
             connect_timeout_ms: None,
 
             idle_timeout_ms: None,
+            pricing_model: None,
         })
         .await
         .expect("create good");
@@ -262,6 +264,7 @@ async fn all_tiers_failing_reports_the_last_error() {
             connect_timeout_ms: None,
 
             idle_timeout_ms: None,
+            pricing_model: None,
         })
         .await
         .expect("create flaky");
@@ -319,6 +322,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             enabled: true,
             connect_timeout_ms: Some(50),
             idle_timeout_ms: None,
+            pricing_model: None,
         })
         .await
         .expect("create slow");
@@ -353,6 +357,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             },
             metrics: Arc::new(alnair_router::metrics::Metrics::default()),
             telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
+            pricing: None,
         },
     );
 
@@ -395,6 +400,7 @@ async fn idle_streams_error_after_the_timeout() {
             enabled: true,
             connect_timeout_ms: Some(0),
             idle_timeout_ms: Some(50),
+            pricing_model: None,
         })
         .await
         .expect("create trickle");
@@ -417,6 +423,7 @@ async fn idle_streams_error_after_the_timeout() {
             },
             metrics: Arc::new(alnair_router::metrics::Metrics::default()),
             telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
+            pricing: None,
         },
     );
 

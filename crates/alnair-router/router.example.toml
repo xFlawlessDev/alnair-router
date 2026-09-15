@@ -72,5 +72,14 @@ acquire_timeout_ms = 30000
 # Default requests-per-minute allowed per client key. 0 is unlimited.
 # Individual keys can override (or disable) this from the admin API / dashboard.
 requests_per_minute = 0
-# Token-bucket capacity for bursts. 0 uses one minute's worth of requests.
+# Token-bucket capacity for bursts. 0 uses one minute's worth of tokens.
 burst = 0
+
+[pricing]
+# Crawl a public pricing catalog in the background (LiteLLM or models.dev
+# payloads are both recognized). Dashboard overrides always win and survive
+# syncs; crawled rows shadow the built-in rate table only.
+sync_enabled = false
+# Crawl interval in seconds (clamped to at least 60).
+sync_interval_secs = 86400
+source_url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"

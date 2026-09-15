@@ -317,6 +317,38 @@ suite should tell you.
     dashboard's suggestions. (`db/repos/usage.rs`, `handlers/admin.rs`,
     `UsageFilterBar.vue`)
 
+24. **Pricing is an override → crawl → built-in chain.** `model_prices` keeps
+    two rows per model at most: `override` (written from the dashboard) and
+    `sync` (replaced wholesale by each crawl). Crawls accept LiteLLM or
+    models.dev payloads (`pricing/sources.rs`); when several providers list the
+    same model in models.dev, the cheapest input rate wins so the stored row is
+    deterministic. Lookups merge the two sources override-last and resolve in
+    two steps: exact id, then the **last path segment** — so
+    `azure/gpt-5.6-luna` answers a `gpt-5.6-luna` request and a relay like
+    `ocg/openai/gpt-5.6-luna` still prices correctly. Rows sharing a leaf are
+    ranked canonical (no `vendor/` prefix) → cheapest input → alphabetical.
+    The merged index is cached (`PricingCache`) until a pricing write or sync
+    invalidates it, and `GET /api/pricing/match?model=…` plus the Pricing page's
+    "Test a model id" tool show which key answered. Connections may pin a
+    `pricing_model` for relays whose ids match nothing; a model with no row at
+    all falls back to the built-in `known_cost_rates` table. Rates reach the
+    provider layer as `ModelConfig.cost_rates` inside `chat_backend` — the only
+    file allowed to touch `alnair_llm`. Crawling is opt-in
+    (`pricing.sync_enabled`, interval clamped to ≥ 60 s) and runs as a background
+    task. Reasoning tokens are parsed by the OpenAI provider and billed as a
+    premium over the output rate, because `completion_tokens` already includes
+    them.
+
+25. **Cost is stored split three ways.** `usage_records` keeps
+    `cost_input_usd`, `cost_output_usd` and `cost_reasoning_usd` next to the
+    `cost_usd` total, and the summary sums all three, so
+    `cost_usd = input + output + reasoning` exactly. The provider layer reports
+    the reasoning premium as its own field (`TokenCosts::reasoning_usd`), which
+    keeps the output share free of reasoning; the Usage page turns this into
+    token and cost breakdown popovers on the summary cards and the
+    Tokens/Cost cells. Rows written before migration `0009` fall back to a
+    single "recorded total" line in the breakdown.
+
 ---
 
 ## 5. The `alnair-llm` crate — read this

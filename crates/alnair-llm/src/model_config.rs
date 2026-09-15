@@ -34,6 +34,10 @@ pub struct ModelCostRates {
     pub cache_read_per_million_usd: Option<f64>,
     /// USD per million cache-write tokens
     pub cache_write_per_million_usd: Option<f64>,
+    /// USD per million reasoning tokens. Reasoning is billed as a premium over
+    /// the output rate, because completion tokens already include it.
+    #[serde(default)]
+    pub reasoning_per_million_usd: Option<f64>,
 }
 
 /// Static registry of known model cost rates (USD per million tokens).
@@ -43,28 +47,31 @@ pub fn known_cost_rates(model_id: &str) -> Option<ModelCostRates> {
         "gpt-4o" | "gpt-4o-2024-11-20" => Some(ModelCostRates {
             input_per_million_usd: 2.50,
             output_per_million_usd: 10.00,
-            cache_read_per_million_usd: None,
+            cache_read_per_million_usd: Some(1.25),
             cache_write_per_million_usd: None,
+            reasoning_per_million_usd: Some(15.00),
         }),
         "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" => Some(ModelCostRates {
             input_per_million_usd: 0.15,
             output_per_million_usd: 0.60,
-            cache_read_per_million_usd: None,
+            cache_read_per_million_usd: Some(0.075),
             cache_write_per_million_usd: None,
+            reasoning_per_million_usd: Some(0.90),
         }),
         "gpt-4.1" => Some(ModelCostRates {
             input_per_million_usd: 2.00,
             output_per_million_usd: 8.00,
-            cache_read_per_million_usd: None,
+            cache_read_per_million_usd: Some(0.50),
             cache_write_per_million_usd: None,
+            reasoning_per_million_usd: Some(12.00),
         }),
         "gpt-4.1-mini" => Some(ModelCostRates {
             input_per_million_usd: 0.40,
             output_per_million_usd: 1.60,
-            cache_read_per_million_usd: None,
+            cache_read_per_million_usd: Some(0.10),
             cache_write_per_million_usd: None,
+            reasoning_per_million_usd: Some(2.40),
         }),
-        // claude-* rates added when Phase E (AnthropicNative) lands
         _ => None,
     }
 }
@@ -312,8 +319,9 @@ mod tests {
 
         assert_eq!(rates.input_per_million_usd, 2.50);
         assert_eq!(rates.output_per_million_usd, 10.00);
-        assert_eq!(rates.cache_read_per_million_usd, None);
+        assert_eq!(rates.cache_read_per_million_usd, Some(1.25));
         assert_eq!(rates.cache_write_per_million_usd, None);
+        assert_eq!(rates.reasoning_per_million_usd, Some(15.00));
     }
 
     #[test]
@@ -328,6 +336,7 @@ mod tests {
             output_per_million_usd: 4.56,
             cache_read_per_million_usd: Some(0.12),
             cache_write_per_million_usd: Some(0.34),
+            reasoning_per_million_usd: Some(6.78),
         };
         let mut config = ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
         config.cost_rates = Some(custom.clone());

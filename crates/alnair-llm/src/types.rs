@@ -505,10 +505,14 @@ pub enum LlmStreamChunk {
         prompt_eval_count: Option<u64>,
         cached_prompt_eval_count: Option<u64>,
         eval_count: Option<u64>,
+        /// Reasoning tokens included in `eval_count`, when reported.
+        reasoning_eval_count: Option<u64>,
         /// USD cost for input tokens. None for local/unmetered (Ollama) or unknown model.
         cost_input_usd: Option<f64>,
         /// USD cost for output tokens. None for local/unmetered or unknown model.
         cost_output_usd: Option<f64>,
+        /// Reasoning premium over the output rate, reported separately.
+        cost_reasoning_usd: Option<f64>,
     },
     Done(Option<String>),
 }

@@ -21,7 +21,15 @@ pub struct UsageRecord {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub cached_tokens: i64,
+    /// Reasoning tokens, included in `completion_tokens`.
+    pub reasoning_tokens: i64,
     pub cost_usd: f64,
+    /// Input share of `cost_usd`.
+    pub cost_input_usd: f64,
+    /// Output share, excluding the reasoning premium.
+    pub cost_output_usd: f64,
+    /// Reasoning premium over the output rate.
+    pub cost_reasoning_usd: f64,
     pub latency_ms: i64,
 }
 
@@ -38,7 +46,11 @@ pub struct NewUsageRecord {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cached_tokens: u64,
+    pub reasoning_tokens: u64,
     pub cost_usd: f64,
+    pub cost_input_usd: f64,
+    pub cost_output_usd: f64,
+    pub cost_reasoning_usd: f64,
     pub latency_ms: u64,
 }
 
@@ -51,7 +63,14 @@ pub struct UsageSummary {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub cached_tokens: i64,
+    pub reasoning_tokens: i64,
     pub cost_usd: f64,
+    /// Input share of the cost.
+    pub cost_input_usd: f64,
+    /// Output share, excluding the reasoning premium.
+    pub cost_output_usd: f64,
+    /// Reasoning premium over the output rate.
+    pub cost_reasoning_usd: f64,
     pub avg_latency_ms: f64,
 }
 
@@ -122,8 +141,9 @@ impl UsageRepository {
             "INSERT INTO usage_records
                 (id, created_at, api_key_id, requested_model, resolved_provider, resolved_model,
                  connection_name, attempt, status, prompt_tokens, completion_tokens, cached_tokens,
-                 cost_usd, latency_ms)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 reasoning_tokens, cost_usd, cost_input_usd, cost_output_usd, cost_reasoning_usd,
+                 latency_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(Utc::now())
@@ -137,7 +157,11 @@ impl UsageRepository {
         .bind(entry.prompt_tokens as i64)
         .bind(entry.completion_tokens as i64)
         .bind(entry.cached_tokens as i64)
+        .bind(entry.reasoning_tokens as i64)
         .bind(entry.cost_usd)
+        .bind(entry.cost_input_usd)
+        .bind(entry.cost_output_usd)
+        .bind(entry.cost_reasoning_usd)
         .bind(entry.latency_ms as i64)
         .execute(&self.pool)
         .await?;
@@ -182,7 +206,11 @@ impl UsageRepository {
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
                 COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+                COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
                 COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                COALESCE(SUM(cost_input_usd), 0.0) AS cost_input_usd,
+                COALESCE(SUM(cost_output_usd), 0.0) AS cost_output_usd,
+                COALESCE(SUM(cost_reasoning_usd), 0.0) AS cost_reasoning_usd,
                 COALESCE(AVG(latency_ms), 0.0) AS avg_latency_ms
              FROM usage_records
              WHERE (?1 IS NULL OR api_key_id = ?1)

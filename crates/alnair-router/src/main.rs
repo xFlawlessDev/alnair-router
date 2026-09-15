@@ -211,7 +211,9 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
         "alnair-router listening"
     );
 
-    let app = build_router(AppState::new(config, db)?);
+    let state = AppState::new(config, db)?;
+    spawn_pricing_sync(&state);
+    let app = build_router(state);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shutdown))
@@ -219,6 +221,31 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
         .map_err(|error| Error::Internal(error.to_string()))?;
 
     Ok(())
+}
+
+/// Crawls the pricing catalog in the background when `pricing.sync_enabled`.
+fn spawn_pricing_sync(state: &AppState) {
+    if !state.config.pricing.sync_enabled {
+        return;
+    }
+
+    let cache = state.pricing_cache.clone();
+    let url = state.config.pricing.source_url.clone();
+    let interval = std::time::Duration::from_secs(state.config.pricing.sync_interval_secs.max(60));
+
+    tokio::spawn(async move {
+        loop {
+            match alnair_router::pricing::sync_from_source(&cache, &url).await {
+                Ok(status) => tracing::info!(
+                    source = %status.source,
+                    models = status.model_count,
+                    "pricing catalog synced"
+                ),
+                Err(error) => tracing::warn!(%error, "pricing sync failed"),
+            }
+            tokio::time::sleep(interval).await;
+        }
+    });
 }
 
 /// Resolves on Ctrl+C, SIGTERM, or a tray "Quit".

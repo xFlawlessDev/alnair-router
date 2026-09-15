@@ -68,7 +68,11 @@ async fn record_usage(db: &Db, api_key_id: &str, cost_usd: f64) {
             prompt_tokens: 1,
             completion_tokens: 1,
             cached_tokens: 0,
+            reasoning_tokens: 0,
             cost_usd,
+            cost_input_usd: 0.0,
+            cost_output_usd: cost_usd,
+            cost_reasoning_usd: 0.0,
             latency_ms: 5,
         })
         .await
@@ -1465,7 +1469,11 @@ async fn usage_filters_and_facets_are_queryable() {
             prompt_tokens: 1,
             completion_tokens: 1,
             cached_tokens: 0,
+            reasoning_tokens: 0,
             cost_usd: 0.5,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
             latency_ms: 5,
         })
         .await
@@ -1522,7 +1530,11 @@ async fn usage_query_strings_deserialize() {
             prompt_tokens: 1,
             completion_tokens: 1,
             cached_tokens: 0,
+            reasoning_tokens: 0,
             cost_usd: 1.0,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
             latency_ms: 5,
         })
         .await
@@ -1818,4 +1830,96 @@ async fn key_with_an_unknown_plan_is_rejected() {
             .unwrap_or_default()
             .contains("plan")
     );
+}
+
+// ------------------------------------------------------------------ pricing
+
+#[tokio::test]
+async fn pricing_overrides_round_trip_through_the_api() {
+    let (app, _db) = app(false).await;
+
+    let (status, body) = json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({
+            "prices": [{
+                "model": "gpt-4o",
+                "input_per_million_usd": 1.0,
+                "output_per_million_usd": 2.0,
+                "cache_read_per_million_usd": 0.5,
+                "reasoning_per_million_usd": 3.0
+            }]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["updated"], 1);
+
+    let (status, body) = get(&app, "/api/pricing").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body.as_array().expect("rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["model"], "gpt-4o");
+    assert_eq!(rows[0]["source"], "override");
+    assert_eq!(rows[0]["reasoning_per_million_usd"], 3.0);
+
+    let (status, body) = json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({
+            "prices": [{ "model": "bad", "input_per_million_usd": -1.0, "output_per_million_usd": 1.0 }]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+
+    let response =
+        raw_request_with_auth(&app, "DELETE", "/api/pricing?model=gpt-4o", None, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_json(response).await["deleted"], 1);
+
+    let (status, body) = get(&app, "/api/pricing").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.as_array().expect("rows").is_empty());
+
+    let (status, body) = get(&app, "/api/pricing/sync").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_null(), "no crawl has run yet");
+}
+
+#[tokio::test]
+async fn pricing_match_reports_the_catalog_key() {
+    let (app, _db) = app(false).await;
+
+    let (status, _) = json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({
+            "prices": [{
+                "model": "gpt-4o",
+                "input_per_million_usd": 2.5,
+                "output_per_million_usd": 10.0
+            }]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A prefixed id resolves to the canonical row, and the response says so.
+    let (status, body) = get(&app, "/api/pricing/match?model=azure/gpt-4o").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["matched"], "gpt-4o");
+    assert_eq!(body["source"], "override");
+    assert_eq!(body["price"]["input_per_million_usd"], 2.5);
+
+    let (status, body) = get(&app, "/api/pricing/match?model=unknown-model").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["matched"].is_null());
+
+    let (status, _) = get(&app, "/api/pricing/match?model=%20").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

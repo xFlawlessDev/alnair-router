@@ -15,9 +15,10 @@ use futures::StreamExt;
 use futures::stream::{BoxStream, Stream};
 
 use crate::error::{Error, Result};
+use crate::pricing::Price;
 use alnair_llm::{
     ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions, Message, MessageContent,
-    MessageToolCall, ModelConfig, ProviderType, TextContentPart,
+    MessageToolCall, ModelConfig, ModelCostRates, ProviderType, TextContentPart,
 };
 
 /// Re-exported provider registry, so callers never name `alnair_llm` directly.
@@ -117,6 +118,15 @@ pub struct TokenUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cached_tokens: u64,
+    /// Reasoning tokens included in `completion_tokens`, when reported.
+    pub reasoning_tokens: u64,
+    /// Input-token cost in USD.
+    pub cost_input_usd: f64,
+    /// Output-token cost in USD (reasoning premium excluded).
+    pub cost_output_usd: f64,
+    /// Reasoning premium over the output rate, in USD.
+    pub cost_reasoning_usd: f64,
+    /// Total cost in USD: input + output + reasoning.
     pub cost_usd: f64,
 }
 
@@ -220,6 +230,7 @@ fn model_config(
     model: &str,
     api_key: Option<&str>,
     custom_headers: BTreeMap<String, String>,
+    price: Option<Price>,
 ) -> ModelConfig {
     ModelConfig {
         provider_type,
@@ -233,7 +244,18 @@ fn model_config(
         supports_thinking: false,
         supports_cache_control: false,
         context_window: 0,
-        cost_rates: None,
+        cost_rates: price.map(cost_rates),
+    }
+}
+
+/// Converts a router price row into the provider layer's rate struct.
+fn cost_rates(price: Price) -> ModelCostRates {
+    ModelCostRates {
+        input_per_million_usd: price.input_per_million_usd,
+        output_per_million_usd: price.output_per_million_usd,
+        cache_read_per_million_usd: price.cache_read_per_million_usd,
+        cache_write_per_million_usd: price.cache_write_per_million_usd,
+        reasoning_per_million_usd: price.reasoning_per_million_usd,
     }
 }
 
@@ -254,6 +276,7 @@ pub fn stream(
     streaming: bool,
     tools: Option<Vec<serde_json::Value>>,
     custom_headers: BTreeMap<String, String>,
+    price: Option<Price>,
 ) -> Result<ChunkStream> {
     let provider_type = provider_type_from_str(provider_type)?;
 
@@ -269,6 +292,7 @@ pub fn stream(
         model,
         api_key,
         custom_headers,
+        price,
     );
     let stream_options = stream_options(options, retry);
 
@@ -327,14 +351,22 @@ fn to_stream_chunk(
             prompt_eval_count,
             eval_count,
             cached_prompt_eval_count,
+            reasoning_eval_count,
             cost_input_usd,
             cost_output_usd,
+            cost_reasoning_usd,
             ..
         }) => Ok(StreamChunk::Usage(TokenUsage {
             prompt_tokens: prompt_eval_count.unwrap_or(0),
             completion_tokens: eval_count.unwrap_or(0),
             cached_tokens: cached_prompt_eval_count.unwrap_or(0),
-            cost_usd: cost_input_usd.unwrap_or(0.0) + cost_output_usd.unwrap_or(0.0),
+            reasoning_tokens: reasoning_eval_count.unwrap_or(0),
+            cost_input_usd: cost_input_usd.unwrap_or(0.0),
+            cost_output_usd: cost_output_usd.unwrap_or(0.0),
+            cost_reasoning_usd: cost_reasoning_usd.unwrap_or(0.0),
+            cost_usd: cost_input_usd.unwrap_or(0.0)
+                + cost_output_usd.unwrap_or(0.0)
+                + cost_reasoning_usd.unwrap_or(0.0),
         })),
         Ok(LlmStreamChunk::Done(_)) => Ok(StreamChunk::Done),
         Err(error) => Err(Error::Upstream(error.to_string())),

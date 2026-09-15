@@ -21,6 +21,7 @@ pub mod metrics;
 pub mod middleware;
 pub mod model;
 pub mod policy;
+pub mod pricing;
 pub mod protocol;
 pub mod server;
 pub mod state;

@@ -9,6 +9,9 @@ use crate::types::ChatError;
 pub(crate) struct TokenCosts {
     pub(crate) input_usd: Option<f64>,
     pub(crate) output_usd: Option<f64>,
+    /// Premium for reasoning tokens over the output rate, reported separately so
+    /// the router can store a cost breakdown. `None` when unpriced.
+    pub(crate) reasoning_usd: Option<f64>,
 }
 
 pub(crate) fn normalize_base_url(base_url: &str) -> String {
@@ -47,11 +50,13 @@ pub(crate) fn calculate_token_costs(
     cached_read_tokens: Option<u64>,
     cached_write_tokens: Option<u64>,
     output_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
 ) -> TokenCosts {
     let Some(rates) = rates else {
         return TokenCosts {
             input_usd: None,
             output_usd: None,
+            reasoning_usd: None,
         };
     };
 
@@ -71,12 +76,23 @@ pub(crate) fn calculate_token_costs(
             + cached_write_tokens.unwrap_or(0) as f64 * cached_write_rate)
             / 1_000_000.0
     });
+
     let output_usd =
         output_tokens.map(|tokens| tokens as f64 / 1_000_000.0 * rates.output_per_million_usd);
+
+    // Completion tokens already include reasoning tokens, so a dedicated rate
+    // only contributes its premium over the output rate.
+    let reasoning_usd = match (reasoning_tokens, rates.reasoning_per_million_usd) {
+        (Some(tokens), Some(rate)) if tokens > 0 => {
+            Some(tokens as f64 * (rate - rates.output_per_million_usd) / 1_000_000.0)
+        }
+        _ => None,
+    };
 
     TokenCosts {
         input_usd,
         output_usd,
+        reasoning_usd,
     }
 }
 
@@ -141,15 +157,61 @@ mod tests {
             output_per_million_usd: 8.0,
             cache_read_per_million_usd: Some(0.5),
             cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
         };
 
-        let costs = calculate_token_costs(Some(&rates), Some(100), Some(40), None, Some(10));
+        let costs = calculate_token_costs(Some(&rates), Some(100), Some(40), None, Some(10), None);
 
         assert_eq!(
             costs.input_usd,
             Some((60.0 * 2.0 + 40.0 * 0.5) / 1_000_000.0)
         );
         assert_eq!(costs.output_usd, Some(10.0 * 8.0 / 1_000_000.0));
+    }
+
+    #[test]
+    fn calculate_token_costs_bills_reasoning_as_a_premium() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 2.0,
+            output_per_million_usd: 10.0,
+            cache_read_per_million_usd: None,
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: Some(15.0),
+        };
+
+        // 100 completion tokens include 40 reasoning tokens: the base output
+        // rate covers them, and the premium is reported separately.
+        let costs = calculate_token_costs(Some(&rates), Some(0), None, None, Some(100), Some(40));
+
+        let output = costs.output_usd.expect("output cost");
+        let expected_output = 100.0 * 10.0 / 1_000_000.0;
+        assert!(
+            (output - expected_output).abs() < f64::EPSILON * 10.0,
+            "expected {expected_output}, got {output}"
+        );
+
+        let reasoning = costs.reasoning_usd.expect("reasoning premium");
+        let expected_reasoning = 40.0 * (15.0 - 10.0) / 1_000_000.0;
+        assert!(
+            (reasoning - expected_reasoning).abs() < f64::EPSILON * 10.0,
+            "expected {expected_reasoning}, got {reasoning}"
+        );
+    }
+
+    #[test]
+    fn calculate_token_costs_without_a_reasoning_rate_uses_output_only() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 2.0,
+            output_per_million_usd: 10.0,
+            cache_read_per_million_usd: None,
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
+        };
+
+        let costs = calculate_token_costs(Some(&rates), Some(0), None, None, Some(100), Some(40));
+
+        assert_eq!(costs.output_usd, Some(100.0 * 10.0 / 1_000_000.0));
+        assert_eq!(costs.reasoning_usd, None);
     }
 
     #[test]

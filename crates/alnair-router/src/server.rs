@@ -78,6 +78,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/usage", get(handlers::admin::list_usage))
         .route("/api/usage/summary", get(handlers::admin::usage_summary))
         .route("/api/usage/facets", get(handlers::admin::usage_facets))
+        .route(
+            "/api/pricing",
+            get(handlers::admin::list_pricing)
+                .put(handlers::admin::upsert_pricing)
+                .delete(handlers::admin::delete_pricing),
+        )
+        .route(
+            "/api/pricing/sync",
+            get(handlers::admin::pricing_sync_status).post(handlers::admin::sync_pricing),
+        )
+        .route("/api/pricing/match", get(handlers::admin::match_pricing))
         .route("/api/activity", get(handlers::admin::activity))
         .route("/api/metrics", get(handlers::admin::metrics))
         // Enforced only when `server.admin_token` is configured; loopback

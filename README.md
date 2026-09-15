@@ -153,14 +153,20 @@ docker run --rm -p 7878:7878 \
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/plans`, `/api/usage`,
-`/api/usage/summary`, `/api/usage/facets`, `/api/metrics`, `/api/activity`.
+`/api/usage/summary`, `/api/usage/facets`, `/api/pricing`, `/api/pricing/sync`,
+`/api/metrics`, `/api/activity`.
 `PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit, monthly
 budget, model allowlist and plan; `/api/plans` manages the reusable rule sets.
 Usage reads accept `api_key_id`, `model` (case-insensitive substring),
 `provider` (the wire protocol: `openai-compatible` / `anthropic-native`),
 `connection` (the upstream that served the attempt) and `since`, and
 `/api/usage/facets` lists the distinct models, providers and connections the
-dashboard offers as filter options. Upstream diagnostics used by
+dashboard offers as filter options. Pricing rate lookups strip a `vendor/`
+prefix and fall back to a connection's `pricing_model` when the upstream id is a
+relay path; `GET /api/pricing/match?model=…` reports which catalog key answers
+an id. Usage rows keep prompt/completion/cached/reasoning tokens plus
+input/output/reasoning cost components, which the dashboard shows as breakdown
+popovers. Upstream diagnostics used by
 the dashboard:
 `GET /api/connections/{id}/models` lists the models an upstream offers,
 `POST /api/connections/{id}/test` checks connectivity, and
@@ -218,6 +224,10 @@ Key settings:
 - `server.tray` (default true) — system tray icon with **Open dashboard** and
   **Quit** on Windows and macOS; `alnair-router --no-tray` disables it for one
   run.
+- `pricing.sync_enabled` (default false) + `pricing.sync_interval_secs`
+  (86400) — crawl `pricing.source_url` (LiteLLM or models.dev payload) for
+  model rates. Dashboard overrides win over crawled rows, which in turn shadow
+  the built-in rate table.
 
 `GET /api/health` is a liveness probe (no database touch); `GET /api/ready`
 checks the database. `GET /api/metrics` exposes Prometheus-style counters and is

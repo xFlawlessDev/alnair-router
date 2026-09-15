@@ -26,6 +26,9 @@ pub struct Connection {
     pub connect_timeout_ms: Option<i64>,
     /// Stream idle timeout override in milliseconds; NULL inherits.
     pub idle_timeout_ms: Option<i64>,
+    /// Model id used for price lookups when the upstream id differs from the
+    /// catalog (e.g. relay paths). NULL falls back to the upstream model id.
+    pub pricing_model: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -64,6 +67,8 @@ pub struct CreateConnection {
     pub connect_timeout_ms: Option<i64>,
     #[serde(default)]
     pub idle_timeout_ms: Option<i64>,
+    #[serde(default)]
+    pub pricing_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -84,6 +89,8 @@ pub struct UpdateConnection {
     pub connect_timeout_ms: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub idle_timeout_ms: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub pricing_model: Option<Option<String>>,
 }
 
 fn default_true() -> bool {
@@ -163,8 +170,8 @@ impl ConnectionRepository {
         sqlx::query(
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
-                 connect_timeout_ms, idle_timeout_ms, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 connect_timeout_ms, idle_timeout_ms, pricing_model, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -175,6 +182,7 @@ impl ConnectionRepository {
         .bind(i64::from(input.enabled))
         .bind(normalized_timeout(input.connect_timeout_ms)?)
         .bind(normalized_timeout(input.idle_timeout_ms)?)
+        .bind(normalized_model(input.pricing_model.as_deref()))
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -241,11 +249,15 @@ impl ConnectionRepository {
             Some(value) => normalized_timeout(*value)?,
             None => existing.idle_timeout_ms,
         };
+        let pricing_model = match &input.pricing_model {
+            Some(value) => normalized_model(value.as_deref()),
+            None => existing.pricing_model.clone(),
+        };
 
         sqlx::query(
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
-                 connect_timeout_ms = ?, idle_timeout_ms = ?, updated_at = ?
+                 connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -256,6 +268,7 @@ impl ConnectionRepository {
         .bind(i64::from(enabled))
         .bind(connect_timeout)
         .bind(idle_timeout)
+        .bind(pricing_model)
         .bind(Utc::now())
         .bind(id)
         .execute(&self.pool)
@@ -277,6 +290,14 @@ impl ConnectionRepository {
 
 /// Trims a secret and treats blanks as absent.
 fn normalized_secret(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// Trims a model id and treats blanks as absent.
+fn normalized_model(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())

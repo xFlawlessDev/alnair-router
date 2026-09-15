@@ -294,6 +294,80 @@ pub async fn usage_facets(State(state): State<AppState>) -> Result<impl IntoResp
     Ok(Json(state.usage().facets().await?))
 }
 
+// ------------------------------------------------------------------ pricing
+
+pub async fn list_pricing(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    Ok(Json(state.pricing().list().await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PricingOverrides {
+    #[serde(default)]
+    pub prices: Vec<crate::pricing::PriceInput>,
+}
+
+/// Upserts dashboard overrides; synced rows for the same model stay shadowed.
+pub async fn upsert_pricing(
+    State(state): State<AppState>,
+    Json(input): Json<PricingOverrides>,
+) -> Result<impl IntoResponse> {
+    let updated = state.pricing().upsert_overrides(&input.prices).await?;
+    state.pricing_cache.invalidate().await;
+    Ok(Json(json!({ "updated": updated })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PricingDeleteQuery {
+    /// Delete only this model's override; absent clears all overrides.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+pub async fn delete_pricing(
+    State(state): State<AppState>,
+    Query(query): Query<PricingDeleteQuery>,
+) -> Result<impl IntoResponse> {
+    let deleted = state
+        .pricing()
+        .delete_overrides(query.model.as_deref())
+        .await?;
+    state.pricing_cache.invalidate().await;
+    Ok(Json(json!({ "deleted": deleted })))
+}
+
+/// `POST /api/pricing/sync` — crawls the configured catalog now.
+pub async fn sync_pricing(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    let status =
+        crate::pricing::sync_from_source(&state.pricing_cache, &state.config.pricing.source_url)
+            .await?;
+    Ok(Json(status))
+}
+
+pub async fn pricing_sync_status(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    Ok(Json(state.pricing().sync_status().await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PricingMatchQuery {
+    pub model: String,
+}
+
+/// `GET /api/pricing/match?model=…` — shows which catalog key answers an id.
+pub async fn match_pricing(
+    State(state): State<AppState>,
+    Query(query): Query<PricingMatchQuery>,
+) -> Result<impl IntoResponse> {
+    let model = query.model.trim();
+    if model.is_empty() {
+        return Err(Error::BadRequest("model is required".to_string()));
+    }
+
+    match state.pricing_cache.match_for(model).await {
+        Some(found) => Ok(Json(json!(found))),
+        None => Ok(Json(json!({ "model": model, "matched": null }))),
+    }
+}
+
 // ------------------------------------------------------------ upstream probes
 
 /// `GET /api/connections/{id}/models` — lists the models the upstream offers.
@@ -523,7 +597,11 @@ pub async fn alias_chat_test(
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             cached_tokens: usage.cached_tokens,
+            reasoning_tokens: usage.reasoning_tokens,
             cost_usd: usage.cost_usd,
+            cost_input_usd: usage.cost_input_usd,
+            cost_output_usd: usage.cost_output_usd,
+            cost_reasoning_usd: usage.cost_reasoning_usd,
             latency_ms,
         })
         .await

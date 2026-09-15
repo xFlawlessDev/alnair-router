@@ -100,7 +100,11 @@ async fn complete_response(
                 prompt_tokens: usage.prompt_tokens,
                 completion_tokens: usage.completion_tokens,
                 cached_tokens: usage.cached_tokens,
+                reasoning_tokens: usage.reasoning_tokens,
                 cost_usd: usage.cost_usd,
+                cost_input_usd: usage.cost_input_usd,
+                cost_output_usd: usage.cost_output_usd,
+                cost_reasoning_usd: usage.cost_reasoning_usd,
                 latency_ms,
             })
             .await?;

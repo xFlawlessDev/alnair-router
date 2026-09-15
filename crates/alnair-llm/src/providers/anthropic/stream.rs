@@ -25,12 +25,14 @@ pub(super) fn anthropic_usage_chunk(
         .get("cache_creation_input_tokens")
         .and_then(|value| value.as_u64());
     let eval_count = usage.get("output_tokens").and_then(|value| value.as_u64());
+    // Anthropic bills thinking as output tokens and reports no separate count.
     let costs = calculate_token_costs(
         rates,
         prompt_eval_count,
         cached_prompt_eval_count,
         cached_write_count,
         eval_count,
+        None,
     );
 
     LlmStreamChunk::Usage {
@@ -38,8 +40,10 @@ pub(super) fn anthropic_usage_chunk(
         prompt_eval_count,
         cached_prompt_eval_count,
         eval_count,
+        reasoning_eval_count: None,
         cost_input_usd: costs.input_usd,
         cost_output_usd: costs.output_usd,
+        cost_reasoning_usd: costs.reasoning_usd,
     }
 }
 

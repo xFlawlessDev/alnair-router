@@ -140,6 +140,7 @@ mod tests {
                 enabled: true,
                 connect_timeout_ms: None,
                 idle_timeout_ms: None,
+                pricing_model: None,
             })
             .await
             .expect("create connection");

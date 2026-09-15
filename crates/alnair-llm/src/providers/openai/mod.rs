@@ -261,6 +261,7 @@ impl OpenAiProvider {
                             .and_then(|v| v.as_u64())
                             .or_else(|| usage.get("cached_tokens").and_then(|v| v.as_u64()));
                         let eval_count = usage.get("completion_tokens").and_then(|v| v.as_u64());
+                        let reasoning_eval_count = reasoning_tokens(usage);
                         let rates = config.effective_cost_rates();
                         let costs = calculate_token_costs(
                             rates.as_ref(),
@@ -268,14 +269,17 @@ impl OpenAiProvider {
                             cached_prompt_eval_count,
                             None,
                             eval_count,
+                            reasoning_eval_count,
                         );
                         yield Ok(LlmStreamChunk::Usage {
                             total_duration: None,
                             prompt_eval_count,
                             cached_prompt_eval_count,
                             eval_count,
+                            reasoning_eval_count,
                             cost_input_usd: costs.input_usd,
                             cost_output_usd: costs.output_usd,
+                            cost_reasoning_usd: costs.reasoning_usd,
                         });
                     }
                     yield Ok(LlmStreamChunk::Done(finish_reason_for_tool_calls(
@@ -427,6 +431,7 @@ impl OpenAiProvider {
                             .and_then(|v| v.as_u64())
                             .or_else(|| usage.get("cached_tokens").and_then(|v| v.as_u64()));
                         let eval_count = usage.get("completion_tokens").and_then(|v| v.as_u64());
+                        let reasoning_eval_count = reasoning_tokens(usage);
                         let rates = config.effective_cost_rates();
                         let costs = calculate_token_costs(
                             rates.as_ref(),
@@ -434,14 +439,17 @@ impl OpenAiProvider {
                             cached_prompt_eval_count,
                             None,
                             eval_count,
+                            reasoning_eval_count,
                         );
                         yield Ok(LlmStreamChunk::Usage {
                             total_duration: None,
                             prompt_eval_count,
                             cached_prompt_eval_count,
                             eval_count,
+                            reasoning_eval_count,
                             cost_input_usd: costs.input_usd,
                             cost_output_usd: costs.output_usd,
+                            cost_reasoning_usd: costs.reasoning_usd,
                         });
                     }
                 }

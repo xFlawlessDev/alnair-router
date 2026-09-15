@@ -273,6 +273,15 @@ pub(super) fn extract_usage(value: &serde_json::Value) -> Option<&serde_json::Va
     })
 }
 
+/// Reasoning tokens reported inside `completion_tokens_details`, when present.
+/// They are already included in `completion_tokens`.
+pub(super) fn reasoning_tokens(usage: &serde_json::Value) -> Option<u64> {
+    usage
+        .get("completion_tokens_details")
+        .and_then(|details| details.get("reasoning_tokens"))
+        .and_then(|value| value.as_u64())
+}
+
 pub(super) fn extract_reasoning_text(value: &serde_json::Value) -> Option<&str> {
     value
         .get("reasoning_content")

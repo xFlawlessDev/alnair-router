@@ -28,6 +28,9 @@ pub struct ResolvedTarget {
     pub connect_timeout_ms: Option<u64>,
     /// Stream idle timeout override, in milliseconds; `None` inherits.
     pub idle_timeout_ms: Option<u64>,
+    /// Model id used for price lookups when the upstream id differs from the
+    /// catalog; `None` uses `model`.
+    pub pricing_model: Option<String>,
     /// Provenance, e.g. `alias:glm` or `combo:free-forever#2`.
     pub source: String,
 }
@@ -264,6 +267,7 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         custom_headers: connection.headers(),
         connect_timeout_ms: non_negative(connection.connect_timeout_ms),
         idle_timeout_ms: non_negative(connection.idle_timeout_ms),
+        pricing_model: connection.pricing_model.clone(),
         source,
     }
 }

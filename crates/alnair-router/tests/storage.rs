@@ -5,9 +5,14 @@ use alnair_router::db::Db;
 use alnair_router::db::repos::aliases::{AliasRepository, CreateAlias};
 use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey, UpdateApiKey};
 use alnair_router::db::repos::combos::{ComboRepository, CreateCombo};
-use alnair_router::db::repos::connections::{ConnectionRepository, CreateConnection};
+use alnair_router::db::repos::connections::{
+    ConnectionRepository, CreateConnection, UpdateConnection,
+};
 use alnair_router::db::repos::usage::{NewUsageRecord, UsageFilter, UsageRepository};
 use alnair_router::limits::BudgetMode;
+use alnair_router::pricing::{
+    FetchedPrice, Price, PriceInput, PricingCache, PricingRepository, PricingSyncStatus,
+};
 use alnair_router::{Error, Result};
 
 async fn db() -> Db {
@@ -32,6 +37,7 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         enabled: true,
         connect_timeout_ms: None,
         idle_timeout_ms: None,
+        pricing_model: None,
     }
 }
 
@@ -528,7 +534,11 @@ async fn usage_filters_narrow_rows_and_summary() {
             prompt_tokens: 1,
             completion_tokens: 1,
             cached_tokens: 0,
+            reasoning_tokens: 0,
             cost_usd: cost,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
             latency_ms: 5,
         })
         .await
@@ -600,7 +610,11 @@ async fn usage_summary_rolls_up_counts_and_cost() {
         prompt_tokens: 100,
         completion_tokens: 50,
         cached_tokens: 10,
+        reasoning_tokens: 0,
         cost_usd: 0.001,
+        cost_input_usd: 0.0,
+        cost_output_usd: 0.0,
+        cost_reasoning_usd: 0.0,
         latency_ms: 200,
     })
     .await
@@ -617,7 +631,11 @@ async fn usage_summary_rolls_up_counts_and_cost() {
         prompt_tokens: 0,
         completion_tokens: 0,
         cached_tokens: 0,
+        reasoning_tokens: 0,
         cost_usd: 0.0,
+        cost_input_usd: 0.0,
+        cost_output_usd: 0.0,
+        cost_reasoning_usd: 0.0,
         latency_ms: 100,
     })
     .await
@@ -654,7 +672,11 @@ async fn usage_list_returns_newest_first() -> Result<()> {
             prompt_tokens: 1,
             completion_tokens: 1,
             cached_tokens: 0,
+            reasoning_tokens: 0,
             cost_usd: 0.0,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
             latency_ms: 10,
         })
         .await?;
@@ -764,7 +786,11 @@ async fn usage_spend_since_sums_only_the_matching_key() {
                 prompt_tokens: 1,
                 completion_tokens: 1,
                 cached_tokens: 0,
+                reasoning_tokens: 0,
                 cost_usd: cost,
+                cost_input_usd: 0.0,
+                cost_output_usd: 0.0,
+                cost_reasoning_usd: 0.0,
                 latency_ms: 10,
             })
             .await
@@ -775,4 +801,226 @@ async fn usage_spend_since_sums_only_the_matching_key() {
     let spent = usage.spend_since(&key.key.id, since).await.expect("spend");
 
     assert!((spent - 1.5).abs() < 1e-9, "unexpected spend: {spent}");
+}
+
+#[tokio::test]
+async fn pricing_overrides_shadow_synced_rows() {
+    let db = db().await;
+    let repo = PricingRepository::new(db.pool.clone());
+    let cache = PricingCache::new(db.pool.clone());
+
+    repo.replace_synced(
+        &[
+            FetchedPrice {
+                model: "gpt-4o".to_string(),
+                price: synced_price(2.5, 10.0),
+            },
+            FetchedPrice {
+                model: "claude-sonnet-4-5".to_string(),
+                price: synced_price(3.0, 15.0),
+            },
+        ],
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("seed sync");
+
+    repo.upsert_overrides(&[PriceInput {
+        model: "gpt-4o".to_string(),
+        input_per_million_usd: 1.0,
+        output_per_million_usd: 2.0,
+        cache_read_per_million_usd: Some(0.5),
+        cache_write_per_million_usd: None,
+        reasoning_per_million_usd: Some(3.0),
+    }])
+    .await
+    .expect("override");
+
+    let rows = repo.list().await.expect("list");
+    assert_eq!(rows.len(), 3, "both sources stay stored");
+
+    // The override wins in the cache, and lookups fall back to the leaf id.
+    let override_price = cache.price_for("gpt-4o").await.expect("price");
+    assert_eq!(override_price.input_per_million_usd, 1.0);
+    assert_eq!(override_price.reasoning_per_million_usd, Some(3.0));
+    let prefixed = cache.price_for("openai/gpt-4o").await.expect("prefixed");
+    assert_eq!(prefixed.input_per_million_usd, 1.0);
+    let synced = cache.price_for("claude-sonnet-4-5").await.expect("synced");
+    assert_eq!(synced.input_per_million_usd, 3.0);
+
+    // Deleting the override falls back to the synced row after invalidation.
+    assert_eq!(
+        repo.delete_overrides(Some("gpt-4o")).await.expect("delete"),
+        1
+    );
+    cache.invalidate().await;
+    let fallback = cache.price_for("gpt-4o").await.expect("fallback");
+    assert_eq!(fallback.input_per_million_usd, 2.5);
+    assert_eq!(fallback.reasoning_per_million_usd, None);
+}
+
+#[tokio::test]
+async fn pricing_sync_runs_keep_the_latest_status() {
+    let db = db().await;
+    let repo = PricingRepository::new(db.pool.clone());
+
+    assert!(repo.sync_status().await.expect("status").is_none());
+
+    for count in [3, 7] {
+        repo.record_sync(&PricingSyncStatus {
+            source: "https://example.com/pricing.json".to_string(),
+            synced_at: chrono::Utc::now(),
+            model_count: count,
+        })
+        .await
+        .expect("record");
+    }
+
+    let status = repo.sync_status().await.expect("status").expect("run");
+    assert_eq!(status.model_count, 7);
+    assert_eq!(status.source, "https://example.com/pricing.json");
+}
+
+fn synced_price(input: f64, output: f64) -> Price {
+    Price {
+        input_per_million_usd: input,
+        output_per_million_usd: output,
+        cache_read_per_million_usd: None,
+        cache_write_per_million_usd: None,
+        reasoning_per_million_usd: None,
+    }
+}
+
+#[tokio::test]
+async fn pricing_matches_by_leaf_and_prefers_canonical_rows() {
+    let db = db().await;
+    let repo = PricingRepository::new(db.pool.clone());
+    let cache = PricingCache::new(db.pool.clone());
+
+    repo.replace_synced(
+        &[
+            FetchedPrice {
+                model: "azure/gpt-5.6-luna".to_string(),
+                price: synced_price(3.0, 12.0),
+            },
+            FetchedPrice {
+                model: "azure/eu/gpt-5.6-luna".to_string(),
+                price: synced_price(4.0, 16.0),
+            },
+        ],
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("seed sync");
+
+    // A bare or relayed id resolves to the cheapest prefixed variant.
+    let prefixed = cache.match_for("gpt-5.6-luna").await.expect("prefixed");
+    assert_eq!(prefixed.matched, "azure/gpt-5.6-luna");
+    let relayed = cache
+        .match_for("ocg/openai/gpt-5.6-luna")
+        .await
+        .expect("relay");
+    assert_eq!(relayed.matched, "azure/gpt-5.6-luna");
+
+    // A canonical row outranks prefixed ones even when it is pricier.
+    repo.replace_synced(
+        &[
+            FetchedPrice {
+                model: "azure/gpt-5.6-luna".to_string(),
+                price: synced_price(3.0, 12.0),
+            },
+            FetchedPrice {
+                model: "gpt-5.6-luna".to_string(),
+                price: synced_price(3.5, 14.0),
+            },
+        ],
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("reseed");
+    cache.invalidate().await;
+
+    let canonical = cache.match_for("gpt-5.6-luna").await.expect("canonical");
+    assert_eq!(canonical.matched, "gpt-5.6-luna");
+    assert_eq!(canonical.price.input_per_million_usd, 3.5);
+}
+
+#[tokio::test]
+async fn connections_round_trip_a_pricing_model_pin() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let created = repo
+        .create(CreateConnection {
+            name: "relay".to_string(),
+            provider_type: "openai-compatible".to_string(),
+            base_url: "https://relay.example.com/v1".to_string(),
+            api_key: None,
+            custom_headers: Default::default(),
+            enabled: true,
+            connect_timeout_ms: None,
+            idle_timeout_ms: None,
+            pricing_model: Some("gpt-5.6-luna".to_string()),
+        })
+        .await
+        .expect("create");
+    assert_eq!(created.pricing_model.as_deref(), Some("gpt-5.6-luna"));
+
+    let cleared = repo
+        .update(
+            &created.id,
+            UpdateConnection {
+                pricing_model: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("clear");
+    assert!(cleared.pricing_model.is_none());
+}
+
+#[tokio::test]
+async fn usage_cost_breakdown_round_trips_and_sums() {
+    let db = db().await;
+    let repo = UsageRepository::new(db.pool.clone());
+
+    repo.record(NewUsageRecord {
+        api_key_id: None,
+        requested_model: "priced".to_string(),
+        resolved_provider: Some("openai-compatible".to_string()),
+        resolved_model: Some("gpt-4o".to_string()),
+        connection_name: Some("openai-main".to_string()),
+        attempt: 1,
+        status: "ok".to_string(),
+        prompt_tokens: 100,
+        completion_tokens: 50,
+        cached_tokens: 20,
+        reasoning_tokens: 10,
+        cost_usd: 3.0,
+        cost_input_usd: 1.0,
+        cost_output_usd: 1.5,
+        cost_reasoning_usd: 0.5,
+        latency_ms: 10,
+    })
+    .await
+    .expect("record");
+
+    let rows = repo
+        .list(10, 0, &UsageFilter::default())
+        .await
+        .expect("list");
+    assert_eq!(rows[0].cost_input_usd, 1.0);
+    assert_eq!(rows[0].cost_output_usd, 1.5);
+    assert_eq!(rows[0].cost_reasoning_usd, 0.5);
+    assert_eq!(rows[0].reasoning_tokens, 10);
+
+    let summary = repo
+        .summary(&UsageFilter::default())
+        .await
+        .expect("summary");
+    assert!((summary.cost_usd - 3.0).abs() < f64::EPSILON);
+    assert!((summary.cost_input_usd - 1.0).abs() < f64::EPSILON);
+    assert!((summary.cost_output_usd - 1.5).abs() < f64::EPSILON);
+    assert!((summary.cost_reasoning_usd - 0.5).abs() < f64::EPSILON);
+    assert_eq!(summary.reasoning_tokens, 10);
 }

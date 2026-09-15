@@ -28,6 +28,7 @@ pub struct RouterConfig {
     pub secrets: SecretsConfig,
     pub limits: LimitsConfig,
     pub rate_limit: RateLimitConfig,
+    pub pricing: PricingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -98,6 +99,29 @@ pub struct RateLimitConfig {
     pub requests_per_minute: u32,
     /// Token-bucket capacity for bursts. 0 uses one minute's worth of tokens.
     pub burst: u32,
+}
+
+/// Model pricing catalogs.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PricingConfig {
+    /// Crawl `source_url` on `sync_interval_secs` in the background.
+    pub sync_enabled: bool,
+    /// Crawl interval in seconds; clamped to at least 60.
+    pub sync_interval_secs: u64,
+    /// Catalog URL. LiteLLM and models.dev payloads are both recognized.
+    pub source_url: String,
+}
+
+impl Default for PricingConfig {
+    fn default() -> Self {
+        Self {
+            sync_enabled: false,
+            sync_interval_secs: 86_400,
+            source_url: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+                .to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -397,5 +421,13 @@ mod tests {
     #[test]
     fn tray_defaults_to_on() {
         assert!(ServerConfig::default().tray);
+    }
+
+    #[test]
+    fn pricing_defaults_are_pinned() {
+        let pricing = PricingConfig::default();
+        assert!(!pricing.sync_enabled, "sync stays opt-in");
+        assert_eq!(pricing.sync_interval_secs, 86_400);
+        assert!(pricing.source_url.contains("litellm"));
     }
 }

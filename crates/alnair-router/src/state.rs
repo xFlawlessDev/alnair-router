@@ -16,6 +16,7 @@ use crate::db::repos::usage::UsageRepository;
 use crate::error::Result;
 use crate::limits::{RateLimiter, UpstreamLimiter};
 use crate::metrics::Metrics;
+use crate::pricing::{PricingCache, PricingRepository};
 use crate::telemetry::ActivityTracker;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
 use crate::upstream::{Executor, ExecutorSettings, UpstreamTimeouts};
@@ -31,6 +32,7 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     pub metrics: Arc<Metrics>,
     pub telemetry: Arc<ActivityTracker>,
+    pub pricing_cache: Arc<PricingCache>,
     catalog_cache: Arc<crate::model::CatalogCache>,
 }
 
@@ -55,6 +57,7 @@ impl AppState {
             db.pool.clone(),
             cipher.clone(),
         ));
+        let pricing_cache = Arc::new(PricingCache::new(db.pool.clone()));
 
         Ok(Self {
             config: Arc::new(config),
@@ -68,12 +71,14 @@ impl AppState {
                     timeouts,
                     metrics: metrics.clone(),
                     telemetry: telemetry.clone(),
+                    pricing: Some(pricing_cache.clone()),
                 },
             ),
             limiter,
             rate_limiter,
             metrics,
             telemetry,
+            pricing_cache,
             catalog_cache,
         })
     }
@@ -96,6 +101,10 @@ impl AppState {
 
     pub fn key_plans(&self) -> KeyPlanRepository {
         KeyPlanRepository::new(self.pool.clone())
+    }
+
+    pub fn pricing(&self) -> PricingRepository {
+        PricingRepository::new(self.pool.clone())
     }
 
     pub fn usage(&self) -> UsageRepository {

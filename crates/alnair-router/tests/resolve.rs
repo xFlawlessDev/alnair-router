@@ -20,6 +20,7 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         enabled: 1,
         connect_timeout_ms: None,
         idle_timeout_ms: None,
+        pricing_model: None,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }

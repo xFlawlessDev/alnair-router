@@ -51,7 +51,11 @@ pub async fn record_failed_attempts(
             prompt_tokens: 0,
             completion_tokens: 0,
             cached_tokens: 0,
+            reasoning_tokens: 0,
             cost_usd: 0.0,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
             latency_ms: attempt.latency_ms,
         };
 
@@ -135,7 +139,11 @@ impl StreamUsage {
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             cached_tokens: usage.cached_tokens,
+            reasoning_tokens: usage.reasoning_tokens,
             cost_usd: usage.cost_usd,
+            cost_input_usd: usage.cost_input_usd,
+            cost_output_usd: usage.cost_output_usd,
+            cost_reasoning_usd: usage.cost_reasoning_usd,
             latency_ms: self.latency_ms,
         };
 
