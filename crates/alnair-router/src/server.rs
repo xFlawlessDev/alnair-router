@@ -19,7 +19,9 @@ pub fn build_router(state: AppState) -> Router {
 
     // Read-only surfaces that identify the caller with a client key instead of
     // the admin token.
-    let public = Router::new().route("/api/public/usage", get(handlers::public::usage));
+    let public = Router::new()
+        .route("/api/public/usage", get(handlers::public::usage))
+        .route("/api/public/models", get(handlers::public::models));
 
     // Admin and management routes are unauthenticated on loopback; when
     // `server.admin_token` is configured the token is enforced on all of them.

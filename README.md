@@ -118,16 +118,21 @@ logs attach to that terminal as usual.
 
 ## Docker
 
-The image builds the dashboard and the router (embedded assets), then runs as a
-non-root user with `/data` as the state volume:
+Every `v*` tag publishes an image to GHCR (`ghcr.io/xflawlessdev/alnair-router`).
+`docker-compose.yml` pulls the latest release and runs it as a non-root user
+with `/data` as the state volume:
 
 ```bash
-docker build -t alnair-router .
-docker run --rm -p 7878:7878 \
-  -e ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)" \
-  -v alnair-data:/data \
-  alnair-router
+export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"
+docker compose up -d
+docker compose pull   # pick up a newer release
 ```
+
+Pin a version with `image: ghcr.io/xflawlessdev/alnair-router:vX.Y.Z`, or build
+from source instead with `docker build -t alnair-router .`.
+
+The GHCR package starts private; make it public in the repository's package
+settings for anonymous pulls.
 
 ## Endpoints
 
@@ -181,14 +186,17 @@ the dashboard:
 per-connection counters, recent events) behind the Usage live panel and the
 Console page.
 
-**Public (client key):** `GET /api/public/usage` — outside the admin-token
-guard. The caller authenticates with a router-issued key
-(`Authorization: Bearer sk-router-…`) and receives only its own rollup: the
-summary, a per-model breakdown and a per-(bucket, model) time series
-(`?bucket=hour|day`, default `day`, plus optional `since`/`until`). It backs the
-self-service page at `/me`, which stacks models in one bar chart, offers quick
-ranges and a month selector, and refreshes itself every 30 seconds. Disabled
-with `server.public_usage = false`.
+**Public (client key):** `GET /api/public/usage` and `GET /api/public/models` —
+outside the admin-token guard. The caller authenticates with a router-issued
+key (`Authorization: Bearer sk-router-…`). Usage returns only its own rollup:
+the summary, a per-model breakdown and a per-(bucket, model) time series
+(`?bucket=hour|day`, default `day`, plus optional `since`/`until`). Models
+returns the catalog rows the key's allowlist (key or plan) can reach, with
+rates, and the page shows the OpenAI-compatible `/v1` base URL above the table
+for easy copying. They back the self-service page at `/me`,
+which stacks models in one bar chart, offers quick ranges and a month selector,
+and refreshes itself every 30 seconds. Disabled with
+`server.public_usage = false`.
 
 > Admin routes are open on loopback by default, because they mint the keys that
 > authenticate `/v1/*`. Set `server.admin_token` to require

@@ -557,6 +557,24 @@ export interface MyUsageResponse {
   timeseries: UsageBucket[];
 }
 
+/** One catalog row the connected key may call. */
+export interface PublicCatalogEntry {
+  id: string;
+  kind: 'alias' | 'combo';
+  /** 1-based combo tier; null for aliases. */
+  tier: number | null;
+  /** Concrete upstream model; null for aliases that accept any model. */
+  upstream_model: string | null;
+  price: PriceQuote | null;
+}
+
+/** `GET /api/public/models` response for the connected client key. */
+export interface PublicCatalogResponse {
+  /** The key's allowlist patterns; empty means every model is allowed. */
+  allowed_models: string[];
+  data: PublicCatalogEntry[];
+}
+
 /**
  * `PATCH /api/settings` body: absent fields stay untouched. A `null` or blank
  * `admin_token` forces "no admin token", and a `null` `default_connection`

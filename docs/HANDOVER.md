@@ -226,7 +226,12 @@ selector pins an exact calendar window. The page polls every 30 seconds and on
 tab focus (paused while hidden) so clients never refresh by hand. The Tokens
 and Cost summary popovers add a "Share by model" section with percentages, and
 the By model table's Tokens/Cost cells open the same breakdown popover for a
-single model rather than printing raw columns.
+single model rather than printing raw columns. `GET /api/public/models` reuses
+`CatalogEntry::collect` and filters it with `handlers/public.rs::accessible`,
+which asks the resolved `KeyPolicy` (key rules merged with its plan) about the
+alias prefix, pinned upstream or combo name; the customer table shows one row
+per id with the four per-million rates, and the page prints the
+OpenAI-compatible `/v1` base URL above it for copying.
 
 ---
 

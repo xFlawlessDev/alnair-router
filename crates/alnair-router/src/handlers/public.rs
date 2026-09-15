@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use crate::db::repos::api_keys::ApiKey;
 use crate::db::repos::usage::{Bucket, ModelUsage, UsageBucket, UsageFilter, UsageSummary};
 use crate::error::{Error, Result};
+use crate::handlers::catalog::CatalogEntry;
 use crate::middleware;
+use crate::policy::KeyPolicy;
+use crate::pricing::Price;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +82,85 @@ pub async fn usage(
         models,
         timeseries,
     }))
+}
+
+/// Customer-facing catalog row: no connection names or price provenance.
+#[derive(Debug, Serialize)]
+pub struct PublicCatalogEntry {
+    pub id: String,
+    pub kind: &'static str,
+    pub tier: Option<usize>,
+    pub upstream_model: Option<String>,
+    pub price: Option<Price>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PublicCatalog {
+    /// The key's raw allowlist patterns; empty means every model is allowed.
+    pub allowed_models: Vec<String>,
+    pub data: Vec<PublicCatalogEntry>,
+}
+
+/// `GET /api/public/models` — the catalog rows this key may call.
+pub async fn models(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<PublicCatalog>> {
+    if !state.config_snapshot().server.public_usage {
+        return Err(Error::Forbidden(
+            "the self-service usage page is disabled".to_string(),
+        ));
+    }
+
+    let key = authorize(&state, &headers).await?;
+    let plan = match &key.plan_id {
+        Some(plan_id) => state.key_plans().get(plan_id).await?,
+        None => None,
+    };
+    let policy = KeyPolicy::resolve(&key, plan.as_ref());
+
+    let data = CatalogEntry::collect(&state)
+        .await?
+        .into_iter()
+        .filter(|entry| accessible(entry, &policy))
+        .map(|entry| PublicCatalogEntry {
+            id: entry.id,
+            kind: entry.kind,
+            tier: entry.tier,
+            upstream_model: entry.upstream_model,
+            price: entry.price,
+        })
+        .collect();
+
+    Ok(Json(PublicCatalog {
+        allowed_models: policy.allowed_models.clone(),
+        data,
+    }))
+}
+
+/// True when the key's allowlist can reach the catalog row.
+fn accessible(entry: &CatalogEntry, policy: &KeyPolicy) -> bool {
+    if policy.unrestricted() {
+        return true;
+    }
+
+    match (entry.kind, &entry.upstream_model) {
+        // A pinned alias is callable bare, or with any model segment.
+        ("alias", Some(model)) => {
+            policy.allows(&entry.id) || policy.allows(&format!("{}/{}", entry.id, model))
+        }
+        // An open alias is reachable when the allowlist names its prefix.
+        ("alias", None) => {
+            let prefix = format!("{}/", entry.id.to_lowercase());
+            policy.allows(&prefix)
+                || policy
+                    .allowed_models
+                    .iter()
+                    .any(|pattern| pattern.trim().to_lowercase().starts_with(&prefix))
+        }
+        // Combos are called by name.
+        _ => policy.allows(&entry.id),
+    }
 }
 
 /// Resolves the bearer key without touching rate limits or last-used stamps.

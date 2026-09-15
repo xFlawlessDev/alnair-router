@@ -2744,6 +2744,128 @@ async fn public_usage_requires_a_valid_key() {
 
     let (status, _) = get_with_auth(&app, "/api/public/usage", Some("sk-router-nope")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, _) = get_with_auth(&app, "/api/public/models", Some("sk-router-nope")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn public_models_are_filtered_by_the_key_allowlist() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "openai-main",
+            "provider_type": "openai-compatible",
+            "base_url": "https://example.invalid/v1"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": "oa",
+            "connection_id": connection_id,
+            "model_override": "gpt-4o"
+        }),
+    )
+    .await;
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({ "prefix": "any", "connection_id": connection_id }),
+    )
+    .await;
+    json_request(
+        &app,
+        "POST",
+        "/api/combos",
+        serde_json::json!({ "name": "smart", "entries": ["oa"] }),
+    )
+    .await;
+    json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({
+            "prices": [{ "model": "gpt-4o", "input_per_million_usd": 2.5, "output_per_million_usd": 10.0 }]
+        }),
+    )
+    .await;
+
+    let ids = |body: &serde_json::Value| -> Vec<String> {
+        body["data"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .filter_map(|row| row["id"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    // An exact pattern only exposes that alias, with its price.
+    let (_, restricted) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "restricted", "allowed_models": ["oa"] }),
+    )
+    .await;
+    let secret = restricted["secret"].as_str().expect("secret");
+
+    let (status, body) = get_with_auth(&app, "/api/public/models", Some(secret)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["allowed_models"], serde_json::json!(["oa"]));
+    assert_eq!(ids(&body), vec!["oa".to_string()]);
+    assert_eq!(body["data"][0]["upstream_model"], "gpt-4o");
+    assert_eq!(body["data"][0]["price"]["input_per_million_usd"], 2.5);
+
+    // A wildcard exposes the open alias behind that prefix.
+    let (_, wildcard) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "wildcard", "allowed_models": ["any/*"] }),
+    )
+    .await;
+    let secret = wildcard["secret"].as_str().expect("secret");
+
+    let (status, body) = get_with_auth(&app, "/api/public/models", Some(secret)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ids(&body), vec!["any".to_string()]);
+
+    // Without a pattern the key sees the whole catalog.
+    let (_, open) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "open" }),
+    )
+    .await;
+    let secret = open["secret"].as_str().expect("secret");
+
+    let (status, body) = get_with_auth(&app, "/api/public/models", Some(secret)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["allowed_models"]
+            .as_array()
+            .expect("patterns")
+            .is_empty()
+    );
+    let catalog = ids(&body);
+    assert!(catalog.contains(&"oa".to_string()), "catalog: {catalog:?}");
+    assert!(catalog.contains(&"any".to_string()), "catalog: {catalog:?}");
+    assert!(
+        catalog.contains(&"smart".to_string()),
+        "catalog: {catalog:?}"
+    );
 }
 
 #[tokio::test]
@@ -2756,4 +2878,7 @@ async fn public_usage_can_be_disabled() {
     let (status, body) = get_with_auth(&app, "/api/public/usage", Some(&secret)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["type"], "permission_error");
+
+    let (status, _) = get_with_auth(&app, "/api/public/models", Some(&secret)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

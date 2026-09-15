@@ -25,6 +25,7 @@ import type {
   ModelPriceInput,
   MyUsageResponse,
   PriceMatch,
+  PublicCatalogResponse,
   PricingSyncStatus,
   RestoreSummary,
   SettingsPatch,
@@ -276,5 +277,9 @@ export const api = {
       getClientKey(),
     );
     return (await response.json()) as MyUsageResponse;
+  },
+  myModels: async (): Promise<PublicCatalogResponse> => {
+    const response = await rawRequest('/api/public/models', {}, getClientKey());
+    return (await response.json()) as PublicCatalogResponse;
   },
 };

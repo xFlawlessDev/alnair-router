@@ -55,7 +55,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Dashboard Settings page (`/api/settings`): runtime overrides for auth, routing, limits, rate limits and pricing; persisted in SQLite and hot-applied without a restart
 - [x] Dashboard backup/restore (`GET /api/backup`, `POST /api/restore`): streamed SQLite snapshots and validated transactional imports that leave runtime settings alone
 - [x] Dashboard model catalog (`GET /api/models`): every alias and combo tier with its provider and catalog price, copyable model ids
-- [x] Self-service usage (`GET /api/public/usage`, page `/me`): a client reads its own summary, per-model rollup and a stacked-by-model hour/day bar chart with crosshair tooltip, month selector and 30s auto-refresh, gated by `server.public_usage`
+- [x] Self-service usage and catalog (`GET /api/public/usage`, `GET /api/public/models`, page `/me`): a client reads its own summary, per-model rollup and a stacked-by-model hour/day bar chart with crosshair tooltip, month selector and 30s auto-refresh, plus the catalog rows its key is allowed to call with rates and upstream base URLs, gated by `server.public_usage`
 - [x] MIT license, CI, multi-stage Dockerfile, opt-in real-provider e2e tests
 
 ---

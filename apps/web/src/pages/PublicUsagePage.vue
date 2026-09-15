@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { Eye, EyeOff, KeyRound, LogOut, RefreshCw } from '@lucide/vue';
+import { Boxes, Copy, Eye, EyeOff, KeyRound, LogOut, RefreshCw } from '@lucide/vue';
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue';
 import { toast } from 'vue-sonner';
-
 import UsageSummaryCards from '@/components/UsageSummaryCards.vue';
 import UsageBreakdownPopover, {
   type BreakdownRow,
@@ -30,9 +29,14 @@ import {
 } from '@/components/ui/table';
 import { ApiError, api } from '@/lib/api';
 import { getClientKey, setClientKey, useClientKey } from '@/lib/clientKey';
-import { formatCompact, formatCost, formatNumber } from '@/lib/format';
+import { formatCompact, formatCost, formatNumber, formatRate } from '@/lib/format';
 import { USAGE_RANGES, rangeToSince } from '@/lib/ranges';
-import type { MyUsageResponse, PublicModelUsage } from '@/types/api';
+import type {
+  MyUsageResponse,
+  PublicCatalogEntry,
+  PublicCatalogResponse,
+  PublicModelUsage,
+} from '@/types/api';
 
 const { clear } = useClientKey();
 
@@ -47,6 +51,7 @@ const connecting = ref(false);
 const connectError = ref<string | null>(null);
 const reveal = ref(false);
 const usage = ref<MyUsageResponse | null>(null);
+const catalog = ref<PublicCatalogResponse | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const range = ref('all');
@@ -88,9 +93,25 @@ const bucket = computed<'hour' | 'day'>(() =>
   month.value !== 'any' ? 'day' : bucketFor(range.value),
 );
 
+/** OpenAI-compatible base URL customers point their SDK at. */
+const baseUrl = computed(() => `${window.location.origin}/v1`);
+
 const totalTokens = computed(() => {
   const summary = usage.value?.summary;
   return summary ? summary.prompt_tokens + summary.completion_tokens : 0;
+});
+
+/** Combos arrive one row per tier; the catalog table shows one row per id. */
+const catalogRows = computed(() => {
+  const rows: PublicCatalogEntry[] = [];
+  const seen = new Set<string>();
+  for (const entry of catalog.value?.data ?? []) {
+    const key = `${entry.kind}:${entry.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(entry);
+  }
+  return rows;
 });
 
 /** One model's token share, with the prompt/completion split in the hint. */
@@ -117,6 +138,15 @@ function modelCostRows(row: PublicModelUsage): BreakdownRow[] {
   ];
 }
 
+async function copyText(value: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`Copied “${value}”`);
+  } catch {
+    toast.error('Clipboard is not available');
+  }
+}
+
 function onRangeChange(): void {
   month.value = 'any';
   void load();
@@ -137,7 +167,12 @@ async function connect(): Promise<void> {
   connectError.value = null;
   setClientKey(key);
   try {
-    usage.value = await api.myUsage(since.value, bucket.value, until.value);
+    const [usageResponse, catalogResponse] = await Promise.all([
+      api.myUsage(since.value, bucket.value, until.value),
+      api.myModels(),
+    ]);
+    usage.value = usageResponse;
+    catalog.value = catalogResponse;
     connected.value = true;
     draft.value = '';
     reveal.value = false;
@@ -155,7 +190,15 @@ async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true;
   error.value = null;
   try {
-    usage.value = await api.myUsage(since.value, bucket.value, until.value);
+    // The catalog rarely changes, so polls reuse it instead of refetching.
+    const catalogRequest =
+      silent && catalog.value ? Promise.resolve(catalog.value) : api.myModels();
+    const [usageResponse, catalogResponse] = await Promise.all([
+      api.myUsage(since.value, bucket.value, until.value),
+      catalogRequest,
+    ]);
+    usage.value = usageResponse;
+    catalog.value = catalogResponse;
   } catch (caught) {
     error.value = caught instanceof ApiError ? caught.message : 'Failed to load your usage';
   } finally {
@@ -189,6 +232,7 @@ function disconnect(): void {
   clear();
   connected.value = false;
   usage.value = null;
+  catalog.value = null;
   error.value = null;
   toast.success('Disconnected');
 }
@@ -369,6 +413,90 @@ onUnmounted(() => {
               </TableBody>
             </Table>
             <p v-else class="text-sm text-muted-foreground">No usage in this window.</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2 text-base">
+              <Boxes class="size-4" /> Models you can use
+              <Badge variant="outline">{{ catalogRows.length }}</Badge>
+            </CardTitle>
+            <CardDescription>
+              {{
+                catalog?.allowed_models.length
+                  ? 'Your key is limited to the patterns below.'
+                  : 'Your key can call every model on this router.'
+              }}
+            </CardDescription>
+            <div
+              v-if="catalog?.allowed_models.length"
+              class="flex flex-wrap items-center gap-1.5 pt-1"
+            >
+              <code
+                v-for="pattern in catalog.allowed_models"
+                :key="pattern"
+                class="rounded bg-muted px-1.5 py-0.5 text-xs"
+              >
+                {{ pattern }}
+              </code>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+              <span class="text-xs text-muted-foreground">Base URL</span>
+              <Badge variant="outline" class="font-mono text-[10px] font-normal">
+                {{ baseUrl }}
+              </Badge>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-6"
+                :aria-label="`Copy ${baseUrl}`"
+                :title="`Copy ${baseUrl}`"
+                @click="copyText(baseUrl)"
+              >
+                <Copy class="size-3.5" />
+              </Button>
+            </div>
+
+            <Table v-if="catalogRows.length" class="table-fixed">
+              <TableHeader>
+                <TableRow>
+                  <TableHead class="w-[36%]">Model</TableHead>
+                  <TableHead class="w-[16%]">Input ($/1M)</TableHead>
+                  <TableHead class="w-[16%]">Output ($/1M)</TableHead>
+                  <TableHead class="w-[16%]">Cache read ($/1M)</TableHead>
+                  <TableHead class="w-[16%]">Cache write ($/1M)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow v-for="entry in catalogRows" :key="`${entry.kind}:${entry.id}`">
+                  <TableCell class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <code class="block truncate text-xs" :title="entry.id">{{ entry.id }}</code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="size-6 shrink-0"
+                        :aria-label="`Copy ${entry.id}`"
+                        :title="`Copy ${entry.id}`"
+                        @click="copyText(entry.id)"
+                      >
+                        <Copy class="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                  <TableCell>{{ formatRate(entry.price?.input_per_million_usd) }}</TableCell>
+                  <TableCell>{{ formatRate(entry.price?.output_per_million_usd) }}</TableCell>
+                  <TableCell>{{ formatRate(entry.price?.cache_read_per_million_usd) }}</TableCell>
+                  <TableCell>{{ formatRate(entry.price?.cache_write_per_million_usd) }}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+            <p v-else class="text-sm text-muted-foreground">
+              No catalog entries match this key's allowlist.
+            </p>
           </CardContent>
         </Card>
       </template>
