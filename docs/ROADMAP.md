@@ -47,6 +47,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Own SQLite schema, migrations embedded via `sqlx::migrate!`
 - [x] Provider stack extracted to the `crates/alnair-llm` crate with a one-file seam
 - [x] Dashboard embedded in the binary and served at `/` (SPA fallback, `server.serve_dashboard`)
+- [x] Desktop tray icon (Windows/macOS): Open dashboard + Quit, graceful shutdown, `server.tray` / `--no-tray`, icon from `assets/alnair-white.ico`
 - [x] MIT license, CI, multi-stage Dockerfile, opt-in real-provider e2e tests
 
 ---

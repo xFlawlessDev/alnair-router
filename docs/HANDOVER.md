@@ -265,6 +265,28 @@ suite should tell you.
     Console page. Nothing is persisted — restarting the router clears it, and
     usage rows remain the durable record.
 
+19. **The tray owns the main thread.** `tray-icon` needs a GUI event loop on the
+    thread that owns the icon, and macOS requires it on the main thread before
+    the icon is created. `serve` therefore keeps `tao`'s event loop on the main
+    thread (`src/desktop/`) and runs the Tokio server on a worker thread; Quit
+    notifies the server, and when the server stops on its own (Ctrl+C, fatal
+    error) it posts an event so the tray exits too. Windows only: left-click
+    opens the dashboard (menu on right-click); macOS keeps the standard
+    menu-on-click and renders the icon as a template image so it adapts to
+    light/dark menu bars. Tray failure is non-fatal: the server keeps running
+    without an icon. `server.tray` (default true) and `--tray`/`--no-tray`
+    control it; Linux always serves headless.
+
+20. **Windows builds are GUI-subsystem: no console window, ever.** `main.rs`
+    sets `windows_subsystem = "windows"` so auto-start and double-click never
+    pop a terminal. `bind_parent_console` re-attaches stdio when the binary is
+    invoked from a real terminal (`AttachConsole` + `CONOUT$`/`CONIN$`) so CLI
+    output and logs stay visible; handles Windows already supplied — e.g.
+    `Start-Process -RedirectStandardOutput` — are left untouched. Without a
+    console and without inherited handles (the auto-start case) output is
+    discarded. The dashboard opener also spawns `cmd` with `CREATE_NO_WINDOW`,
+    otherwise `cmd` would allocate a console just to launch the browser.
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -317,6 +339,11 @@ cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
 cargo test --workspace        # 223 tests, ~33s (retry backoff + provider tests)
 cargo clippy --workspace --all-targets
 ```
+
+On Windows and macOS `serve` also shows a system tray icon (Open dashboard,
+Quit; left-click opens the dashboard on Windows) unless `server.tray = false`
+or `--no-tray`. The icon comes from `assets/alnair-white.ico` (`assets/
+alnair-white.svg` is the source artwork); Linux has no tray support.
 
 **Dashboard** — built assets are embedded, so `http://127.0.0.1:7878/` serves the
 dashboard. For live development use Vite instead:

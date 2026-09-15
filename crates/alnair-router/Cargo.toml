@@ -50,6 +50,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2"
 uuid = { version = "1.18", features = ["serde", "v4"] }
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+ico = "0.5"
+tao = "0.36"
+tray-icon = "0.25"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+] }
+
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3.23"

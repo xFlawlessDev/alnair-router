@@ -104,6 +104,17 @@ pnpm dev           # http://localhost:5173, proxies /api and /v1 to :7878
 Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
 [`apps/web/README.md`](apps/web/README.md).
 
+### System tray
+
+On Windows and macOS `alnair-router` runs with a tray icon: **Open dashboard**
+and **Quit** (graceful shutdown), and on Windows left-click opens the dashboard
+directly. Disable it with `--no-tray` or `server.tray = false`; Linux always
+serves headless.
+
+Windows builds are GUI-subsystem binaries, so no console window appears on
+auto-start or double-click. Run the binary from a terminal and CLI output plus
+logs attach to that terminal as usual.
+
 ## Docker
 
 The image builds the dashboard and the router (embedded assets), then runs as a
@@ -192,6 +203,9 @@ Key settings:
   them (`0`).
 - `server.readiness_upstream_checks` — makes `/api/ready` report TCP
   reachability counts for enabled connections.
+- `server.tray` (default true) — system tray icon with **Open dashboard** and
+  **Quit** on Windows and macOS; `alnair-router --no-tray` disables it for one
+  run.
 
 `GET /api/health` is a liveness probe (no database touch); `GET /api/ready`
 checks the database. `GET /api/metrics` exposes Prometheus-style counters and is
@@ -212,6 +226,7 @@ See `crates/alnair-router/router.example.toml` for every option.
 ```
 crates/alnair-router/src/
 ├── crypto.rs            # AES-256-GCM credential encryption at rest
+├── desktop/             # system tray (Windows/macOS): event loop, menu, icon
 ├── model/cache.rs       # cached routing catalog (TTL + invalidation)
 ├── model/resolver.rs    # pure resolution: reference → ordered targets
 ├── upstream/

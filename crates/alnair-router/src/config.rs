@@ -50,6 +50,9 @@ pub struct ServerConfig {
     pub readiness_upstream_checks: bool,
     /// Serve the embedded dashboard at `/` (disable when a reverse proxy owns it).
     pub serve_dashboard: bool,
+    /// Show a system tray icon (Open dashboard / Quit) while serving. Windows
+    /// and macOS only; `--no-tray` disables it for a single run.
+    pub tray: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -128,6 +131,7 @@ impl Default for ServerConfig {
             cors_origins: Vec::new(),
             readiness_upstream_checks: false,
             serve_dashboard: true,
+            tray: true,
         }
     }
 }
@@ -388,5 +392,10 @@ mod tests {
         assert_eq!(routing.catalog_ttl_ms, 1_000);
         assert_eq!(routing.connect_timeout_ms, 10_000);
         assert_eq!(routing.idle_timeout_ms, 60_000);
+    }
+
+    #[test]
+    fn tray_defaults_to_on() {
+        assert!(ServerConfig::default().tray);
     }
 }

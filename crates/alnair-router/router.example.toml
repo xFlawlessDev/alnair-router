@@ -24,6 +24,9 @@ allow_unauthenticated_admin = false
 readiness_upstream_checks = false
 # Serve the embedded dashboard at / (disable when a reverse proxy owns it).
 serve_dashboard = true
+# Show a system tray icon with "Open dashboard" and "Quit" while serving.
+# Windows and macOS only; `alnair-router --no-tray` disables it for one run.
+tray = true
 # Extra origins permitted to call the API cross-origin. Empty by default; the
 # dashboard is served same-origin.
 # cors_origins = ["https://admin.example.com"]

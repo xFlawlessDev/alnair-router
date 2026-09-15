@@ -11,8 +11,10 @@ const AUTO_LAUNCH_NAME: &str = "alnair-router";
 /// Parsed command line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    /// Run the HTTP server (default).
-    Serve,
+    /// Run the HTTP server (default). `tray` overrides `server.tray` when set.
+    Serve {
+        tray: Option<bool>,
+    },
     /// Write a config with a generated secrets key and enable auto-start.
     Install,
     /// Disable auto-start.
@@ -30,11 +32,13 @@ impl Command {
         let _program = args.next();
 
         let Some(flag) = args.next() else {
-            return Ok(Command::Serve);
+            return Ok(Command::Serve { tray: None });
         };
 
         match flag.as_str() {
-            "serve" | "--serve" => Ok(Command::Serve),
+            "serve" | "--serve" => Self::parse_serve_flags(args),
+            "--tray" => Ok(Command::Serve { tray: Some(true) }),
+            "--no-tray" => Ok(Command::Serve { tray: Some(false) }),
             "install" | "--install" => Ok(Command::Install),
             "uninstall" | "--uninstall" => Ok(Command::Uninstall),
             "status" | "--status" => Ok(Command::Status),
@@ -44,6 +48,32 @@ impl Command {
                 "unknown command '{other}'; try --help"
             ))),
         }
+    }
+
+    /// Parses the tray overrides that may follow `serve`.
+    fn parse_serve_flags(args: impl Iterator<Item = String>) -> Result<Self> {
+        let mut tray = None;
+
+        for arg in args {
+            let requested = match arg.as_str() {
+                "--tray" => true,
+                "--no-tray" => false,
+                other => {
+                    return Err(Error::Config(format!(
+                        "unknown option '{other}' for serve; try --help"
+                    )));
+                }
+            };
+
+            if tray.is_some_and(|current| current != requested) {
+                return Err(Error::Config(
+                    "conflicting options: --tray and --no-tray".to_string(),
+                ));
+            }
+            tray = Some(requested);
+        }
+
+        Ok(Command::Serve { tray })
     }
 }
 
@@ -61,6 +91,11 @@ Usage:
   alnair-router status         Show auto-start state and paths
   alnair-router --help         Show this help
   alnair-router --version      Print the version
+
+Options:
+  --tray / --no-tray           Force the system tray icon on or off while
+                               serving (default: server.tray; Windows and
+                               macOS only)
 ",
         version = env!("CARGO_PKG_VERSION"),
         home = crate::config::router_home().display(),
@@ -203,13 +238,44 @@ mod tests {
             Command::parse(args.iter().map(|arg| arg.to_string())).expect("valid command")
         };
 
-        assert_eq!(parse(&["alnair-router"]), Command::Serve);
-        assert_eq!(parse(&["alnair-router", "serve"]), Command::Serve);
+        assert_eq!(parse(&["alnair-router"]), Command::Serve { tray: None });
+        assert_eq!(
+            parse(&["alnair-router", "serve"]),
+            Command::Serve { tray: None }
+        );
         assert_eq!(parse(&["alnair-router", "install"]), Command::Install);
         assert_eq!(parse(&["alnair-router", "uninstall"]), Command::Uninstall);
         assert_eq!(parse(&["alnair-router", "status"]), Command::Status);
         assert_eq!(parse(&["alnair-router", "--version"]), Command::Version);
         assert!(Command::parse(["alnair-router", "nope"].map(str::to_string)).is_err());
+    }
+
+    #[test]
+    fn parses_tray_overrides() {
+        let parse = |args: &[&str]| {
+            Command::parse(args.iter().map(|arg| arg.to_string())).expect("valid command")
+        };
+
+        assert_eq!(
+            parse(&["alnair-router", "--no-tray"]),
+            Command::Serve { tray: Some(false) }
+        );
+        assert_eq!(
+            parse(&["alnair-router", "serve", "--tray"]),
+            Command::Serve { tray: Some(true) }
+        );
+        assert_eq!(
+            parse(&["alnair-router", "serve", "--no-tray", "--no-tray"]),
+            Command::Serve { tray: Some(false) }
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_or_unknown_serve_options() {
+        let parse = |args: &[&str]| Command::parse(args.iter().map(|arg| arg.to_string()));
+
+        assert!(parse(&["alnair-router", "serve", "--tray", "--no-tray"]).is_err());
+        assert!(parse(&["alnair-router", "serve", "--nope"]).is_err());
     }
 
     #[test]

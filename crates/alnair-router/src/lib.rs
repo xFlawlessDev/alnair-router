@@ -12,6 +12,8 @@ pub mod cli;
 pub mod config;
 pub mod crypto;
 pub mod db;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub mod desktop;
 pub mod error;
 pub mod handlers;
 pub mod limits;
