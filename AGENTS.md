@@ -14,6 +14,7 @@
 - Real-provider e2e (opt-in, `#[ignore]`d): `ALNAIR_ROUTER_E2E_OPENAI_API_KEY=... cargo test -p alnair-router --test e2e_real -- --ignored`.
 - Web: in `apps/web` run `pnpm test` and `pnpm run check` (vue-tsc + build). Run `pnpm run build` before a release build so the embedded dashboard is current. Dependency changes must update `pnpm-lock.yaml`. (pnpm settings live in `apps/web/pnpm-workspace.yaml`.)
 - Release (root `npm install` once): `npm run release:dry` then `npm run release` — standard-version bumps, and the `postbump` hook syncs `crates/*/Cargo.toml`, `apps/web/package.json`, and `Cargo.lock`. Pushing the `v*` tag triggers the binary release workflow; `npm run build:binary` builds a local release binary.
+- Install/auto-start: `alnair-router install|uninstall|status` (auto-launch crate); `install.sh` (curl | sh) and `install.ps1` (irm | iex) fetch/unpack the release binary first. `install` never overwrites an existing `config.toml`.
 
 ## Hard rules
 

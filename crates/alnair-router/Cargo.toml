@@ -14,6 +14,7 @@ path = "src/main.rs"
 aes-gcm = "0.10"
 alnair-llm = { path = "../alnair-llm" }
 async-stream = "0.3"
+auto-launch = "0.5"
 axum = { version = "0.8", features = ["macros", "json", "ws"] }
 base64 = "0.22"
 bytes = "1"

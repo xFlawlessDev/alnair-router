@@ -1,9 +1,27 @@
 //! Binary entrypoint for the standalone alnair-router server.
 
-use alnair_router::{Db, Result, build_router, config, state::AppState};
+use alnair_router::{Db, Result, build_router, cli, config, state::AppState};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    match cli::Command::parse(std::env::args())? {
+        cli::Command::Serve => serve().await,
+        cli::Command::Install => cli::install(),
+        cli::Command::Uninstall => cli::uninstall(),
+        cli::Command::Status => cli::status(),
+        cli::Command::Help => {
+            println!("{}", cli::help());
+            Ok(())
+        }
+        cli::Command::Version => {
+            println!("alnair-router {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+    }
+}
+
+/// Runs the HTTP server until a termination signal arrives.
+async fn serve() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

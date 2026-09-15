@@ -366,6 +366,23 @@ Every value is overridable via `ALNAIR_ROUTER__SECTION__KEY`, e.g.
 `ALNAIR_ROUTER__SERVER__PORT=9000`. `secrets.key` is mandatory; the router
 refuses to start without it. See `crates/alnair-router/router.example.toml`.
 
+**Installing** — the binary is its own installer:
+
+```bash
+alnair-router install     # config with a generated secrets key + auto-start
+alnair-router status      # auto-start state and paths
+alnair-router uninstall   # disable auto-start, keep data
+```
+
+`install`/`uninstall`/`status` use the `auto-launch` crate (Windows Run key,
+macOS LaunchAgent, Linux XDG autostart). On Linux/macOS `install.sh` (also
+served as `curl -fsSL .../main/install.sh | sh`) downloads the latest release,
+verifies checksums, and installs it; on Windows `install.ps1` (also served as
+`irm .../main/install.ps1 | iex`) downloads the release, unpacks it to
+`%LOCALAPPDATA%\alnair-router\bin`, adds that to the user PATH, and runs
+`install`. An existing config is never overwritten — a config without
+`secrets.key` makes `install` fail loudly instead of regenerating it.
+
 **State** — SQLite at `$ALNAIR_ROUTER_HOME/db/router.sqlite`, created and
 migrated on first boot. Credentials are encrypted on the way in; legacy
 plaintext rows are rewritten by `migrate_credentials`.

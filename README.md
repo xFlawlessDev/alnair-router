@@ -268,6 +268,51 @@ ALNAIR_ROUTER_E2E_OPENAI_API_KEY=sk-... \
   cargo test -p alnair-router --test e2e_real -- --ignored
 ```
 
+## Install and auto-start
+
+The binary doubles as its own installer: `install` creates a config with a
+generated `secrets.key` and registers auto-start, so an installed router comes
+back by itself after a reboot.
+
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xFlawlessDev/alnair-router/main/install.sh | sh
+```
+
+`install.sh` resolves the latest GitHub Release for your platform (Linux x86_64
+or Apple Silicon), verifies `SHA256SUMS.txt`, installs to `~/.local/bin`, and
+runs `install`. Overrides: `ALNAIR_ROUTER_REPO`, `ALNAIR_ROUTER_VERSION`,
+`ALNAIR_ROUTER_INSTALL_DIR`, and `ALNAIR_ROUTER_NO_AUTOSTART=1`.
+
+**Windows:**
+
+```powershell
+irm https://raw.githubusercontent.com/xFlawlessDev/alnair-router/main/install.ps1 | iex
+```
+
+`install.ps1` downloads the latest release for Windows x64, verifies
+`SHA256SUMS.txt`, installs to `%LOCALAPPDATA%\alnair-router\bin`, adds that to
+your user PATH, and runs `install`. From a checkout it prefers a local
+`target\release` (or `target\debug`) build; same overrides as above
+(`-Version`, `-Repo`, `-InstallDir`, `-NoAutoStart`).
+
+Manage it with:
+
+```powershell
+alnair-router status      # auto-start state and paths
+alnair-router uninstall   # disable auto-start (config and data are kept)
+```
+
+`uninstall` keeps config and data by design. To remove the app completely,
+`alnair-router uninstall`, delete the install dir (`%LOCALAPPDATA%\alnair-router`
+or `~/.local/bin/alnair-router`), the router home (`~/.alnair-router`), and its
+PATH entry if you added one.
+
+`install`/`uninstall`/`status` work on every platform (auto-launch writes a Run
+key, LaunchAgent, or XDG autostart entry); the install scripts only place the
+binary and delegate to `install`.
+
 ## Releasing
 
 Versioning is driven by [standard-version](https://github.com/conventional-changelog/standard-version)
