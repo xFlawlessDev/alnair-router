@@ -141,7 +141,40 @@ pub enum StreamChunk {
         arguments: String,
     },
     Usage(TokenUsage),
-    Done,
+    /// Terminal chunk, carrying the provider's finish reason when it reports one.
+    Done(Option<String>),
+}
+
+/// Normalizes a provider finish reason onto OpenAI's vocabulary.
+///
+/// Providers disagree on the terminal token (`tool_use` vs `tool_calls`,
+/// `end_turn` vs `stop`), so the wire shape is decided here rather than letting
+/// an Anthropic-flavoured reason leak to an OpenAI client. A completed tool call
+/// always wins over a generic `stop`, because clients drive their tool loop off
+/// `finish_reason`.
+pub fn openai_finish_reason(reason: Option<&str>, has_tool_calls: bool) -> String {
+    match reason.unwrap_or_default() {
+        "tool_calls" | "tool-calls" | "tool_use" | "toolUse" => "tool_calls",
+        "length" | "max_tokens" | "max-tokens" | "max_output_tokens" => "length",
+        _ if has_tool_calls => "tool_calls",
+        _ => "stop",
+    }
+    .to_string()
+}
+
+/// Normalizes a provider finish reason onto Anthropic's vocabulary.
+///
+/// The inverse of [`openai_finish_reason`]: an OpenAI-flavoured `length` becomes
+/// `max_tokens`, and any completed tool call becomes `tool_use`.
+pub fn anthropic_stop_reason(reason: Option<&str>, has_tool_calls: bool) -> String {
+    match reason.unwrap_or_default() {
+        "tool_calls" | "tool-calls" | "tool_use" | "toolUse" => "tool_use",
+        "length" | "max_tokens" | "max-tokens" | "max_output_tokens" => "max_tokens",
+        "stop_sequence" => "stop_sequence",
+        _ if has_tool_calls => "tool_use",
+        _ => "end_turn",
+    }
+    .to_string()
 }
 
 /// Completion result in router-owned types.
@@ -369,7 +402,7 @@ fn to_stream_chunk(
                 + cost_output_usd.unwrap_or(0.0)
                 + cost_reasoning_usd.unwrap_or(0.0),
         })),
-        Ok(LlmStreamChunk::Done(_)) => Ok(StreamChunk::Done),
+        Ok(LlmStreamChunk::Done(reason)) => Ok(StreamChunk::Done(reason)),
         Err(error) => Err(Error::Upstream(error.to_string())),
     }
 }
@@ -393,15 +426,11 @@ pub async fn collect(stream: ChunkStream) -> Result<CompletionResponse> {
                 arguments,
             }),
             StreamChunk::Usage(usage) => response.usage = Some(usage),
-            StreamChunk::Done => {
-                response.finish_reason = Some(
-                    if response.tool_calls.is_empty() {
-                        "stop"
-                    } else {
-                        "tool_calls"
-                    }
-                    .to_string(),
-                );
+            StreamChunk::Done(reason) => {
+                response.finish_reason = Some(openai_finish_reason(
+                    reason.as_deref(),
+                    !response.tool_calls.is_empty(),
+                ));
                 break;
             }
         }
@@ -466,7 +495,7 @@ mod tests {
                 completion_tokens: 1,
                 ..Default::default()
             })),
-            Ok(StreamChunk::Done),
+            Ok(StreamChunk::Done(None)),
         ])
         .boxed();
 
@@ -483,7 +512,7 @@ mod tests {
     async fn collect_marks_plain_completions_as_stopped() {
         let chunks: ChunkStream = futures::stream::iter(vec![
             Ok(StreamChunk::Text("hello".to_string())),
-            Ok(StreamChunk::Done),
+            Ok(StreamChunk::Done(None)),
         ])
         .boxed();
 

@@ -4,6 +4,7 @@ use alnair_router::config::{RateLimitConfig, RouterConfig};
 use alnair_router::db::Db;
 use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey};
 use alnair_router::db::repos::usage::{NewUsageRecord, UsageRepository};
+use alnair_router::settings::SettingsOverrides;
 use alnair_router::{AppState, build_router};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -3161,6 +3162,66 @@ async fn settings_toggle_lan_access_hot() {
     // Exposing the network closes the admin API until a password exists.
     let (status, _) = get(&app, "/api/connections").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// Startup applies the stored dashboard overrides before any loop exists. A
+/// `Notify` permit handed out then is kept for the next waiter, so notifying
+/// would rebind the listener (logging a second "listening" line) the moment
+/// serving begins, for a change that was already in effect.
+#[tokio::test]
+async fn startup_overrides_do_not_wake_the_loops() {
+    let db = Db::connect_in_memory().await.expect("db");
+    let mut config = RouterConfig::default();
+    config.secrets.key = Some(TEST_SECRET.to_string());
+    let state = AppState::new(config, db).expect("state");
+
+    let startup = SettingsOverrides {
+        lan_access: Some(true),
+        pricing_sync_interval_secs: Some(3600),
+        ..Default::default()
+    };
+    state.apply_overrides(&startup).await.expect("apply");
+
+    let rebound = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        state.rebind.notified(),
+    )
+    .await;
+    assert!(
+        rebound.is_err(),
+        "startup overrides must not queue a rebind"
+    );
+    let synced = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        state.pricing_sync_trigger.notified(),
+    )
+    .await;
+    assert!(synced.is_err(), "startup overrides must not queue a sync");
+
+    // Once the loops run, the same settings wake them.
+    state.start_loops();
+    let saved = SettingsOverrides {
+        lan_access: Some(false),
+        pricing_sync_interval_secs: Some(7200),
+        ..Default::default()
+    };
+    state.apply_overrides(&saved).await.expect("apply");
+
+    let rebound = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        state.rebind.notified(),
+    )
+    .await;
+    assert!(rebound.is_ok(), "a dashboard save must rebind the listener");
+    let synced = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        state.pricing_sync_trigger.notified(),
+    )
+    .await;
+    assert!(
+        synced.is_ok(),
+        "a dashboard save must wake the pricing sync"
+    );
 }
 
 #[tokio::test]

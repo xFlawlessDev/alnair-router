@@ -18,7 +18,7 @@ use crate::protocol::anthropic::{
 };
 use crate::state::AppState;
 use crate::upstream::ExecutedStream;
-use crate::upstream::chat_backend::{self, StreamChunk};
+use crate::upstream::chat_backend::{self, StreamChunk, TokenUsage, anthropic_stop_reason};
 
 /// Handles an Anthropic Messages request, streaming or not.
 pub async fn messages(
@@ -171,10 +171,11 @@ fn stream_response(
         latency_ms,
     );
 
-    // Anthropic clients expect a fixed event order: message_start, then the
-    // content block opening, deltas, and finally the closing events.
-    let preamble: Vec<std::result::Result<Event, std::convert::Infallible>> = vec![
-        Ok(Event::default().event("message_start").data(
+    // Anthropic clients expect `message_start` first; content blocks open
+    // lazily, because the kind of the first block is only known once a chunk
+    // arrives (text, thinking or a tool call).
+    let preamble: Vec<std::result::Result<Event, std::convert::Infallible>> =
+        vec![Ok(Event::default().event("message_start").data(
             json!({
                 "type": "message_start",
                 "message": {
@@ -188,66 +189,24 @@ fn stream_response(
                 }
             })
             .to_string(),
-        )),
-        Ok(Event::default().event("content_block_start").data(
-            json!({
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": { "type": "text", "text": "" }
-            })
-            .to_string(),
-        )),
-    ];
+        ))];
 
-    let stream = executed.stream.flat_map(move |chunk| {
-        let mut usage_state = usage_state.clone();
-
-        let events: Vec<std::result::Result<Event, std::convert::Infallible>> = match chunk {
-            Ok(StreamChunk::Text(text)) => {
-                vec![Ok(Event::default().event("content_block_delta").data(
-                    json!({
-                        "type": "content_block_delta",
-                        "index": 0,
-                        "delta": { "type": "text_delta", "text": text }
-                    })
-                    .to_string(),
-                ))]
-            }
-            Ok(StreamChunk::Thinking(_)) | Ok(StreamChunk::ToolCall { .. }) => Vec::new(),
-            Ok(StreamChunk::Usage(usage)) => {
-                usage_state.record(Some(usage), "ok");
-                Vec::new()
-            }
-            Ok(StreamChunk::Done) => vec![
-                Ok(Event::default()
-                    .event("content_block_stop")
-                    .data(json!({ "type": "content_block_stop", "index": 0 }).to_string())),
-                Ok(Event::default().event("message_delta").data(
-                    json!({
-                        "type": "message_delta",
-                        "delta": { "stop_reason": "end_turn", "stop_sequence": null },
-                        "usage": { "output_tokens": 0 }
-                    })
-                    .to_string(),
-                )),
-                Ok(Event::default()
-                    .event("message_stop")
-                    .data(json!({ "type": "message_stop" }).to_string())),
-            ],
-            Err(error) => {
-                tracing::error!(error = %error, "stream terminated with an upstream error");
-                usage_state.record(None, "error");
-                vec![Ok(Event::default().event("error").data(
-                    json!({
-                        "type": "error",
-                        "error": { "type": "upstream_error", "message": error.to_string() }
-                    })
-                    .to_string(),
-                ))]
-            }
-        };
-        futures::stream::iter(events)
-    });
+    let stream = executed
+        .stream
+        .scan(
+            MessagesState {
+                usage: usage_state,
+                next_index: 0,
+                open: None,
+                has_tool_calls: false,
+                totals: None,
+            },
+            move |state, chunk| {
+                let events = message_events(state, chunk);
+                async move { Some(events) }
+            },
+        )
+        .flat_map(futures::stream::iter);
 
     let stream = futures::stream::iter(preamble).chain(stream);
 
@@ -258,6 +217,180 @@ fn stream_response(
         .headers_mut()
         .extend(router_headers(&target, attempt_count));
     response
+}
+
+/// Kind of Anthropic content block currently being streamed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockKind {
+    Text,
+    Thinking,
+}
+
+/// State carried across a streaming Anthropic response.
+struct MessagesState {
+    usage: StreamUsage,
+    /// Index of the next content block to open.
+    next_index: usize,
+    /// The block currently open, if any, with its index.
+    open: Option<(BlockKind, usize)>,
+    /// Whether any tool call was forwarded, which drives `stop_reason`.
+    has_tool_calls: bool,
+    /// Latest token usage, reported on the closing `message_delta`.
+    totals: Option<TokenUsage>,
+}
+
+/// Closes the open content block, if there is one.
+fn close_block(
+    state: &mut MessagesState,
+    events: &mut Vec<std::result::Result<Event, std::convert::Infallible>>,
+) {
+    let Some((_, index)) = state.open.take() else {
+        return;
+    };
+
+    events.push(Ok(Event::default().event("content_block_stop").data(
+        json!({ "type": "content_block_stop", "index": index }).to_string(),
+    )));
+}
+
+/// Opens a block of `kind`, reusing the current one when it already matches.
+///
+/// Anthropic requires one `content_block_start` per block and a matching stop,
+/// so switching between text, thinking and tool calls has to close first.
+fn ensure_block(
+    state: &mut MessagesState,
+    events: &mut Vec<std::result::Result<Event, std::convert::Infallible>>,
+    kind: BlockKind,
+) -> usize {
+    if let Some((open_kind, index)) = state.open
+        && open_kind == kind
+    {
+        return index;
+    }
+
+    close_block(state, events);
+
+    let index = state.next_index;
+    state.next_index += 1;
+    state.open = Some((kind, index));
+
+    let content_block = match kind {
+        BlockKind::Text => json!({ "type": "text", "text": "" }),
+        BlockKind::Thinking => json!({ "type": "thinking", "thinking": "" }),
+    };
+    events.push(Ok(Event::default().event("content_block_start").data(
+        json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": content_block
+        })
+        .to_string(),
+    )));
+
+    index
+}
+
+/// Translates one upstream chunk into the Anthropic events it produces.
+fn message_events(
+    state: &mut MessagesState,
+    chunk: Result<StreamChunk>,
+) -> Vec<std::result::Result<Event, std::convert::Infallible>> {
+    let mut events = Vec::new();
+
+    match chunk {
+        Ok(StreamChunk::Text(text)) => {
+            let index = ensure_block(state, &mut events, BlockKind::Text);
+            events.push(Ok(Event::default().event("content_block_delta").data(
+                json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": { "type": "text_delta", "text": text }
+                })
+                .to_string(),
+            )));
+        }
+        Ok(StreamChunk::Thinking(text)) => {
+            let index = ensure_block(state, &mut events, BlockKind::Thinking);
+            events.push(Ok(Event::default().event("content_block_delta").data(
+                json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": { "type": "thinking_delta", "thinking": text }
+                })
+                .to_string(),
+            )));
+        }
+        Ok(StreamChunk::ToolCall {
+            id,
+            name,
+            arguments,
+        }) => {
+            close_block(state, &mut events);
+
+            let index = state.next_index;
+            state.next_index += 1;
+            state.has_tool_calls = true;
+
+            events.push(Ok(Event::default().event("content_block_start").data(
+                json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "tool_use", "id": id, "name": name, "input": {}
+                    }
+                })
+                .to_string(),
+            )));
+            // The provider seam hands over whole tool calls, so the arguments
+            // go out as a single `partial_json` fragment.
+            events.push(Ok(Event::default().event("content_block_delta").data(
+                json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": { "type": "input_json_delta", "partial_json": arguments }
+                })
+                .to_string(),
+            )));
+            events.push(Ok(Event::default().event("content_block_stop").data(
+                json!({ "type": "content_block_stop", "index": index }).to_string(),
+            )));
+        }
+        Ok(StreamChunk::Usage(usage)) => {
+            state.totals = Some(usage);
+            state.usage.record(Some(usage), "ok");
+        }
+        Ok(StreamChunk::Done(reason)) => {
+            close_block(state, &mut events);
+
+            let stop_reason = anthropic_stop_reason(reason.as_deref(), state.has_tool_calls);
+            let output_tokens = state.totals.map_or(0, |totals| totals.completion_tokens);
+
+            events.push(Ok(Event::default().event("message_delta").data(
+                json!({
+                    "type": "message_delta",
+                    "delta": { "stop_reason": stop_reason, "stop_sequence": null },
+                    "usage": { "output_tokens": output_tokens }
+                })
+                .to_string(),
+            )));
+            events.push(Ok(Event::default()
+                .event("message_stop")
+                .data(json!({ "type": "message_stop" }).to_string())));
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "stream terminated with an upstream error");
+            state.usage.record(None, "error");
+            events.push(Ok(Event::default().event("error").data(
+                json!({
+                    "type": "error",
+                    "error": { "type": "upstream_error", "message": error.to_string() }
+                })
+                .to_string(),
+            )));
+        }
+    }
+
+    events
 }
 
 /// `POST /v1/messages/count_tokens` — heuristic estimate, no tokenizer dependency.

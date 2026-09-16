@@ -32,6 +32,16 @@ pub struct ChatCompletionRequest {
     pub frequency_penalty: Option<f64>,
     #[serde(default)]
     pub tools: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub stream_options: Option<StreamOptions>,
+}
+
+/// `stream_options` on a streaming request.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct StreamOptions {
+    /// Ask for a final SSE chunk carrying token usage, as OpenAI does.
+    #[serde(default)]
+    pub include_usage: bool,
 }
 
 /// `stop` accepts either a string or an array of strings.
@@ -290,6 +300,8 @@ pub struct ChatCompletionChunk {
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChunkChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsagePayload>,
 }
 
 #[derive(Debug, Serialize)]
@@ -306,6 +318,31 @@ pub struct ChunkDelta {
     pub role: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// Reasoning stream, as DeepSeek and OpenRouter expose it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallDelta>>,
+}
+
+/// A streamed tool call. Fragments are identified by `index`; the first one for
+/// an index carries `id` and `name`, later ones only extend `arguments`.
+#[derive(Debug, Serialize)]
+pub struct ToolCallDelta {
+    pub index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub call_type: Option<&'static str>,
+    pub function: FunctionDelta,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct FunctionDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 /// Builds the terminal usage payload for a completed request.

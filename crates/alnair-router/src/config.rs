@@ -226,6 +226,36 @@ impl ServerConfig {
         )
     }
 
+    /// `ip:port` the network can open while the listener takes every interface.
+    ///
+    /// `None` for a host-specific bind — `browser_address` already covers that
+    /// — and for a machine with no route out, since the address comes from the
+    /// routing table.
+    pub fn lan_address(&self) -> Option<String> {
+        if !self.binds_wildcard() {
+            return None;
+        }
+
+        Some(self.address_on(outbound_ip()?))
+    }
+
+    /// URL to print for the operator: the LAN address while the listener serves
+    /// the network, loopback otherwise. A wildcard bind is never browser-usable.
+    pub fn browser_url(&self) -> String {
+        let address = self.lan_address().unwrap_or_else(|| self.browser_address());
+        format!("http://{address}")
+    }
+
+    /// True while the listener takes every interface instead of a single host.
+    fn binds_wildcard(&self) -> bool {
+        self.lan_access || matches!(self.host.trim().trim_matches(['[', ']']), "0.0.0.0" | "::")
+    }
+
+    /// `ip:port` for an interface address, bracketing IPv6 literals.
+    fn address_on(&self, ip: std::net::IpAddr) -> String {
+        format!("{}:{}", bracketed_host(&ip.to_string()), self.port)
+    }
+
     /// Effective admin token, treating blank values as unset.
     pub fn admin_token(&self) -> Option<&str> {
         self.admin_token
@@ -247,6 +277,17 @@ fn bracketed_host(host: &str) -> String {
     } else {
         host.to_string()
     }
+}
+
+/// Address this machine routes outbound traffic through, without sending
+/// anything: connecting a UDP socket only resolves the routing decision.
+fn outbound_ip() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    // TEST-NET-1 (RFC 5737) is documentation-only: no packet can reach it.
+    socket.connect("192.0.2.1:9").ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+
+    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
 }
 
 impl RouterConfig {
@@ -455,6 +496,35 @@ mod tests {
         server.host = "192.168.1.10".to_string();
         assert_eq!(server.bind_address(), "192.168.1.10:7878");
         assert_eq!(server.browser_address(), "192.168.1.10:7878");
+    }
+
+    #[test]
+    fn browser_url_never_points_at_a_wildcard_bind() {
+        let mut server = server("127.0.0.1", None);
+        assert_eq!(server.browser_url(), "http://127.0.0.1:7878");
+        assert_eq!(server.lan_address(), None, "loopback is not the LAN case");
+
+        // A named host is openable as it is; no LAN lookup needed.
+        server.host = "192.168.1.10".to_string();
+        assert_eq!(server.browser_url(), "http://192.168.1.10:7878");
+        assert_eq!(server.lan_address(), None);
+
+        // Wildcard binds reach no browser, so the LAN address wins, falling
+        // back to loopback when this machine routes nowhere.
+        server.host = "0.0.0.0".to_string();
+        assert_openable(&server.browser_url());
+
+        server.host = "127.0.0.1".to_string();
+        server.lan_access = true;
+        assert_openable(&server.browser_url());
+    }
+
+    /// A wildcard bind is never openable: `0.0.0.0` means every interface.
+    fn assert_openable(url: &str) {
+        assert!(url.starts_with("http://"), "{url}");
+        assert!(url.ends_with(":7878"), "{url}");
+        assert!(!url.contains("0.0.0.0"), "{url}");
+        assert!(!url.contains("[::]"), "{url}");
     }
 
     #[test]

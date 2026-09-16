@@ -144,6 +144,16 @@ math, policy mapping, fallback timing.
       OpenAI gets `message.tool_calls`, Anthropic gets `tool_use` blocks,
       Responses gets `function_call` items. `finish_reason` reports
       `tool_calls` / `tool_use` accordingly.
+- [x] **P1.7 Streaming parity for tool calls, reasoning and usage.**
+      The SSE paths no longer drop chunks: tool calls stream as
+      `delta.tool_calls` (whole calls, one `index` each), reasoning as
+      `delta.reasoning_content`, and `/v1/messages` opens `tool_use`/`thinking`
+      blocks in place of the previous single text block. `finish_reason` /
+      `stop_reason` are translated from the provider's own reason
+      (`chat_backend::{openai_finish_reason, anthropic_stop_reason}`) instead of
+      being hardcoded, and `stream_options.include_usage` adds the terminal
+      usage chunk. Without this, a coding agent saw a clean `200` with an empty
+      body and retried forever.
 
 ### P1.3 design note — OAuth subscription providers (deferred)
 

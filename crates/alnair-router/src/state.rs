@@ -1,5 +1,6 @@
 //! Shared application state for the HTTP layer.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use sqlx::SqlitePool;
@@ -45,6 +46,8 @@ pub struct AppState {
     pub pricing_sync_trigger: Arc<Notify>,
     /// Wakes the serve loop to rebind when LAN access or the port changes.
     pub rebind: Arc<Notify>,
+    /// Whether the serve and pricing loops are running; see [`Self::start_loops`].
+    loops_started: Arc<AtomicBool>,
     /// One-time code for the first dashboard password; `None` once set.
     setup_code: Arc<Mutex<Option<String>>>,
     catalog_cache: Arc<crate::model::CatalogCache>,
@@ -97,6 +100,7 @@ impl AppState {
             pricing_cache,
             pricing_sync_trigger: Arc::new(Notify::new()),
             rebind: Arc::new(Notify::new()),
+            loops_started: Arc::new(AtomicBool::new(false)),
             setup_code: Arc::new(Mutex::new(None)),
             catalog_cache,
         })
@@ -140,14 +144,27 @@ impl AppState {
 
         *self.config.write().expect("config lock poisoned") = next.clone();
 
-        if pricing_changed {
-            self.pricing_sync_trigger.notify_one();
-        }
-        if rebind {
-            self.rebind.notify_one();
+        if self.loops_started.load(Ordering::SeqCst) {
+            if pricing_changed {
+                self.pricing_sync_trigger.notify_one();
+            }
+            if rebind {
+                self.rebind.notify_one();
+            }
         }
 
         Ok(next)
+    }
+
+    /// Marks the serve and pricing loops as running, so later configuration
+    /// changes may wake them.
+    ///
+    /// Startup applies the stored dashboard overrides through the same path as
+    /// a dashboard save, but no loop exists yet. A `Notify` permit handed out
+    /// then is not dropped: the loop would consume it the moment it first
+    /// waits, so the listener would rebind (and log) for nothing.
+    pub fn start_loops(&self) {
+        self.loops_started.store(true, Ordering::SeqCst);
     }
 
     /// Dashboard password and sessions.

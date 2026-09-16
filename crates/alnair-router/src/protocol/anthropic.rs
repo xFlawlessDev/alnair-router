@@ -135,6 +135,8 @@ impl MessagesRequest {
             presence_penalty: None,
             frequency_penalty: None,
             tools: self.tools,
+            // Anthropic clients read usage from `message_delta` instead.
+            stream_options: None,
         })
     }
 }

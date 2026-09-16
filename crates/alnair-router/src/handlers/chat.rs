@@ -13,11 +13,12 @@ use crate::handlers::shared::{StreamUsage, record_failed_attempts, router_header
 use crate::middleware::AuthenticatedKey;
 use crate::protocol::openai::{
     ChatChoice, ChatChoiceMessage, ChatCompletionChunk, ChatCompletionRequest,
-    ChatCompletionResponse, ChunkChoice, ChunkDelta, tool_calls_payload, usage_payload,
+    ChatCompletionResponse, ChunkChoice, ChunkDelta, FunctionDelta, ToolCallDelta,
+    tool_calls_payload, usage_payload,
 };
 use crate::state::AppState;
 use crate::upstream::ExecutedStream;
-use crate::upstream::chat_backend::{self, StreamChunk};
+use crate::upstream::chat_backend::{self, StreamChunk, TokenUsage, openai_finish_reason};
 
 /// Handles a chat completion, streaming or not based on `stream`.
 pub async fn chat_completions(
@@ -32,6 +33,9 @@ pub async fn chat_completions(
         auth.policy.ensure_model(&requested_model)?;
     }
     let stream_requested = request.stream;
+    let include_usage = request
+        .stream_options
+        .is_some_and(|options| options.include_usage);
     let options = request.generation_options();
     let tools = request.tools.clone();
     let messages = request.into_messages()?;
@@ -52,6 +56,7 @@ pub async fn chat_completions(
             state,
             api_key_id,
             requested_model,
+            include_usage,
             executed,
         ))
     } else {
@@ -132,11 +137,23 @@ async fn complete_response(
     Ok((router_headers(&target, attempt_count), Json(body)).into_response())
 }
 
+/// State carried across a streaming response.
+struct StreamState {
+    usage: StreamUsage,
+    /// Position assigned to the next `tool_calls` delta.
+    tool_call_index: usize,
+    /// Whether any tool call was forwarded, which drives `finish_reason`.
+    has_tool_calls: bool,
+    /// Latest token usage, kept so it can close the stream when requested.
+    totals: Option<TokenUsage>,
+}
+
 /// Streaming path: forward chunks as OpenAI `chat.completion.chunk` SSE events.
 fn stream_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    include_usage: bool,
     executed: ExecutedStream,
 ) -> Response {
     let target = executed.target.clone();
@@ -146,7 +163,7 @@ fn stream_response(
     let created = chrono::Utc::now().timestamp();
 
     let usage_state = StreamUsage::new(
-        state.clone(),
+        state,
         api_key_id,
         requested_model.clone(),
         &target,
@@ -154,53 +171,37 @@ fn stream_response(
         latency_ms,
     );
 
-    let model = requested_model.clone();
-    let stream = executed.stream.flat_map(move |chunk| {
-        let id = id.clone();
-        let model = model.clone();
-        let mut usage_state = usage_state.clone();
+    // OpenAI opens every stream with the assistant role, so clients that key
+    // off `delta.role` see it exactly once.
+    let opening = vec![Ok(chunk_event(
+        &id,
+        created,
+        &requested_model,
+        ChunkDelta {
+            role: Some("assistant"),
+            ..ChunkDelta::default()
+        },
+        None,
+    ))];
 
-        let events: Vec<std::result::Result<Event, std::convert::Infallible>> = match chunk {
-            Ok(StreamChunk::Text(text)) => vec![Ok(chunk_event(
-                &id,
-                created,
-                &model,
-                ChunkDelta {
-                    role: None,
-                    content: Some(text),
-                },
-                None,
-            ))],
-            // Thinking, tool calls and usage have no OpenAI chunk equivalent in
-            // this minimal shape; usage is recorded rather than forwarded.
-            Ok(StreamChunk::Thinking(_)) | Ok(StreamChunk::ToolCall { .. }) => Vec::new(),
-            Ok(StreamChunk::Usage(usage)) => {
-                usage_state.record(Some(usage), "ok");
-                Vec::new()
-            }
-            Ok(StreamChunk::Done) => vec![
-                Ok(chunk_event(
-                    &id,
-                    created,
-                    &model,
-                    ChunkDelta::default(),
-                    Some("stop".to_string()),
-                )),
-                Ok(Event::default().data("[DONE]")),
-            ],
-            Err(error) => {
-                tracing::error!(error = %error, "stream terminated with an upstream error");
-                usage_state.record(None, "error");
-                vec![Ok(Event::default().data(
-                    json!({
-                        "error": { "message": error.to_string(), "type": "upstream_error" }
-                    })
-                    .to_string(),
-                ))]
-            }
-        };
-        futures::stream::iter(events)
-    });
+    let model = requested_model.clone();
+    let stream = executed
+        .stream
+        .scan(
+            StreamState {
+                usage: usage_state,
+                tool_call_index: 0,
+                has_tool_calls: false,
+                totals: None,
+            },
+            move |state, chunk| {
+                let events = stream_events(state, chunk, &id, created, &model, include_usage);
+                async move { Some(events) }
+            },
+        )
+        .flat_map(futures::stream::iter);
+
+    let stream = futures::stream::iter(opening).chain(stream);
 
     let mut response = Sse::new(stream)
         .keep_alive(KeepAlive::default())
@@ -209,6 +210,100 @@ fn stream_response(
         .headers_mut()
         .extend(router_headers(&target, attempt_count));
     response
+}
+
+/// Translates one upstream chunk into the SSE events it produces.
+fn stream_events(
+    state: &mut StreamState,
+    chunk: Result<StreamChunk>,
+    id: &str,
+    created: i64,
+    model: &str,
+    include_usage: bool,
+) -> Vec<std::result::Result<Event, std::convert::Infallible>> {
+    match chunk {
+        Ok(StreamChunk::Text(text)) => vec![Ok(chunk_event(
+            id,
+            created,
+            model,
+            ChunkDelta {
+                content: Some(text),
+                ..ChunkDelta::default()
+            },
+            None,
+        ))],
+        Ok(StreamChunk::Thinking(text)) => vec![Ok(chunk_event(
+            id,
+            created,
+            model,
+            ChunkDelta {
+                reasoning_content: Some(text),
+                ..ChunkDelta::default()
+            },
+            None,
+        ))],
+        Ok(StreamChunk::ToolCall {
+            id: call_id,
+            name,
+            arguments,
+        }) => {
+            let index = state.tool_call_index;
+            state.tool_call_index += 1;
+            state.has_tool_calls = true;
+
+            vec![Ok(chunk_event(
+                id,
+                created,
+                model,
+                ChunkDelta {
+                    tool_calls: Some(vec![ToolCallDelta {
+                        index,
+                        id: Some(call_id),
+                        call_type: Some("function"),
+                        function: FunctionDelta {
+                            name: Some(name),
+                            arguments: Some(arguments),
+                        },
+                    }]),
+                    ..ChunkDelta::default()
+                },
+                None,
+            ))]
+        }
+        Ok(StreamChunk::Usage(usage)) => {
+            state.totals = Some(usage);
+            state.usage.record(Some(usage), "ok");
+            Vec::new()
+        }
+        Ok(StreamChunk::Done(reason)) => {
+            let finish_reason = openai_finish_reason(reason.as_deref(), state.has_tool_calls);
+
+            let mut events = vec![Ok(chunk_event(
+                id,
+                created,
+                model,
+                ChunkDelta::default(),
+                Some(finish_reason),
+            ))];
+
+            if include_usage {
+                events.push(Ok(usage_event(id, created, model, state.totals)));
+            }
+
+            events.push(Ok(Event::default().data("[DONE]")));
+            events
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "stream terminated with an upstream error");
+            state.usage.record(None, "error");
+            vec![Ok(Event::default().data(
+                json!({
+                    "error": { "message": error.to_string(), "type": "upstream_error" }
+                })
+                .to_string(),
+            ))]
+        }
+    }
 }
 
 fn chunk_event(
@@ -228,6 +323,20 @@ fn chunk_event(
             delta,
             finish_reason,
         }],
+        usage: None,
+    };
+    Event::default().data(serde_json::to_string(&payload).unwrap_or_default())
+}
+
+/// Terminal `include_usage` chunk: no choices, just the token counts.
+fn usage_event(id: &str, created: i64, model: &str, usage: Option<TokenUsage>) -> Event {
+    let payload = ChatCompletionChunk {
+        id: id.to_string(),
+        object: "chat.completion.chunk",
+        created,
+        model: model.to_string(),
+        choices: Vec::new(),
+        usage: Some(usage_payload(usage)),
     };
     Event::default().data(serde_json::to_string(&payload).unwrap_or_default())
 }

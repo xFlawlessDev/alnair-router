@@ -62,6 +62,10 @@ roadmap):
   `x-router-budget-warning`, block returns 402 `insufficient_quota`.
 - Anthropic has a real `stream: false` path (`LlmProvider::complete`), and
   non-streaming responses on every endpoint now surface tool calls.
+- Streaming responses carry the same payloads as non-streaming ones: tool calls
+  (`delta.tool_calls` / `tool_use` blocks), reasoning (`reasoning_content` /
+  `thinking` deltas), a translated `finish_reason` / `stop_reason`, and an
+  opt-in usage chunk (`stream_options.include_usage`).
 
 **P2 is done** (2026-09-15):
 
@@ -391,6 +395,16 @@ suite should tell you.
     SSE stream. `collect` aggregates tool calls instead of erroring, which is
     what makes tool use work with `stream: false`.
 
+    **Streaming must stay at parity with it.** Both paths consume the same
+    `StreamChunk` enum, so a variant that the streaming handler ignores is
+    silently lost — that is how a coding agent ended up seeing a `200` with no
+    tool call and retrying in a loop. When you add a chunk variant, translate it
+    in `handlers/chat.rs::stream_events` *and* `handlers/messages.rs` as well as
+    in `collect`. The terminal `StreamChunk::Done` carries the provider's finish
+    reason; never hardcode it, and normalize it through
+    `chat_backend::{openai_finish_reason, anthropic_stop_reason}` so an
+    Anthropic-flavoured reason never reaches an OpenAI client.
+
 14. **Catalog invalidation is explicit, the TTL is a backstop.** Every admin
     mutation calls `AppState::invalidate_catalog`; `router.catalog_ttl_ms`
     exists for out-of-band edits. If you add a new write path that changes
@@ -713,6 +727,7 @@ Response headers report the routing decision:
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
 | `tests/routes.rs` (41) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
+| `tests/streaming.rs` (5) | SSE translation: streamed tool calls + `finish_reason`, reasoning, opt-in usage chunk, and the Anthropic `tool_use`/`thinking` block sequence |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
 | `src/**` inline (49) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization, activity tracker |
 | `apps/web/src/**` (33) | API client error/transport handling, formatters, route table, theme store, alias prefix helpers, confirm-dialog regression, topology layout |

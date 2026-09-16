@@ -225,6 +225,11 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
     spawn_pricing_sync(&state);
     let app = build_router(state.clone());
 
+    // The loops are up, so dashboard saves may wake them from here on. The
+    // overrides applied above were startup state, not changes: notifying then
+    // would leave a permit the serving loop consumes immediately.
+    state.start_loops();
+
     // The listener re-binds in place when LAN access or the port changes; the
     // rest of the process keeps running.
     loop {
@@ -235,7 +240,7 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
             .map_err(|error| Error::Config(format!("cannot bind {address}: {error}")))?;
 
         tracing::info!(
-            address = %format!("http://{address}"),
+            address = %effective.server.browser_url(),
             require_api_key = effective.server.require_api_key,
             admin_token = effective.server.requires_admin_token(),
             lan_access = effective.server.lan_access,
