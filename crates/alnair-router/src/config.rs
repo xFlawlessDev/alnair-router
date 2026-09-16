@@ -52,6 +52,10 @@ pub struct ServerConfig {
     /// Expose the self-service usage page and its per-key API. Clients read
     /// their own rollup with a router-issued key.
     pub public_usage: bool,
+    /// Keep an AES-256-GCM copy of each minted key so the dashboard can reveal
+    /// it later. Off restores the hash-only posture, where a key can only be
+    /// read at creation time and later replaced by rotating it.
+    pub store_key_secrets: bool,
     /// Bind every interface instead of `host`, so the router is reachable on
     /// the local network. Hot-applied: the listener rebinds on change.
     pub lan_access: bool,
@@ -162,6 +166,7 @@ impl Default for ServerConfig {
             cors_origins: Vec::new(),
             readiness_upstream_checks: false,
             public_usage: true,
+            store_key_secrets: true,
             lan_access: false,
             serve_dashboard: true,
             tray: true,

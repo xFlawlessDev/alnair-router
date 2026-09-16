@@ -349,7 +349,12 @@ export interface KeyPlanInput {
 
 export interface CreatedApiKey {
   key: ApiKey;
-  /** Plaintext secret, returned exactly once at creation time. */
+  /** Plaintext secret, shown at creation and on rotate. */
+  secret: string;
+}
+
+/** `GET /api/keys/{id}/secret` — decrypted secret, admin only. */
+export interface RevealedApiKey {
   secret: string;
 }
 
@@ -507,6 +512,8 @@ export interface ServerSettings {
   require_api_key: boolean;
   readiness_upstream_checks: boolean;
   public_usage: boolean;
+  /** Keep a reversible copy of minted keys so the dashboard can reveal them. */
+  store_key_secrets: boolean;
   /** Bind every interface so the LAN can reach the router. */
   lan_access: boolean;
   /** Browser CORS allowlist; empty means no CORS headers; `*` allows any. */
@@ -680,6 +687,7 @@ export interface SettingsPatch {
   admin_token?: string | null;
   readiness_upstream_checks?: boolean;
   public_usage?: boolean;
+  store_key_secrets?: boolean;
   lan_access?: boolean;
   cors_origins?: string[];
   default_connection?: string | null;

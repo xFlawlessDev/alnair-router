@@ -229,6 +229,21 @@ async fn verify_credentials(
         })?;
     }
 
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, secret_enc FROM imported.api_keys WHERE secret_enc IS NOT NULL",
+    )
+    .fetch_all(&mut *connection)
+    .await?;
+
+    for (name, stored) in rows {
+        cipher.decrypt(&stored).map_err(|_| {
+            Error::BadRequest(format!(
+                "api key '{name}' is encrypted with a different secrets.key; \
+                 restore needs the key that wrote the backup"
+            ))
+        })?;
+    }
+
     Ok(())
 }
 
@@ -384,6 +399,67 @@ mod tests {
             .expect_err("must refuse");
         assert!(matches!(error, Error::BadRequest(_)));
         assert!(error.to_string().contains("secrets.key"));
+    }
+
+    /// Inserts a key row directly, so the encrypted secret can be written under
+    /// a nominated cipher.
+    async fn seed_api_key(db: &Db, cipher: &CredentialCipher, name: &str) {
+        sqlx::query(
+            "INSERT INTO api_keys (id, name, key_hash, secret_enc, prefix, enabled, budget_mode,
+             created_at)
+             VALUES (?, ?, 'hash', ?, 'sk-router-', 1, 'block', datetime('now'))",
+        )
+        .bind(format!("id-{name}"))
+        .bind(name)
+        .bind(cipher.encrypt("sk-router-secret").expect("encrypt"))
+        .execute(&db.pool)
+        .await
+        .expect("insert api key");
+    }
+
+    #[tokio::test]
+    async fn restore_rejects_key_secrets_from_a_different_key() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db = file_db(&directory).await;
+        seed_api_key(&db, &cipher(SECRET), "main").await;
+
+        let path = directory.path().join("backup.sqlite");
+        snapshot(&db.pool, &path).await.expect("snapshot");
+
+        let other = cipher(&"cd".repeat(32));
+        let error = restore(&db.pool, &path, &other)
+            .await
+            .expect_err("must refuse");
+        assert!(matches!(error, Error::BadRequest(_)));
+        assert!(error.to_string().contains("secrets.key"));
+        assert!(
+            error.to_string().contains("api key 'main'"),
+            "the message should name the offending row: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_accepts_key_secrets_written_under_the_same_key() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db = file_db(&directory).await;
+        let source = cipher(SECRET);
+        seed_api_key(&db, &source, "main").await;
+
+        let path = directory.path().join("backup.sqlite");
+        snapshot(&db.pool, &path).await.expect("snapshot");
+
+        let summary = restore(&db.pool, &path, &source).await.expect("restore");
+        assert_eq!(summary.total_rows, 1);
+
+        let stored: String =
+            sqlx::query_scalar("SELECT secret_enc FROM api_keys WHERE id = 'id-main'")
+                .fetch_one(&db.pool)
+                .await
+                .expect("secret_enc");
+        assert_eq!(
+            source.decrypt(&stored).expect("decrypt"),
+            "sk-router-secret"
+        );
     }
 
     #[tokio::test]

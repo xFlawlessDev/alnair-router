@@ -51,6 +51,7 @@ const form = reactive({
   admin_token: "",
   readiness_upstream_checks: false,
   public_usage: true,
+  store_key_secrets: true,
   lan_access: false,
   cors_origins: "",
   default_connection: "",
@@ -87,6 +88,7 @@ function hydrate(response: SettingsResponse): void {
   form.admin_token = "";
   form.readiness_upstream_checks = response.server.readiness_upstream_checks;
   form.public_usage = response.server.public_usage;
+  form.store_key_secrets = response.server.store_key_secrets;
   form.lan_access = response.server.lan_access;
   form.cors_origins = response.server.cors_origins.join("\n");
   form.default_connection = response.router.default_connection ?? "";
@@ -147,6 +149,9 @@ function buildPatch(): SettingsPatch {
   }
   if (form.public_usage !== current.server.public_usage) {
     patch.public_usage = form.public_usage;
+  }
+  if (form.store_key_secrets !== current.server.store_key_secrets) {
+    patch.store_key_secrets = form.store_key_secrets;
   }
   if (form.lan_access !== current.server.lan_access) {
     patch.lan_access = form.lan_access;
@@ -481,6 +486,25 @@ onMounted(load);
               </p>
             </div>
             <Switch id="setting-public-usage" v-model="form.public_usage" />
+          </div>
+
+          <div
+            class="flex items-start justify-between gap-4 rounded-md border p-4"
+          >
+            <div class="space-y-1">
+              <Label for="setting-store-key-secrets">Store key secrets</Label>
+              <p class="text-xs text-muted-foreground">
+                Keeps an encrypted copy of each minted key so the API Keys page
+                can reveal it. Off means a key is readable only at creation time
+                — turn it off if the router should not hold client keys in
+                recoverable form. Existing keys keep whatever they were minted
+                with.
+              </p>
+            </div>
+            <Switch
+              id="setting-store-key-secrets"
+              v-model="form.store_key_secrets"
+            />
           </div>
 
           <div class="grid gap-2 rounded-md border p-4">

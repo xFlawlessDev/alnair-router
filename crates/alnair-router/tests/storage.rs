@@ -27,6 +27,26 @@ fn connection_repo(db: &Db) -> ConnectionRepository {
     ConnectionRepository::new(db.pool.clone(), test_cipher())
 }
 
+fn api_key(name: &str) -> CreateApiKey {
+    CreateApiKey {
+        name: name.to_string(),
+        enabled: true,
+        rate_limit_per_minute: None,
+        daily_budget_usd: None,
+        weekly_budget_usd: None,
+        monthly_budget_usd: None,
+        lifetime_budget_usd: None,
+        daily_token_limit: None,
+        weekly_token_limit: None,
+        monthly_token_limit: None,
+        lifetime_token_limit: None,
+        budget_mode: None,
+        plan_id: None,
+        allowed_models: None,
+        expires_at: None,
+    }
+}
+
 fn connection(name: &str, provider_type: &str) -> CreateConnection {
     CreateConnection {
         name: name.to_string(),
@@ -575,7 +595,7 @@ async fn combo_delete_cascades_entries() {
 #[tokio::test]
 async fn api_key_lookup_by_secret_only_matches_enabled() {
     let db = db().await;
-    let repo = ApiKeyRepository::new(db.pool.clone());
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let created = repo
         .create(CreateApiKey {
@@ -616,32 +636,116 @@ async fn api_key_lookup_by_secret_only_matches_enabled() {
 }
 
 #[tokio::test]
-async fn api_key_secret_is_never_stored_plaintext() {
+async fn api_key_secret_is_stored_encrypted() {
     let db = db().await;
-    let repo = ApiKeyRepository::new(db.pool.clone());
-    let created = repo
-        .create(CreateApiKey {
-            name: "k".to_string(),
-            enabled: true,
-            rate_limit_per_minute: None,
-            daily_budget_usd: None,
-            weekly_budget_usd: None,
-            monthly_budget_usd: None,
-            lifetime_budget_usd: None,
-            daily_token_limit: None,
-            weekly_token_limit: None,
-            monthly_token_limit: None,
-            lifetime_token_limit: None,
-            budget_mode: None,
-            plan_id: None,
-            allowed_models: None,
-            expires_at: None,
-        })
-        .await
-        .expect("key");
+    let cipher = test_cipher();
+    let repo = ApiKeyRepository::new(db.pool.clone(), cipher.clone());
+    let created = repo.create(api_key("k")).await.expect("key");
 
     assert_ne!(created.key.key_hash, created.secret);
     assert_eq!(created.key.key_hash.len(), 64);
+
+    // The column holds ciphertext, never the key itself.
+    let stored: Option<String> = sqlx::query_scalar("SELECT secret_enc FROM api_keys WHERE id = ?")
+        .bind(&created.key.id)
+        .fetch_one(&db.pool)
+        .await
+        .expect("raw secret_enc");
+
+    let stored = stored.expect("a stored secret");
+    assert!(!stored.contains("sk-router-"));
+    assert!(CredentialCipher::is_encrypted(&stored));
+    assert_eq!(cipher.decrypt(&stored).expect("decrypt"), created.secret);
+}
+
+#[tokio::test]
+async fn reveal_secret_returns_the_plaintext() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
+    let created = repo.create(api_key("k")).await.expect("key");
+
+    let revealed = repo
+        .reveal_secret(&created.key.id)
+        .await
+        .expect("reveal")
+        .expect("a stored secret");
+
+    assert_eq!(revealed, created.secret);
+}
+
+#[tokio::test]
+async fn reveal_secret_is_none_when_not_stored() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher()).storing_secrets(false);
+    let created = repo.create(api_key("k")).await.expect("key");
+
+    assert!(created.key.secret_enc.is_none());
+    assert!(
+        repo.reveal_secret(&created.key.id)
+            .await
+            .expect("reveal")
+            .is_none()
+    );
+    // The key still authenticates: only the reversible copy is missing.
+    assert!(
+        repo.find_by_secret(&created.secret)
+            .await
+            .expect("lookup")
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn reveal_secret_rejects_an_unknown_key() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
+
+    assert!(matches!(
+        repo.reveal_secret("missing").await,
+        Err(Error::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn rotate_replaces_the_secret_and_invalidates_the_old_one() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
+    let created = repo.create(api_key("k")).await.expect("key");
+
+    let rotated = repo.rotate(&created.key.id).await.expect("rotate");
+
+    assert_ne!(rotated.secret, created.secret);
+    assert_eq!(rotated.key.id, created.key.id);
+    assert_eq!(
+        repo.reveal_secret(&created.key.id)
+            .await
+            .expect("reveal")
+            .expect("a stored secret"),
+        rotated.secret
+    );
+    assert!(
+        repo.find_by_secret(&created.secret)
+            .await
+            .expect("lookup")
+            .is_none()
+    );
+    assert!(
+        repo.find_by_secret(&rotated.secret)
+            .await
+            .expect("lookup")
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn rotate_rejects_an_unknown_key() {
+    let db = db().await;
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
+
+    assert!(matches!(
+        repo.rotate("missing").await,
+        Err(Error::NotFound(_))
+    ));
 }
 
 #[tokio::test]
@@ -837,7 +941,7 @@ async fn usage_list_returns_newest_first() -> Result<()> {
 #[tokio::test]
 async fn api_key_limits_and_budget_round_trip() {
     let db = db().await;
-    let repo = ApiKeyRepository::new(db.pool.clone());
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
     let created = repo
@@ -907,7 +1011,7 @@ async fn api_key_limits_and_budget_round_trip() {
 #[tokio::test]
 async fn expired_keys_are_detected() {
     let db = db().await;
-    let repo = ApiKeyRepository::new(db.pool.clone());
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let expired = repo
         .create(CreateApiKey {
@@ -936,7 +1040,7 @@ async fn expired_keys_are_detected() {
 #[tokio::test]
 async fn api_key_budget_mode_requires_a_budget() {
     let db = db().await;
-    let repo = ApiKeyRepository::new(db.pool.clone());
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let error = repo
         .create(CreateApiKey {
@@ -965,7 +1069,7 @@ async fn api_key_budget_mode_requires_a_budget() {
 #[tokio::test]
 async fn a_single_window_satisfies_the_budget_mode_pair() {
     let db = db().await;
-    let repo = ApiKeyRepository::new(db.pool.clone());
+    let repo = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let created = repo
         .create(CreateApiKey {
@@ -996,7 +1100,7 @@ async fn a_single_window_satisfies_the_budget_mode_pair() {
 async fn usage_spend_since_sums_only_the_matching_key() {
     let db = db().await;
     let usage = UsageRepository::new(db.pool.clone());
-    let keys = ApiKeyRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let create_key = |name: &str| CreateApiKey {
         name: name.to_string(),
@@ -1056,7 +1160,7 @@ async fn usage_spend_since_sums_only_the_matching_key() {
 async fn spend_by_key_splits_windows_and_skips_null_keys() {
     let db = db().await;
     let usage = UsageRepository::new(db.pool.clone());
-    let keys = ApiKeyRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let create_key = |name: &str| CreateApiKey {
         name: name.to_string(),
@@ -1158,7 +1262,7 @@ async fn spend_by_key_splits_windows_and_skips_null_keys() {
 async fn spend_for_key_returns_zeroed_row_for_unused_key() {
     let db = db().await;
     let usage = UsageRepository::new(db.pool.clone());
-    let keys = ApiKeyRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let key = keys
         .create(CreateApiKey {
@@ -1207,7 +1311,7 @@ async fn spend_for_key_returns_zeroed_row_for_unused_key() {
 async fn spend_for_key_splits_windows_for_one_key() {
     let db = db().await;
     let usage = UsageRepository::new(db.pool.clone());
-    let keys = ApiKeyRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone(), test_cipher());
 
     let key = keys
         .create(CreateApiKey {

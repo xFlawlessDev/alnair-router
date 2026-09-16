@@ -2,10 +2,13 @@
 import {
   Check,
   Copy,
+  Eye,
+  EyeOff,
   KeyRound,
   Pencil,
   Plus,
   RefreshCw,
+  RotateCw,
   ShieldCheck,
   Trash2,
   TriangleAlert,
@@ -77,6 +80,13 @@ const formOpen = ref(false);
 const editing = ref<ApiKey | null>(null);
 const secret = ref<string | null>(null);
 const copied = ref(false);
+/** Decrypted secret per key id; absent until the row is revealed. */
+const revealed = ref<Map<string, string>>(new Map());
+/** Key ids whose secret was not stored, so reveal cannot be offered. */
+const unrevealable = ref<Set<string>>(new Set());
+const revealing = ref<string | null>(null);
+const rotating = ref<ApiKey | null>(null);
+const rotatingBusy = ref(false);
 const deleting = ref<ApiKey | null>(null);
 const deletingBusy = ref(false);
 const planFormOpen = ref(false);
@@ -188,10 +198,10 @@ async function confirmDeletePlan(): Promise<void> {
   }
 }
 
-async function copySecret(): Promise<void> {
-  if (!secret.value) return;
+async function copySecret(value: string | null): Promise<void> {
+  if (!value) return;
   try {
-    await navigator.clipboard.writeText(secret.value);
+    await navigator.clipboard.writeText(value);
     copied.value = true;
     toast.success("Key copied to clipboard");
   } catch {
@@ -199,13 +209,61 @@ async function copySecret(): Promise<void> {
   }
 }
 
-/** The plaintext secret is never stored, so only the prefix can be copied later. */
-async function copyPrefix(key: ApiKey): Promise<void> {
+/** Shows the row's secret, fetching it once and then toggling locally. */
+async function revealSecret(key: ApiKey): Promise<void> {
+  if (revealed.value.has(key.id)) {
+    const next = new Map(revealed.value);
+    next.delete(key.id);
+    revealed.value = next;
+    return;
+  }
+
+  revealing.value = key.id;
   try {
-    await navigator.clipboard.writeText(key.prefix);
-    toast.success(`Prefix for “${key.name}” copied`);
-  } catch {
-    toast.error("Clipboard is unavailable");
+    const { secret: value } = await api.revealKey(key.id);
+    revealed.value = new Map(revealed.value).set(key.id, value);
+  } catch (caught) {
+    if (caught instanceof ApiError && caught.status === 404) {
+      unrevealable.value = new Set(unrevealable.value).add(key.id);
+      toast.error(
+        "This key's secret was not stored — rotate it to get a new one",
+      );
+    } else {
+      toast.error(
+        caught instanceof ApiError
+          ? caught.message
+          : "Failed to reveal the key",
+      );
+    }
+  } finally {
+    revealing.value = null;
+  }
+}
+
+async function confirmRotate(): Promise<void> {
+  if (!rotating.value) return;
+  rotatingBusy.value = true;
+  const { id, name } = rotating.value;
+  try {
+    const created = await api.rotateKey(id);
+    secret.value = created.secret;
+    copied.value = false;
+    // The stored copy is now stale, and the key can be revealed again.
+    const nextRevealed = new Map(revealed.value);
+    nextRevealed.delete(id);
+    revealed.value = nextRevealed;
+    const nextUnrevealable = new Set(unrevealable.value);
+    nextUnrevealable.delete(id);
+    unrevealable.value = nextUnrevealable;
+    toast.success(`Key “${name}” rotated`);
+    rotating.value = null;
+    await load();
+  } catch (caught) {
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to rotate the key",
+    );
+  } finally {
+    rotatingBusy.value = false;
   }
 }
 
@@ -234,7 +292,7 @@ onMounted(load);
   <div class="flex flex-col gap-6">
     <PageHeader
       title="API Keys"
-      description="Router-issued client keys for /v1/*. Only a SHA-256 hash is stored server-side."
+      description="Router-issued client keys for /v1/*. Stored hashed, with an encrypted copy for reveal."
     >
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load">
@@ -257,7 +315,7 @@ onMounted(load);
     <EmptyState
       v-else-if="!keys.length"
       title="No API keys yet"
-      description="Keys authenticate /v1 requests when server.require_api_key is enabled. The secret is shown once at creation."
+      description="Keys authenticate /v1 requests when server.require_api_key is enabled. Reveal a key to copy it, or rotate it to mint a new secret."
     >
       <template #icon><KeyRound class="size-5" /></template>
       <template #action>
@@ -270,7 +328,7 @@ onMounted(load);
         <TableHeader>
           <TableRow>
             <TableHead>Name</TableHead>
-            <TableHead>Prefix</TableHead>
+            <TableHead>Key</TableHead>
             <TableHead>Rules</TableHead>
             <TableHead>Limits</TableHead>
             <TableHead>Usage</TableHead>
@@ -286,16 +344,42 @@ onMounted(load);
             <TableCell class="font-medium">{{ key.name }}</TableCell>
             <TableCell>
               <div class="flex items-center gap-1">
-                <code class="rounded bg-muted px-1.5 py-0.5 text-xs"
-                  >{{ key.prefix }}…</code
-                >
+                <code class="rounded bg-muted px-1.5 py-0.5 text-xs">
+                  {{ revealed.get(key.id) ?? `${key.prefix}…` }}
+                </code>
+                <template v-if="!unrevealable.has(key.id)">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    :disabled="revealing === key.id"
+                    :aria-label="
+                      revealed.has(key.id)
+                        ? `Hide key for ${key.name}`
+                        : `Reveal key for ${key.name}`
+                    "
+                    @click="revealSecret(key)"
+                  >
+                    <EyeOff v-if="revealed.has(key.id)" class="size-3" />
+                    <Eye v-else class="size-3" />
+                  </Button>
+                  <Button
+                    v-if="revealed.has(key.id)"
+                    variant="ghost"
+                    size="icon-sm"
+                    :aria-label="`Copy key for ${key.name}`"
+                    @click="copySecret(revealed.get(key.id) ?? null)"
+                  >
+                    <Copy class="size-3" />
+                  </Button>
+                </template>
                 <Button
+                  v-else
                   variant="ghost"
                   size="icon-sm"
-                  :aria-label="`Copy prefix for ${key.name}`"
-                  @click="copyPrefix(key)"
+                  :aria-label="`Rotate key for ${key.name}`"
+                  @click="rotating = key"
                 >
-                  <Copy class="size-3" />
+                  <RotateCw class="size-3" />
                 </Button>
               </div>
             </TableCell>
@@ -453,8 +537,8 @@ onMounted(load);
           <DialogTitle>Copy your key now</DialogTitle>
           <DialogDescription class="flex items-start gap-2">
             <TriangleAlert class="mt-0.5 size-4 shrink-0 text-destructive" />
-            This is the only time the secret is visible. Store it somewhere
-            safe.
+            Store it somewhere safe. You can reveal it again from the key row
+            while server.store_key_secrets is on.
           </DialogDescription>
         </DialogHeader>
         <div class="flex items-center gap-2">
@@ -467,7 +551,7 @@ onMounted(load);
             variant="outline"
             size="icon"
             aria-label="Copy key"
-            @click="copySecret"
+            @click="copySecret(secret)"
           >
             <Check v-if="copied" class="text-primary" />
             <Copy v-else />
@@ -478,6 +562,15 @@ onMounted(load);
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <ConfirmDialog
+      :open="rotating !== null"
+      title="Rotate API key?"
+      :description="`“${rotating?.name}” gets a new secret and clients using the old one immediately receive 401 responses.`"
+      :pending="rotatingBusy"
+      @update:open="rotating = $event ? rotating : null"
+      @confirm="confirmRotate"
+    />
 
     <ConfirmDialog
       :open="deleting !== null"

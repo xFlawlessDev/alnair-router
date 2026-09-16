@@ -13,6 +13,18 @@ use tower::ServiceExt;
 
 const TEST_SECRET: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
+/// The same cipher the app under test builds from `TEST_SECRET`, so secrets
+/// written by helpers decrypt under the running app.
+fn test_cipher() -> std::sync::Arc<alnair_router::crypto::CredentialCipher> {
+    use alnair_router::config::SecretsConfig;
+    std::sync::Arc::new(
+        alnair_router::crypto::CredentialCipher::from_config(&SecretsConfig {
+            key: Some(TEST_SECRET.to_string()),
+        })
+        .expect("cipher"),
+    )
+}
+
 /// Builds an app over a fresh in-memory database with a test encryption key.
 async fn app_with_config(mut config: RouterConfig) -> (axum::Router, Db) {
     let db = Db::connect_in_memory().await.expect("db");
@@ -57,7 +69,7 @@ async fn file_app() -> (axum::Router, Db, tempfile::TempDir) {
 
 /// Mints a router-issued client key and returns its plaintext secret.
 async fn mint_key(db: &Db, name: &str) -> String {
-    ApiKeyRepository::new(db.pool.clone())
+    ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: name.to_string(),
             enabled: true,
@@ -267,6 +279,27 @@ async fn chat_completion_without_messages_is_a_400() {
 }
 
 #[tokio::test]
+async fn chat_completion_accepts_a_multi_megabyte_body() {
+    let (app, _db) = app(false).await;
+    // Comfortably past the axum default 2 MiB limit: large-context requests
+    // must reach the router instead of failing with 413.
+    let prompt = "x".repeat(3 * 1024 * 1024);
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "nope/nothing",
+            "messages": [{ "role": "user", "content": prompt }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["type"], "not_found_error");
+}
+
+#[tokio::test]
 async fn connection_with_ollama_is_rejected() {
     let (app, _db) = app(false).await;
     let (status, body) = json_request(
@@ -465,26 +498,27 @@ async fn api_key_auth_is_enforced_when_required() {
 
     // With a valid key, the request proceeds past auth (and then fails on the
     // unknown model, proving auth passed).
-    let created = alnair_router::db::repos::api_keys::ApiKeyRepository::new(db.pool.clone())
-        .create(CreateApiKey {
-            name: "test".to_string(),
-            enabled: true,
-            rate_limit_per_minute: None,
-            daily_budget_usd: None,
-            weekly_budget_usd: None,
-            monthly_budget_usd: None,
-            lifetime_budget_usd: None,
-            daily_token_limit: None,
-            weekly_token_limit: None,
-            monthly_token_limit: None,
-            lifetime_token_limit: None,
-            budget_mode: None,
-            plan_id: None,
-            allowed_models: None,
-            expires_at: None,
-        })
-        .await
-        .expect("mint key");
+    let created =
+        alnair_router::db::repos::api_keys::ApiKeyRepository::new(db.pool.clone(), test_cipher())
+            .create(CreateApiKey {
+                name: "test".to_string(),
+                enabled: true,
+                rate_limit_per_minute: None,
+                daily_budget_usd: None,
+                weekly_budget_usd: None,
+                monthly_budget_usd: None,
+                lifetime_budget_usd: None,
+                daily_token_limit: None,
+                weekly_token_limit: None,
+                monthly_token_limit: None,
+                lifetime_token_limit: None,
+                budget_mode: None,
+                plan_id: None,
+                allowed_models: None,
+                expires_at: None,
+            })
+            .await
+            .expect("mint key");
 
     let (status, body) = json_request_with_auth(
         &app,
@@ -729,7 +763,7 @@ async fn budget_block_mode_returns_402() {
     config.server.require_api_key = true;
     let (app, db) = app_with_config(config).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "budgeted".to_string(),
             enabled: true,
@@ -770,7 +804,7 @@ async fn budget_warn_mode_passes_with_a_warning_header() {
     config.server.require_api_key = true;
     let (app, db) = app_with_config(config).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "warned".to_string(),
             enabled: true,
@@ -814,7 +848,7 @@ async fn daily_budget_block_mode_returns_402() {
     config.server.require_api_key = true;
     let (app, db) = app_with_config(config).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "daily-capped".to_string(),
             enabled: true,
@@ -862,7 +896,7 @@ async fn lifetime_budget_block_mode_returns_402() {
     config.server.require_api_key = true;
     let (app, db) = app_with_config(config).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "lifetime-capped".to_string(),
             enabled: true,
@@ -909,7 +943,7 @@ async fn token_limit_block_mode_returns_402() {
     config.server.require_api_key = true;
     let (app, db) = app_with_config(config).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "token-capped".to_string(),
             enabled: true,
@@ -955,7 +989,7 @@ async fn token_limit_block_mode_returns_402() {
 async fn key_spend_endpoint_reports_window_totals() {
     let (app, db) = app(false).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "monitored".to_string(),
             enabled: true,
@@ -1001,7 +1035,7 @@ async fn expired_key_is_rejected_with_401() {
     config.server.require_api_key = true;
     let (app, db) = app_with_config(config).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "stale".to_string(),
             enabled: true,
@@ -1093,7 +1127,7 @@ async fn expired_plan_fails_closed_for_attached_keys() {
 #[tokio::test]
 async fn key_patch_updates_limits_and_enabled_state() {
     let (app, db) = app(false).await;
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "editable".to_string(),
             enabled: true,
@@ -2068,7 +2102,7 @@ async fn key_allowlist_blocks_models_outside_the_list() {
     config.server.require_api_key = true;
     let (app, db) = app_with_config(config).await;
 
-    let created = ApiKeyRepository::new(db.pool.clone())
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
         .create(CreateApiKey {
             name: "restricted".to_string(),
             enabled: true,
@@ -2420,6 +2454,64 @@ async fn settings_toggle_client_auth_and_hot_apply() {
 }
 
 #[tokio::test]
+async fn settings_toggle_store_key_secrets_hot() {
+    let (app, db) = app(true).await;
+
+    let (status, body) = get(&app, "/api/settings").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["server"]["store_key_secrets"], true, "defaults to on");
+
+    // Turning it off must apply to the very next key minted, with no restart.
+    let (status, _) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "store_key_secrets": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, created) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "hash-only" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = created["key"]["id"].as_str().expect("id");
+
+    let (status, _) = get(&app, &format!("/api/keys/{id}/secret")).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "nothing was stored to reveal"
+    );
+
+    // Flipping it back on only affects keys minted from then on.
+    let (status, _) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        serde_json::json!({ "store_key_secrets": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let secret = mint_key(&db, "revealable").await;
+    let id = ApiKeyRepository::new(db.pool.clone(), test_cipher())
+        .find_by_secret(&secret)
+        .await
+        .expect("lookup")
+        .expect("key")
+        .id;
+
+    let (status, body) = get(&app, &format!("/api/keys/{id}/secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["secret"], secret);
+}
+
+#[tokio::test]
 async fn settings_admin_token_is_write_only_and_enforced() {
     let (app, _db) = app(false).await;
 
@@ -2666,7 +2758,7 @@ async fn model_catalog_lists_providers_and_prices() {
 async fn public_usage_is_scoped_to_the_calling_key() {
     let (app, db) = app(false).await;
 
-    let repository = ApiKeyRepository::new(db.pool.clone());
+    let repository = ApiKeyRepository::new(db.pool.clone(), test_cipher());
     let first = repository
         .create(CreateApiKey {
             name: "first".to_string(),
@@ -3451,4 +3543,161 @@ async fn connection_accounts_round_trip_and_invalidate() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn reveal_key_returns_the_secret() {
+    let (app, db) = app(true).await;
+    let secret = mint_key(&db, "revealable").await;
+    let id = ApiKeyRepository::new(db.pool.clone(), test_cipher())
+        .find_by_secret(&secret)
+        .await
+        .expect("lookup")
+        .expect("key")
+        .id;
+
+    let (status, body) = get(&app, &format!("/api/keys/{id}/secret")).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["secret"], secret);
+}
+
+#[tokio::test]
+async fn reveal_key_404s_when_no_secret_was_stored() {
+    let (app, db) = app(true).await;
+    let created = ApiKeyRepository::new(db.pool.clone(), test_cipher())
+        .storing_secrets(false)
+        .create(CreateApiKey {
+            name: "hash-only".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("key");
+
+    let (status, _) = get(&app, &format!("/api/keys/{}/secret", created.key.id)).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn reveal_key_404s_for_an_unknown_key() {
+    let (app, _db) = app(true).await;
+
+    let (status, _) = get(&app, "/api/keys/does-not-exist/secret").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn reveal_key_requires_the_admin_token() {
+    let (app, db) = app_with_admin_token("s3cret").await;
+    let secret = mint_key(&db, "guarded").await;
+    let id = ApiKeyRepository::new(db.pool.clone(), test_cipher())
+        .find_by_secret(&secret)
+        .await
+        .expect("lookup")
+        .expect("key")
+        .id;
+
+    let (status, _) = get(&app, &format!("/api/keys/{id}/secret")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) =
+        get_with_auth(&app, &format!("/api/keys/{id}/secret"), Some("s3cret")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["secret"], secret);
+}
+
+#[tokio::test]
+async fn rotate_key_mints_a_new_secret_and_invalidates_the_old_one() {
+    let (app, db) = app(true).await;
+    let secret = mint_key(&db, "rotating").await;
+    let id = ApiKeyRepository::new(db.pool.clone(), test_cipher())
+        .find_by_secret(&secret)
+        .await
+        .expect("lookup")
+        .expect("key")
+        .id;
+
+    let response =
+        raw_request_with_auth(&app, "POST", &format!("/api/keys/{id}/rotate"), None, None).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = body_json(response).await;
+    let rotated = body["secret"].as_str().expect("secret").to_string();
+    assert_ne!(rotated, secret);
+
+    // The new secret authenticates; the old one is rejected.
+    let (status, _) = get_with_auth(&app, "/v1/models", Some(&rotated)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = get_with_auth(&app, "/v1/models", Some(&secret)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // And the dashboard can reveal the replacement.
+    let (status, body) = get(&app, &format!("/api/keys/{id}/secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["secret"], rotated);
+}
+
+#[tokio::test]
+async fn rotate_key_404s_for_an_unknown_key() {
+    let (app, _db) = app(true).await;
+
+    let response =
+        raw_request_with_auth(&app, "POST", "/api/keys/does-not-exist/rotate", None, None).await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn rotate_key_requires_the_admin_token() {
+    let (app, db) = app_with_admin_token("s3cret").await;
+    let secret = mint_key(&db, "guarded").await;
+    let id = ApiKeyRepository::new(db.pool.clone(), test_cipher())
+        .find_by_secret(&secret)
+        .await
+        .expect("lookup")
+        .expect("key")
+        .id;
+
+    let response =
+        raw_request_with_auth(&app, "POST", &format!("/api/keys/{id}/rotate"), None, None).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        &format!("/api/keys/{id}/rotate"),
+        None,
+        Some("s3cret"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn list_keys_never_exposes_stored_secrets() {
+    let (app, db) = app(true).await;
+    let secret = mint_key(&db, "listed").await;
+
+    let (status, body) = get(&app, "/api/keys").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let listed = &body[0];
+    assert!(listed.get("secret_enc").is_none());
+    assert!(listed.get("key_hash").is_none());
+    assert_ne!(listed["prefix"], secret);
 }

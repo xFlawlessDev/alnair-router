@@ -20,6 +20,8 @@ pub struct SettingsPatch {
     pub admin_token: Option<Option<String>>,
     pub readiness_upstream_checks: Option<bool>,
     pub public_usage: Option<bool>,
+    /// Keep a reversible copy of minted client keys, enabling reveal.
+    pub store_key_secrets: Option<bool>,
     /// LAN access; flips the listener to every interface.
     pub lan_access: Option<bool>,
     /// Browser CORS allowlist; an empty array disables CORS headers.
@@ -62,6 +64,7 @@ impl SettingsPatch {
             self.readiness_upstream_checks,
         );
         set(&mut overrides.public_usage, self.public_usage);
+        set(&mut overrides.store_key_secrets, self.store_key_secrets);
         set(&mut overrides.lan_access, self.lan_access);
         if let Some(origins) = self.cors_origins {
             overrides.cors_origins = Some(normalize_origins(origins)?);
@@ -163,6 +166,7 @@ pub struct ServerSettingsView {
     pub require_api_key: bool,
     pub readiness_upstream_checks: bool,
     pub public_usage: bool,
+    pub store_key_secrets: bool,
     pub lan_access: bool,
     pub cors_origins: Vec<String>,
     pub admin_token_set: bool,
@@ -231,6 +235,7 @@ impl SettingsResponse {
                 require_api_key: config.server.require_api_key,
                 readiness_upstream_checks: config.server.readiness_upstream_checks,
                 public_usage: config.server.public_usage,
+                store_key_secrets: config.server.store_key_secrets,
                 lan_access: config.server.lan_access,
                 cors_origins: config.server.cors_origins.clone(),
                 admin_token_set: config.server.requires_admin_token(),

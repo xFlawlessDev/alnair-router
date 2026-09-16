@@ -30,6 +30,9 @@ pub struct SettingsOverrides {
     pub readiness_upstream_checks: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_usage: Option<bool>,
+    /// Keep a reversible copy of minted client keys, enabling reveal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store_key_secrets: Option<bool>,
     /// Bind every interface (LAN access); the listener rebinds when this flips.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lan_access: Option<bool>,
@@ -86,6 +89,9 @@ impl SettingsOverrides {
         }
         if let Some(value) = self.public_usage {
             config.server.public_usage = value;
+        }
+        if let Some(value) = self.store_key_secrets {
+            config.server.store_key_secrets = value;
         }
         if let Some(value) = self.lan_access {
             config.server.lan_access = value;
@@ -167,6 +173,9 @@ impl SettingsOverrides {
         }
         if self.public_usage.is_some() {
             keys.push("server.public_usage");
+        }
+        if self.store_key_secrets.is_some() {
+            keys.push("server.store_key_secrets");
         }
         if self.lan_access.is_some() {
             keys.push("server.lan_access");

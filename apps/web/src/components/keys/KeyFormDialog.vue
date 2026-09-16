@@ -218,7 +218,8 @@ async function save(): Promise<void> {
             >Changes apply immediately to new requests.</template
           >
           <template v-else>
-            The plaintext secret is shown exactly once and never stored.
+            The secret is shown once here and can be revealed later from the key
+            row.
           </template>
         </DialogDescription>
       </DialogHeader>

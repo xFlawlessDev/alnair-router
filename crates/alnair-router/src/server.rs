@@ -1,5 +1,6 @@
 //! Axum router construction.
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, patch, post};
 use axum::{Router, middleware as axum_middleware};
 use tower_http::trace::TraceLayer;
@@ -86,6 +87,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/keys/{id}",
             delete(handlers::admin::delete_key).patch(handlers::admin::update_key),
         )
+        .route("/api/keys/{id}/secret", get(handlers::admin::reveal_key))
+        .route("/api/keys/{id}/rotate", post(handlers::admin::rotate_key))
         .route(
             "/api/plans",
             get(handlers::admin::list_plans).post(handlers::admin::create_plan),
@@ -177,10 +180,13 @@ pub fn build_router(state: AppState) -> Router {
         app = app.fallback(handlers::web::serve_asset);
     }
 
-    app.layer(axum_middleware::from_fn_with_state(
-        state.clone(),
-        middleware::cors,
-    ))
-    .layer(TraceLayer::new_for_http())
-    .with_state(state)
+    // Large-context models ship multi-megabyte payloads (huge prompts, inline
+    // base64 media), so the axum default 2 MiB `DefaultBodyLimit` is lifted.
+    app.layer(DefaultBodyLimit::disable())
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::cors,
+        ))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }

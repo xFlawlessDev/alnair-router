@@ -162,8 +162,8 @@ The dashboard is protected by a **password** (no username). First-run flow:
 `/v1` is separate: it takes router-issued client keys. Set
 `server.require_api_key = true` (Settings or config) before exposing the
 network, or anyone who can reach the port can spend upstream credits. Keys are
-minted on the API Keys page (hashed at rest, revocable, rate limits and budgets
-per key).
+minted on the API Keys page (hashed for lookup, with an encrypted copy kept so
+the dashboard can reveal them, revocable, rate limits and budgets per key).
 
 Deployment notes:
 
@@ -285,6 +285,11 @@ Key settings:
 - `secrets.key` — AES-256-GCM key for upstream credentials at rest. Optional:
   when unset the router generates `$ALNAIR_ROUTER_HOME/secrets.key` on first
   run and reuses it. Legacy plaintext rows are re-encrypted on boot.
+- `server.store_key_secrets` (default `true`) — keep a reversible copy of every
+  router-issued client key so the dashboard can reveal it. Off means a key is
+  only readable at creation time; use it when you would rather the router not
+  hold client keys in recoverable form. This also protects client keys, so back
+  up `secrets.key` together with the database.
 - `server.admin_token` — optional bearer token for scripts and CI. The
   dashboard itself signs in with a password (see
   [Exposing beyond loopback](#exposing-beyond-loopback)).

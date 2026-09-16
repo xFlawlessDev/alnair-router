@@ -31,6 +31,11 @@ readiness_upstream_checks = false
 # Expose the self-service usage page (/me) and GET /api/public/usage, where a
 # client reads its own rollup with a router-issued API key.
 public_usage = true
+# Keep an encrypted copy of every minted client key so the API Keys page can
+# reveal it later. Turning this off restores the hash-only posture, where a key
+# is readable only at creation time and can otherwise only be rotated. Keys
+# minted before this was enabled have no recoverable secret.
+store_key_secrets = true
 # Bind every interface so the LAN can reach the router. The listener re-binds
 # when this changes (Settings toggle), and admin routes then require the
 # dashboard password. This file value is the boot default.

@@ -210,7 +210,8 @@ impl AppState {
     }
 
     pub fn api_keys(&self) -> ApiKeyRepository {
-        ApiKeyRepository::new(self.pool.clone())
+        let store_secrets = self.config_snapshot().server.store_key_secrets;
+        ApiKeyRepository::new(self.pool.clone(), self.cipher.clone()).storing_secrets(store_secrets)
     }
 
     pub fn key_plans(&self) -> KeyPlanRepository {

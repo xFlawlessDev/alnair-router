@@ -144,6 +144,7 @@ mod tests {
             id: "key-1".to_string(),
             name: "test".to_string(),
             key_hash: "hash".to_string(),
+            secret_enc: None,
             prefix: "sk-router-".to_string(),
             enabled: 1,
             rate_limit_per_minute: rate,

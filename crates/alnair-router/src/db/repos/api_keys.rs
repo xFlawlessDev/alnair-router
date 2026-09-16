@@ -1,11 +1,14 @@
 //! Router-issued client API keys keyed.
 
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
 
+use crate::crypto::CredentialCipher;
 use crate::error::{Error, Result};
 use crate::limits::{BudgetMode, BudgetWindows, TokenWindows};
 
@@ -17,6 +20,11 @@ pub struct ApiKey {
     pub name: String,
     #[serde(skip_serializing)]
     pub key_hash: String,
+    /// AES-256-GCM ciphertext of the secret, for the dashboard reveal. `None`
+    /// when `server.store_key_secrets` was off at mint time or the key predates
+    /// the column. Never serialized: only the reveal path decrypts it.
+    #[serde(skip_serializing)]
+    pub secret_enc: Option<String>,
     pub prefix: String,
     pub enabled: i64,
     /// Per-key requests-per-minute override; `None` inherits the global default.
@@ -99,11 +107,13 @@ impl ApiKey {
     }
 }
 
-/// A newly minted key plus the plaintext secret, returned exactly once.
+/// A newly minted key plus its plaintext secret, returned by `create` and
+/// `rotate`.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreatedApiKey {
     pub key: ApiKey,
-    /// Plaintext key. Only available at creation time; never persisted.
+    /// Plaintext key. Shown once inline here, and retrievable later through the
+    /// admin reveal endpoint when `server.store_key_secrets` is on.
     pub secret: String,
 }
 
@@ -283,11 +293,24 @@ pub(crate) async fn validate_plan(
 
 pub struct ApiKeyRepository {
     pool: SqlitePool,
+    cipher: Arc<CredentialCipher>,
+    store_secrets: bool,
 }
 
 impl ApiKeyRepository {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, cipher: Arc<CredentialCipher>) -> Self {
+        Self {
+            pool,
+            cipher,
+            store_secrets: true,
+        }
+    }
+
+    /// Keeps (or drops) a reversible copy of each new secret. Off matches the
+    /// hash-only posture: keys can still authenticate, but never be revealed.
+    pub fn storing_secrets(mut self, store: bool) -> Self {
+        self.store_secrets = store;
+        self
     }
 
     pub async fn list(&self) -> Result<Vec<ApiKey>> {
@@ -333,18 +356,20 @@ impl ApiKeyRepository {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
         let prefix: String = secret.chars().take(KEY_PREFIX.len() + 8).collect();
+        let secret_enc = self.encrypted_secret(&secret)?;
 
         sqlx::query(
             "INSERT INTO api_keys
-                (id, name, key_hash, prefix, enabled, rate_limit_per_minute, daily_budget_usd,
-                 weekly_budget_usd, monthly_budget_usd, lifetime_budget_usd, daily_token_limit,
-                 weekly_token_limit, monthly_token_limit, lifetime_token_limit, budget_mode,
-                 plan_id, allowed_models, created_at, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, name, key_hash, secret_enc, prefix, enabled, rate_limit_per_minute,
+                 daily_budget_usd, weekly_budget_usd, monthly_budget_usd, lifetime_budget_usd,
+                 daily_token_limit, weekly_token_limit, monthly_token_limit, lifetime_token_limit,
+                 budget_mode, plan_id, allowed_models, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
         .bind(hash_key(&secret))
+        .bind(&secret_enc)
         .bind(&prefix)
         .bind(i64::from(input.enabled))
         .bind(rate_limit)
@@ -482,6 +507,61 @@ impl ApiKeyRepository {
         self.get(id)
             .await?
             .ok_or_else(|| Error::Internal("api key disappeared after update".to_string()))
+    }
+
+    /// Encrypts a freshly minted secret when the storage toggle is on.
+    fn encrypted_secret(&self, secret: &str) -> Result<Option<String>> {
+        match self.store_secrets {
+            true => Ok(Some(self.cipher.encrypt(secret)?)),
+            false => Ok(None),
+        }
+    }
+
+    /// Decrypts the stored secret for reveal. `Ok(None)` means the key exists
+    /// but no reversible copy was kept, so only rotation can recover one.
+    pub async fn reveal_secret(&self, id: &str) -> Result<Option<String>> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT secret_enc FROM api_keys WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        let stored = row
+            .ok_or_else(|| Error::NotFound(format!("api key '{id}' not found")))?
+            .0;
+
+        match stored {
+            Some(ciphertext) => Ok(Some(self.cipher.decrypt(&ciphertext)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Replaces a key's secret, invalidating the previous one immediately. The
+    /// only way to obtain a copyable secret for a key minted before secrets
+    /// were stored.
+    pub async fn rotate(&self, id: &str) -> Result<CreatedApiKey> {
+        self.get(id)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("api key '{id}' not found")))?;
+
+        let secret = format!("{KEY_PREFIX}{}", uuid::Uuid::new_v4().simple());
+        let prefix: String = secret.chars().take(KEY_PREFIX.len() + 8).collect();
+        let secret_enc = self.encrypted_secret(&secret)?;
+
+        sqlx::query("UPDATE api_keys SET key_hash = ?, prefix = ?, secret_enc = ? WHERE id = ?")
+            .bind(hash_key(&secret))
+            .bind(&prefix)
+            .bind(&secret_enc)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        let key = self
+            .get(id)
+            .await?
+            .ok_or_else(|| Error::Internal("api key disappeared after rotate".to_string()))?;
+
+        Ok(CreatedApiKey { key, secret })
     }
 
     /// Looks up an enabled key by its plaintext secret.

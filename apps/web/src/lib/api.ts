@@ -35,6 +35,7 @@ import type {
   PublicCatalogResponse,
   PricingSyncStatus,
   RestoreSummary,
+  RevealedApiKey,
   SettingsPatch,
   SettingsResponse,
   UpstreamModelsResponse,
@@ -335,6 +336,10 @@ export const api = {
   updateKey: (id: ID, body: Partial<ApiKeyInput>) =>
     request<ApiKey>("PATCH", `/api/keys/${id}`, { body }),
   deleteKey: (id: ID) => request<void>("DELETE", `/api/keys/${id}`),
+  revealKey: (id: ID) =>
+    request<RevealedApiKey>("GET", `/api/keys/${id}/secret`),
+  rotateKey: (id: ID) =>
+    request<CreatedApiKey>("POST", `/api/keys/${id}/rotate`),
   usageByKey: () => request<KeySpend[]>("GET", "/api/usage/keys"),
 
   listPlans: () => request<KeyPlan[]>("GET", "/api/plans"),

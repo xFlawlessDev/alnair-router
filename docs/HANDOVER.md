@@ -166,7 +166,7 @@ POST /v1/chat/completions { "model": "free-forever" }
 | `aliases` | `prefix` → `connection_id`, optional `model_override`. Cascades on connection delete. |
 | `combos` | Named fallback chains. |
 | `combo_entries` | Ordered tiers. `model_ref` can be an alias ref, a bare model, or another combo. |
-| `api_keys` | Router-issued client keys. Stores SHA-256 `key_hash`, never the secret. |
+| `api_keys` | Router-issued client keys. Stores SHA-256 `key_hash` for lookup plus AES-256-GCM `secret_enc` for reveal, gated by `server.store_key_secrets`. |
 | `usage_records` | One row per attempt — failures included, not just successes. |
 | `settings` | Single JSON row of dashboard-managed overrides (migration `0010_settings.sql`). |
 
@@ -565,6 +565,31 @@ suite should tell you.
     restores them before it commits; `provider_type_rebuild_keeps_children`
     runs the migration against a seeded database to keep that honest.
 
+29. **The inbound body limit is disabled.** `build_router` layers
+    `DefaultBodyLimit::disable()`, so the axum default 2 MiB cap no longer
+    applies to the buffering extractors (`Json<…>`, `Bytes`) on `/v1/*`.
+    Large-context models ship multi-megabyte requests — long prompts, inline
+    base64 media, audio uploads — and the old cap rejected them with a `413`
+    before any handler ran. `chat_completion_accepts_a_multi_megabyte_body`
+    pins this. (`server.rs`)
+
+30. **Router-issued keys are stored hashed *and* encrypted.** `api_keys` keeps
+    the SHA-256 `key_hash` that authenticates inbound calls, and additionally
+    an AES-256-GCM `secret_enc` under the same `secrets.key` as upstream
+    credentials — without it the plaintext key was unrecoverable the moment it
+    was minted, so the dashboard could only ever show an 18-character prefix.
+    `secret_enc` is never serialized (`#[serde(skip_serializing)]`), so
+    `GET /api/keys` cannot leak it; only `GET /api/keys/{id}/secret` decrypts,
+    and it is admin-guarded. The toggle is `server.store_key_secrets` (default
+    on), applied live through Settings, so turning it off restores the
+    hash-only posture for keys minted from then on. Two consequences worth
+    remembering: keys created before migration `0018` have no recoverable
+    secret and must be rotated (`POST /api/keys/{id}/rotate`) to get a copyable
+    one, and `secrets.key` now protects client keys as well, so backups must
+    keep it alongside the database — `verify_credentials` refuses a restore
+    whose `secret_enc` values do not decrypt. (`db/repos/api_keys.rs`,
+    `handlers/admin/keys.rs`, `backup.rs`)
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -728,7 +753,7 @@ Response headers report the routing decision:
 | `crates/alnair-llm/src/**` (81) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff |
 | `tests/resolve.rs` (24) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names |
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
-| `tests/routes.rs` (41) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard |
+| `tests/routes.rs` (41) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/streaming.rs` (5) | SSE translation: streamed tool calls + `finish_reason`, reasoning, opt-in usage chunk, and the Anthropic `tool_use`/`thinking` block sequence |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |

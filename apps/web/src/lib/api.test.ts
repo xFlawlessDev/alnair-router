@@ -150,6 +150,28 @@ describe("api", () => {
     );
   });
 
+  it("reveals and rotates keys through the admin routes", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(jsonResponse({ secret: "sk-router-abc" })),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    setAdminToken("secret-token");
+
+    await expect(api.revealKey("key-1")).resolves.toEqual({
+      secret: "sk-router-abc",
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/keys/key-1/secret");
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+
+    await api.rotateKey("key-1");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/keys/key-1/rotate");
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
+  });
+
   it("serializes usage filters and skips blanks", async () => {
     const fetchMock = vi
       .fn()
