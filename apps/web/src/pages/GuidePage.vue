@@ -38,7 +38,7 @@ const openAiEndpoints = [
     "Chat completions: streaming (SSE) or plain JSON.",
   ],
   ["POST /v1/responses", "OpenAI Responses shape."],
-  ["GET /v1/models", "Lists aliases, combos and connections as model ids."],
+  ["GET /v1/models", "Lists configured aliases and combos as model ids."],
   ["GET /v1/models/info", "Per-reference metadata, including combo tiers."],
   ["POST /v1/embeddings", "Proxied to the resolved connection."],
   ["POST /v1/images/generations", "Proxied."],

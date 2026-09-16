@@ -423,6 +423,70 @@ async fn aliases_and_combos_appear_in_the_model_list() {
         ids.contains(&"free-forever".to_string()),
         "combo listed: {ids:?}"
     );
+    // A connection name is not a routable reference, so it must not be offered
+    // as a model id.
+    assert!(
+        !ids.contains(&"glm-main".to_string()),
+        "connection must not be listed: {ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_connection_name_is_not_a_model_reference() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "glm-main",
+            "provider_type": "openai-compatible",
+            "base_url": "https://example.invalid/v1"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    // Neither the bare name nor `name/model` resolves: a connection needs an
+    // alias before callers can address it.
+    for reference in ["glm-main", "glm-main/glm-4.6"] {
+        let (status, body) = json_request(
+            &app,
+            "POST",
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": reference,
+                "messages": [{ "role": "user", "content": "hi" }]
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "reference {reference}: {body}"
+        );
+    }
+
+    // Adding an alias makes the same connection reachable, proving the two
+    // rejections above came from resolution rather than a broken upstream.
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({ "prefix": "glm", "connection_id": connection_id }),
+    )
+    .await;
+
+    let (_, body) = get(&app, "/v1/models").await;
+    let ids: Vec<String> = body["data"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter_map(|entry| entry["id"].as_str().map(str::to_string))
+        .collect();
+    assert!(ids.contains(&"glm".to_string()), "alias listed: {ids:?}");
 }
 
 #[tokio::test]

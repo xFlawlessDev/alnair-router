@@ -19,12 +19,16 @@ pub struct ModelObject {
     pub object: &'static str,
     pub created: i64,
     pub owned_by: String,
-    /// Router-specific provenance: `alias`, `combo`, or `connection`.
+    /// Router-specific provenance: `alias` or `combo`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub router_kind: Option<&'static str>,
 }
 
 /// Lists every model reference a caller can ask for.
+///
+/// Connections are deliberately absent: only a combo name, an alias prefix and
+/// a bare model name resolve, so a connection name here would 404 at request
+/// time. A connection becomes addressable only once an alias points at it.
 pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList>> {
     let catalog = state.catalog_snapshot().await?.catalog;
     let created = chrono::Utc::now().timestamp();
@@ -48,16 +52,6 @@ pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList
             created,
             owned_by: "alnair-router".to_string(),
             router_kind: Some("combo"),
-        });
-    }
-
-    for connection in catalog.connections.iter().filter(|c| c.is_enabled()) {
-        data.push(ModelObject {
-            id: connection.name.clone(),
-            object: "model",
-            created,
-            owned_by: "alnair-router".to_string(),
-            router_kind: Some("connection"),
         });
     }
 

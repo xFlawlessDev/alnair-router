@@ -199,7 +199,7 @@ proxy is reachable from the network. In Docker, publish the port explicitly
 |---|---|
 | `POST /v1/chat/completions` | Core. Streaming (SSE) and non-streaming. |
 | `POST /v1/responses` | OpenAI Responses shape. |
-| `GET /v1/models` | Lists aliases, combos, and connections. |
+| `GET /v1/models` | Lists configured aliases and combos. |
 | `GET /v1/models/info` | Per-reference metadata, including resolved combo tiers. |
 | `POST /v1/embeddings` | Proxied to the resolved connection. |
 | `POST /v1/images/generations` | Proxied. |
