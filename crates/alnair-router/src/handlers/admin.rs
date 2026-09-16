@@ -296,6 +296,15 @@ pub async fn usage_facets(State(state): State<AppState>) -> Result<impl IntoResp
     Ok(Json(state.usage().facets().await?))
 }
 
+/// `GET /api/usage/models` — per-model rollup under the same filters as the
+/// summary, so the dashboard can break spend down without the self-service key.
+pub async fn usage_models(
+    State(state): State<AppState>,
+    Query(query): Query<UsageQuery>,
+) -> Result<impl IntoResponse> {
+    Ok(Json(state.usage().models(&query.filter()).await?))
+}
+
 /// Spend per key for the dashboard's budget monitor.
 pub async fn usage_by_key(State(state): State<AppState>) -> Result<impl IntoResponse> {
     let now = chrono::Utc::now();

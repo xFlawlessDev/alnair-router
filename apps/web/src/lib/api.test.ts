@@ -171,6 +171,24 @@ describe("api", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/usage/summary");
   });
 
+  it("requests the per-model usage rollup with the same filters", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.usageModels({
+      since: "2026-01-01T00:00:00Z",
+      provider: "openai",
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/usage/models?since=2026-01-01T00%3A00%3A00Z&provider=openai",
+    );
+
+    await api.usageModels();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/usage/models");
+  });
+
   it("upserts pricing overrides and clears a single model", async () => {
     const fetchMock = vi
       .fn()
@@ -254,15 +272,13 @@ describe("api", () => {
   });
 
   it("sends the client key on the public usage call", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        jsonResponse({
-          key: { name: "laptop", prefix: "sk-router-ab" },
-          since: null,
-          models: [],
-        }),
-      );
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        key: { name: "laptop", prefix: "sk-router-ab" },
+        since: null,
+        models: [],
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     setClientKey("sk-router-test");
 

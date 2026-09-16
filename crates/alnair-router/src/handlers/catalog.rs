@@ -19,6 +19,8 @@ pub struct CatalogEntry {
     /// Connection that serves this row.
     pub provider: String,
     pub provider_type: String,
+    /// Built-in preset behind the connection, when it was created from one.
+    pub provider_id: Option<String>,
     /// Concrete upstream model; `None` for aliases that accept any model.
     pub upstream_model: Option<String>,
     /// 1-based tier for combos; `None` for aliases.
@@ -70,6 +72,7 @@ impl CatalogEntry {
                     kind: "alias",
                     provider: connection.name.clone(),
                     provider_type: connection.provider_type.clone(),
+                    provider_id: connection.provider_id.clone(),
                     upstream_model: alias.model_override.clone(),
                     tier: None,
                     price: None,
@@ -86,12 +89,19 @@ impl CatalogEntry {
                 let pricing_key = target.pricing_model.as_deref().unwrap_or(&target.model);
                 let price = state.pricing_cache.match_for(pricing_key).await;
 
+                let provider_id = catalog
+                    .connections
+                    .iter()
+                    .find(|connection| connection.id == target.connection_id)
+                    .and_then(|connection| connection.provider_id.clone());
+
                 data.push(
                     CatalogEntry {
                         id: combo.name.clone(),
                         kind: "combo",
                         provider: target.connection_name.clone(),
                         provider_type: target.provider_type.clone(),
+                        provider_id,
                         upstream_model: Some(target.model.clone()),
                         tier: Some(index + 1),
                         price: None,

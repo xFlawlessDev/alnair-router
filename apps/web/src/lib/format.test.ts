@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatCost,
   formatDateTime,
+  formatDuration,
   formatLatency,
   formatRate,
   formatRelativeTime,
@@ -53,6 +54,29 @@ describe("formatLatency", () => {
 
   it("renders zero and missing values as a dash", () => {
     expect(formatLatency(0)).toBe("—");
+  });
+});
+
+describe("formatDuration", () => {
+  it("counts seconds below a minute", () => {
+    expect(formatDuration(45_000)).toBe("45s");
+  });
+
+  it("counts minutes below an hour", () => {
+    expect(formatDuration(12 * 60_000)).toBe("12m");
+  });
+
+  it("keeps the leftover minutes on an hour-scale value", () => {
+    expect(formatDuration(3 * 3_600_000 + 25 * 60_000)).toBe("3h 25m");
+  });
+
+  it("counts days with the leftover hours", () => {
+    expect(formatDuration(2 * 86_400_000 + 5 * 3_600_000)).toBe("2d 5h");
+  });
+
+  it("renders zero and missing values as a dash", () => {
+    expect(formatDuration(0)).toBe("—");
+    expect(formatDuration(Number.NaN)).toBe("—");
   });
 });
 

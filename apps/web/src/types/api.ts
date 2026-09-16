@@ -585,6 +585,8 @@ export interface ModelCatalogEntry {
   /** Connection that serves this row. */
   provider: string;
   provider_type: ProviderType;
+  /** Built-in preset behind the connection; null for hand-made connections. */
+  provider_id: string | null;
   /** Concrete upstream model; null when an alias accepts any model. */
   upstream_model: string | null;
   /** 1-based combo tier; null for aliases. */
@@ -600,8 +602,8 @@ export interface ModelCatalogResponse {
   data: ModelCatalogEntry[];
 }
 
-/** Per-model rollup on the self-service usage page. */
-export interface PublicModelUsage {
+/** Per-model rollup; shared by the admin and self-service usage views. */
+export interface ModelUsage {
   model: string;
   requests: number;
   error_requests: number;
@@ -644,7 +646,7 @@ export interface MyUsageResponse {
   until: string | null;
   bucket: UsageBucketSize;
   summary: UsageSummary;
-  models: PublicModelUsage[];
+  models: ModelUsage[];
   timeseries: UsageBucket[];
   spend: KeySpend;
   budget: PublicBudgetCaps;

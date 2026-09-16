@@ -11,11 +11,11 @@ import {
   formatNumber,
   successRate,
 } from "@/lib/format";
-import type { PublicModelUsage, UsageSummary } from "@/types/api";
+import type { ModelUsage, UsageSummary } from "@/types/api";
 
 const props = defineProps<{
   summary: UsageSummary | null;
-  models?: PublicModelUsage[];
+  models?: ModelUsage[];
 }>();
 
 /** Model rows past this many are folded into one "Other" line. */
@@ -38,9 +38,9 @@ interface SummaryItem {
 
 /** Ranks models by the chosen metric and folds the tail into "Other". */
 function modelRows(
-  pick: (model: PublicModelUsage) => number,
+  pick: (model: ModelUsage) => number,
   format: "tokens" | "cost",
-  hint: (model: PublicModelUsage) => string,
+  hint: (model: ModelUsage) => string,
 ): BreakdownRow[] {
   const models = props.models ?? [];
   if (!models.length) return [];

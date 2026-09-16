@@ -64,10 +64,10 @@ import {
 } from "@/lib/format";
 import { USAGE_RANGES, rangeToSince } from "@/lib/ranges";
 import type {
+  ModelUsage,
   MyUsageResponse,
   PublicCatalogEntry,
   PublicCatalogResponse,
-  PublicModelUsage,
 } from "@/types/api";
 
 const { clear } = useClientKey();
@@ -153,7 +153,7 @@ const catalogRows = computed(() => {
 });
 
 /** One model's token share, with the prompt/completion split in the hint. */
-function modelTokenRows(row: PublicModelUsage): BreakdownRow[] {
+function modelTokenRows(row: ModelUsage): BreakdownRow[] {
   return [
     {
       label: row.model,
@@ -165,7 +165,7 @@ function modelTokenRows(row: PublicModelUsage): BreakdownRow[] {
 }
 
 /** One model's share of the recorded cost. */
-function modelCostRows(row: PublicModelUsage): BreakdownRow[] {
+function modelCostRows(row: ModelUsage): BreakdownRow[] {
   return [
     {
       label: row.model,

@@ -4,10 +4,11 @@ import {
   CircleAlert,
   CircleCheck,
   Copy,
+  Gauge,
   KeyRound,
   Plug,
   RefreshCw,
-  Waypoints,
+  Timer,
 } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
@@ -15,6 +16,7 @@ import { toast } from "vue-sonner";
 
 import EmptyState from "@/components/EmptyState.vue";
 import PageHeader from "@/components/PageHeader.vue";
+import ProviderIcon from "@/components/ProviderIcon.vue";
 import UsageSummaryCards from "@/components/UsageSummaryCards.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -42,12 +45,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ApiError, api } from "@/lib/api";
-import { formatRate } from "@/lib/format";
+import { formatDuration, formatNumber, formatRate } from "@/lib/format";
 import { USAGE_RANGES, rangeToSince } from "@/lib/ranges";
 import type {
+  ActivitySnapshot,
   HealthResponse,
   InitState,
   ModelCatalogEntry,
+  ModelUsage,
   UsageSummary,
   VersionResponse,
 } from "@/types/api";
@@ -58,9 +63,13 @@ const health = ref<HealthResponse | null>(null);
 const version = ref<VersionResponse | null>(null);
 const initState = ref<InitState | null>(null);
 const summary = ref<UsageSummary | null>(null);
+const usageModels = ref<ModelUsage[]>([]);
+const activity = ref<ActivitySnapshot | null>(null);
 const range = ref("all");
 const loading = ref(true);
 const error = ref<string | null>(null);
+/** Non-blocking notice: a side panel failed but the page still rendered. */
+const partialError = ref<string | null>(null);
 
 const modelEntries = ref<ModelCatalogEntry[]>([]);
 const modelSearch = ref("");
@@ -114,41 +123,105 @@ async function copyBaseUrl(): Promise<void> {
 const healthy = computed(() => health.value?.status === "ok");
 const since = computed(() => rangeToSince(range.value));
 
+/** In-flight requests and the connections currently serving them. */
+const inFlight = computed(() => activity.value?.active.length ?? 0);
+const busyConnections = computed(() => {
+  const connections = activity.value?.connections ?? [];
+  return connections.filter((connection) => connection.in_flight > 0).length;
+});
+
+/** Uptime plus the tally the activity tracker keeps since boot. */
+const activitySummary = computed(() => {
+  const snapshot = activity.value;
+  if (!snapshot) return null;
+  const requests = snapshot.connections.reduce(
+    (sum, connection) => sum + connection.requests,
+    0,
+  );
+  const failures = snapshot.connections.reduce(
+    (sum, connection) => sum + connection.failures,
+    0,
+  );
+  return { requests, failures };
+});
+
+/**
+ * Warnings and errors, newest first. `attempt.failed` is the useful one — it
+ * carries the upstream reason — while the trailing `request` event only repeats
+ * the HTTP status the client already saw.
+ */
+const recentErrors = computed(() =>
+  (activity.value?.events ?? [])
+    .filter((event) => event.level !== "info")
+    .slice(0, 5),
+);
+
+/** The newest recorded request, used as a "traffic is flowing" hint. */
+const lastTraffic = computed(() => {
+  const events = activity.value?.events ?? [];
+  const request = events.find((event) => event.kind === "request");
+  return request?.at ?? null;
+});
+
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
-  try {
-    const [
-      healthResponse,
-      versionResponse,
-      initResponse,
-      summaryResponse,
-      modelsResponse,
-    ] = await Promise.all([
-      api.health(),
-      api.version(),
-      api.initState(),
-      api.usageSummary({ since: since.value }),
-      api.modelCatalog(),
-    ]);
+  partialError.value = null;
+
+  const filter = { since: since.value };
+  const [core, models, usage, live] = await Promise.allSettled([
+    Promise.all([api.health(), api.version(), api.initState()]),
+    api.modelCatalog(),
+    Promise.all([api.usageSummary(filter), api.usageModels(filter)]),
+    api.activity(30),
+  ]);
+
+  if (core.status === "fulfilled") {
+    const [healthResponse, versionResponse, initResponse] = core.value;
     health.value = healthResponse;
     version.value = versionResponse;
     initState.value = initResponse;
-    summary.value = summaryResponse;
-    modelEntries.value = modelsResponse.data;
-  } catch (caught) {
+  } else {
     error.value =
-      caught instanceof ApiError
-        ? caught.message
+      core.reason instanceof ApiError
+        ? core.reason.message
         : "Failed to load router status";
-  } finally {
-    loading.value = false;
   }
+
+  const failures: string[] = [];
+  if (models.status === "fulfilled") {
+    modelEntries.value = models.value.data;
+  } else {
+    failures.push("model catalog");
+  }
+  if (usage.status === "fulfilled") {
+    const [summaryResponse, modelRows] = usage.value;
+    summary.value = summaryResponse;
+    usageModels.value = modelRows;
+  } else {
+    failures.push("usage");
+  }
+  if (live.status === "fulfilled") {
+    activity.value = live.value;
+  } else {
+    failures.push("live activity");
+  }
+  if (failures.length) {
+    partialError.value = `Could not load: ${failures.join(", ")}.`;
+  }
+
+  loading.value = false;
 }
 
-async function reloadSummary(): Promise<void> {
+async function reloadUsage(): Promise<void> {
+  const filter = { since: since.value };
   try {
-    summary.value = await api.usageSummary({ since: since.value });
+    const [summaryResponse, modelRows] = await Promise.all([
+      api.usageSummary(filter),
+      api.usageModels(filter),
+    ]);
+    summary.value = summaryResponse;
+    usageModels.value = modelRows;
   } catch (caught) {
     error.value =
       caught instanceof ApiError ? caught.message : "Failed to load usage";
@@ -171,14 +244,28 @@ onMounted(load);
       </template>
     </PageHeader>
 
-    <button
-      class="inline-flex w-fit items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs transition-colors hover:bg-accent"
-      title="Copy base URL"
-      @click="copyBaseUrl"
-    >
-      {{ baseUrl }}
-      <Copy class="size-3 text-muted-foreground" />
-    </button>
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        class="inline-flex w-fit items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs transition-colors hover:bg-accent"
+        title="Copy base URL"
+        @click="copyBaseUrl"
+      >
+        {{ baseUrl }}
+        <Copy class="size-3 text-muted-foreground" />
+      </button>
+      <Badge
+        v-if="initState"
+        :variant="initState.require_api_key ? 'secondary' : 'outline'"
+        :title="
+          initState.require_api_key
+            ? 'A router-issued bearer key is required on /v1'
+            : 'Every request to /v1 is accepted without a key'
+        "
+      >
+        <KeyRound class="size-3" />
+        {{ initState.require_api_key ? "Key required" : "Auth open" }}
+      </Badge>
+    </div>
 
     <Card v-if="error" class="border-destructive/40">
       <CardHeader>
@@ -200,6 +287,16 @@ onMounted(load);
     </Card>
 
     <template v-else>
+      <Card v-if="partialError" class="border-amber-500/40">
+        <CardContent class="flex items-center gap-2 p-4 text-sm">
+          <CircleAlert class="size-4 text-amber-500" />
+          <span class="text-muted-foreground">{{ partialError }}</span>
+          <Button variant="ghost" size="sm" class="ml-auto" @click="load">
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader class="pb-2">
@@ -210,8 +307,9 @@ onMounted(load);
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p class="text-2xl font-semibold tracking-tight">
-              {{ loading ? "…" : healthy ? "Healthy" : "Degraded" }}
+            <Skeleton v-if="loading" class="h-8 w-24" />
+            <p v-else class="text-2xl font-semibold tracking-tight">
+              {{ healthy ? "Healthy" : "Degraded" }}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
               {{
@@ -232,7 +330,8 @@ onMounted(load);
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p class="text-2xl font-semibold tracking-tight">
+            <Skeleton v-if="loading" class="h-8 w-20" />
+            <p v-else class="text-2xl font-semibold tracking-tight">
               {{
                 initState
                   ? `${initState.enabled_connections} / ${initState.connections}`
@@ -250,29 +349,23 @@ onMounted(load);
             <CardTitle
               class="flex items-center gap-2 text-sm font-medium text-muted-foreground"
             >
-              <KeyRound class="size-4" /> Client auth
+              <Gauge class="size-4" /> Live traffic
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p class="text-2xl font-semibold tracking-tight">
-              {{
-                initState
-                  ? initState.require_api_key
-                    ? "Required"
-                    : "Open"
-                  : "…"
-              }}
+            <Skeleton v-if="loading" class="h-8 w-24" />
+            <p v-else class="text-2xl font-semibold tracking-tight">
+              {{ activity ? formatNumber(inFlight) : "…" }}
+              <span v-if="inFlight" class="text-base font-normal text-amber-500"
+                >in flight</span
+              >
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
-              {{
-                initState?.require_api_key
-                  ? "Bearer key needed on /v1"
-                  : "No key needed on /v1"
-              }}
-              ·
-              <RouterLink to="/settings" class="underline underline-offset-4"
-                >Configure</RouterLink
-              >
+              <template v-if="activitySummary">
+                {{ formatNumber(activitySummary.requests) }} requests ·
+                {{ formatNumber(activitySummary.failures) }} failed since boot
+              </template>
+              <template v-else>Waiting for /api/activity</template>
             </p>
           </CardContent>
         </Card>
@@ -282,19 +375,65 @@ onMounted(load);
             <CardTitle
               class="flex items-center gap-2 text-sm font-medium text-muted-foreground"
             >
-              <Waypoints class="size-4" /> Version
+              <Timer class="size-4" /> Uptime
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p class="text-2xl font-semibold tracking-tight">
-              {{ version?.version ?? "…" }}
+            <Skeleton v-if="loading" class="h-8 w-20" />
+            <p v-else class="text-2xl font-semibold tracking-tight">
+              {{ activity ? formatDuration(activity.uptime_ms) : "…" }}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
-              {{ version?.name ?? "alnair-router" }}
+              <template v-if="busyConnections">
+                {{ busyConnections }} connection{{
+                  busyConnections === 1 ? "" : "s"
+                }}
+                busy
+              </template>
+              <template v-else-if="version">
+                {{ version.name }} v{{ version.version }}
+              </template>
+              <template v-else>No in-flight requests</template>
             </p>
           </CardContent>
         </Card>
       </div>
+
+      <Card v-if="recentErrors.length">
+        <CardHeader class="pb-3">
+          <CardTitle class="flex items-center gap-2 text-base">
+            <CircleAlert class="size-4 text-amber-500" /> Recent problems
+            <Badge variant="outline">{{ recentErrors.length }}</Badge>
+          </CardTitle>
+          <CardDescription
+            >Tier failures and rejected requests since the router
+            started.</CardDescription
+          >
+        </CardHeader>
+        <CardContent class="grid gap-2">
+          <div
+            v-for="event in recentErrors"
+            :key="event.seq"
+            class="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-md border p-2 text-xs"
+          >
+            <Badge
+              :variant="event.level === 'error' ? 'destructive' : 'secondary'"
+            >
+              {{ event.status ?? event.level }}
+            </Badge>
+            <span class="font-medium">{{ event.kind }}</span>
+            <code v-if="event.model" class="text-muted-foreground">{{
+              event.model
+            }}</code>
+            <span v-if="event.connection" class="text-muted-foreground"
+              >via {{ event.connection }}</span
+            >
+            <span class="min-w-0 flex-1 truncate" :title="event.message">{{
+              event.message
+            }}</span>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card v-if="initState && !initState.initialized">
         <CardHeader>
@@ -334,10 +473,25 @@ onMounted(load);
         </CardContent>
       </Card>
 
+      <Card v-if="initState?.require_api_key === false">
+        <CardContent class="flex items-center gap-2 p-4 text-sm">
+          <KeyRound class="size-4 text-amber-500" />
+          <span class="text-muted-foreground"
+            >Client auth is open — every request to <code>/v1</code> is accepted
+            without a key.</span
+          >
+          <RouterLink
+            to="/settings"
+            class="ml-auto shrink-0 underline underline-offset-4"
+            >Configure</RouterLink
+          >
+        </CardContent>
+      </Card>
+
       <section class="flex flex-col gap-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h2 class="text-lg font-semibold tracking-tight">Usage</h2>
-          <Select v-model="range" @update:model-value="reloadSummary">
+          <Select v-model="range" @update:model-value="reloadUsage">
             <SelectTrigger class="w-44">
               <SelectValue />
             </SelectTrigger>
@@ -352,10 +506,14 @@ onMounted(load);
             </SelectContent>
           </Select>
         </div>
-        <UsageSummaryCards :summary="summary" />
+        <UsageSummaryCards :summary="summary" :models="usageModels" />
         <p class="text-xs text-muted-foreground">
-          One row is recorded per upstream attempt, failures included. Full
-          detail lives in
+          One row is recorded per upstream attempt, failures included.
+          <template v-if="lastTraffic">
+            Last request
+            {{ new Date(lastTraffic).toLocaleTimeString() }}.
+          </template>
+          Full detail lives in
           <RouterLink to="/usage" class="underline underline-offset-4"
             >Usage</RouterLink
           >.
@@ -365,8 +523,15 @@ onMounted(load);
       <section class="flex flex-col gap-4">
         <h2 class="text-lg font-semibold tracking-tight">Models</h2>
 
+        <p
+          v-if="loading"
+          class="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <RefreshCw class="size-4 animate-spin" /> Loading the model catalog…
+        </p>
+
         <EmptyState
-          v-if="!modelEntries.length"
+          v-else-if="!modelEntries.length"
           title="No models yet"
           description="The catalog lists enabled aliases and combos. Create a connection, then map aliases or chain combos to see them here."
         >
@@ -399,17 +564,17 @@ onMounted(load);
           </p>
 
           <Card v-else>
-            <Table>
+            <Table class="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Model</TableHead>
-                  <TableHead>Provider</TableHead>
-                  <TableHead>Upstream model</TableHead>
-                  <TableHead>Input ($/1M)</TableHead>
-                  <TableHead>Output ($/1M)</TableHead>
-                  <TableHead>Cache read ($/1M)</TableHead>
-                  <TableHead>Cache write ($/1M)</TableHead>
-                  <TableHead>Source</TableHead>
+                  <TableHead class="w-[20%]">Model</TableHead>
+                  <TableHead class="w-[17%]">Provider</TableHead>
+                  <TableHead class="w-[17%]">Upstream model</TableHead>
+                  <TableHead class="w-[9%] text-right">Input</TableHead>
+                  <TableHead class="w-[9%] text-right">Output</TableHead>
+                  <TableHead class="w-[10%] text-right">Cache read</TableHead>
+                  <TableHead class="w-[10%] text-right">Cache write</TableHead>
+                  <TableHead class="w-[8%]">Source</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -417,40 +582,58 @@ onMounted(load);
                   v-for="entry in filteredModels"
                   :key="`${entry.kind}:${entry.id}:${entry.tier ?? 0}:${entry.upstream_model ?? ''}`"
                 >
-                  <TableCell>
-                    <div class="flex items-center gap-2">
+                  <TableCell class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-2">
                       <code
-                        class="inline-block max-w-[14rem] truncate rounded bg-muted px-1.5 py-0.5 align-middle text-xs"
+                        class="min-w-0 flex-1 truncate rounded bg-muted px-1.5 py-0.5 text-xs"
                         :title="copyValue(entry)"
                       >
                         {{ isOpenAlias(entry) ? `${entry.id}/…` : entry.id }}
                       </code>
+                      <Badge variant="outline" class="shrink-0">{{
+                        entry.kind
+                      }}</Badge>
+                      <Badge
+                        v-if="entry.tier"
+                        variant="secondary"
+                        class="shrink-0"
+                        >#{{ entry.tier }}</Badge
+                      >
                       <Button
                         variant="ghost"
                         size="icon"
-                        class="size-6"
+                        class="size-6 shrink-0"
                         :aria-label="`Copy ${copyValue(entry)}`"
                         :title="`Copy ${copyValue(entry)}`"
                         @click="copyId(entry)"
                       >
                         <Copy class="size-3.5" />
                       </Button>
-                      <Badge variant="outline">{{ entry.kind }}</Badge>
-                      <Badge v-if="entry.tier" variant="secondary"
-                        >#{{ entry.tier }}</Badge
-                      >
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <p class="font-medium">{{ entry.provider }}</p>
-                    <p class="text-xs text-muted-foreground">
-                      {{ entry.provider_type }}
-                    </p>
+                  <TableCell class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <ProviderIcon
+                        :id="entry.provider_id"
+                        :type="entry.provider_type"
+                        :label="entry.provider"
+                        :title="entry.provider"
+                        class="text-muted-foreground"
+                      />
+                      <div class="min-w-0">
+                        <p class="truncate font-medium" :title="entry.provider">
+                          {{ entry.provider }}
+                        </p>
+                        <p class="truncate text-xs text-muted-foreground">
+                          {{ entry.provider_type }}
+                        </p>
+                      </div>
+                    </div>
                   </TableCell>
-                  <TableCell>
+                  <TableCell class="min-w-0">
                     <code
                       v-if="entry.upstream_model"
-                      class="inline-block max-w-[14rem] truncate align-middle text-xs"
+                      class="block truncate text-xs"
                       :title="entry.upstream_model"
                     >
                       {{ entry.upstream_model }}
@@ -459,16 +642,28 @@ onMounted(load);
                       >any model</span
                     >
                   </TableCell>
-                  <TableCell :title="priceTitle(entry)">
+                  <TableCell
+                    class="text-right tabular-nums"
+                    :title="priceTitle(entry)"
+                  >
                     {{ formatRate(entry.price?.input_per_million_usd) }}
                   </TableCell>
-                  <TableCell :title="priceTitle(entry)">
+                  <TableCell
+                    class="text-right tabular-nums"
+                    :title="priceTitle(entry)"
+                  >
                     {{ formatRate(entry.price?.output_per_million_usd) }}
                   </TableCell>
-                  <TableCell :title="priceTitle(entry)">
+                  <TableCell
+                    class="text-right tabular-nums"
+                    :title="priceTitle(entry)"
+                  >
                     {{ formatRate(entry.price?.cache_read_per_million_usd) }}
                   </TableCell>
-                  <TableCell :title="priceTitle(entry)">
+                  <TableCell
+                    class="text-right tabular-nums"
+                    :title="priceTitle(entry)"
+                  >
                     {{ formatRate(entry.price?.cache_write_per_million_usd) }}
                   </TableCell>
                   <TableCell>

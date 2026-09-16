@@ -28,6 +28,7 @@ import type {
   ModelCatalogResponse,
   ModelPrice,
   ModelPriceInput,
+  ModelUsage,
   MyUsageResponse,
   PriceMatch,
   ProviderPresetResponse,
@@ -366,6 +367,17 @@ export const api = {
       },
     }),
   usageFacets: () => request<UsageFacets>("GET", "/api/usage/facets"),
+
+  usageModels: (filter: UsageFilter = {}) =>
+    request<ModelUsage[]>("GET", "/api/usage/models", {
+      query: {
+        since: filter.since,
+        api_key_id: filter.api_key_id,
+        model: filter.model,
+        provider: filter.provider,
+        connection: filter.connection,
+      },
+    }),
 
   listPricing: () => request<ModelPrice[]>("GET", "/api/pricing"),
   modelCatalog: () => request<ModelCatalogResponse>("GET", "/api/models"),

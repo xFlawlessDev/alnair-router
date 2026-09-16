@@ -97,6 +97,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/usage", get(handlers::admin::list_usage))
         .route("/api/usage/summary", get(handlers::admin::usage_summary))
         .route("/api/usage/facets", get(handlers::admin::usage_facets))
+        .route("/api/usage/models", get(handlers::admin::usage_models))
         .route("/api/usage/keys", get(handlers::admin::usage_by_key))
         .route("/api/models", get(handlers::catalog::models_catalog))
         .route(

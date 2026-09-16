@@ -1905,6 +1905,25 @@ async fn usage_filters_and_facets_are_queryable() {
         body["connections"],
         serde_json::json!(["claude-main", "openai-main"])
     );
+
+    let (status, body) = get(&app, "/api/usage/models").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    let rows = body.as_array().expect("rows");
+    assert_eq!(rows.len(), 2, "one row per requested model: {body}");
+    assert_eq!(rows[0]["model"], "kr/claude");
+    assert_eq!(rows[0]["requests"], 1);
+    assert_eq!(rows[0]["error_requests"], 0);
+    assert_eq!(rows[0]["cost_usd"], 0.5);
+
+    let (status, body) = get(&app, "/api/usage/models?provider=anthropic-native").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body.as_array().expect("rows");
+    assert_eq!(
+        rows.len(),
+        1,
+        "filters apply to the per-model rollup: {body}"
+    );
+    assert_eq!(rows[0]["model"], "kr/claude");
 }
 
 /// Regression guard: flattened structs made `serde_urlencoded` reject `"100"`
