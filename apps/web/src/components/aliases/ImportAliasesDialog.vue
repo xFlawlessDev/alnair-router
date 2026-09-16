@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { RefreshCw, Search } from '@lucide/vue';
-import { computed, ref, watch } from 'vue';
-import { toast } from 'vue-sonner';
+import { RefreshCw, Search } from "@lucide/vue";
+import { computed, ref, watch } from "vue";
+import { toast } from "vue-sonner";
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -13,43 +13,46 @@ import {
   DialogHeader,
   DialogScrollContent,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { ApiError, api } from '@/lib/api';
-import { fallbackPrefix, modelPrefixSlug, uniquePrefix } from '@/lib/aliases';
-import type { Connection, UpstreamModel } from '@/types/api';
+} from "@/components/ui/select";
+import { ApiError, api } from "@/lib/api";
+import { fallbackPrefix, modelPrefixSlug, uniquePrefix } from "@/lib/aliases";
+import type { Connection, UpstreamModel } from "@/types/api";
 
 const props = defineProps<{
   open: boolean;
   connections: Connection[];
   existingPrefixes: string[];
 }>();
-const emit = defineEmits<{ 'update:open': [boolean]; saved: [] }>();
+const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
 
-const connectionId = ref('');
+const connectionId = ref("");
 const models = ref<UpstreamModel[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
-const search = ref('');
+const search = ref("");
 const selected = ref<Set<string>>(new Set());
 const importing = ref(false);
 
-const existing = computed(() => new Set(props.existingPrefixes.map((p) => p.toLowerCase())));
+const existing = computed(
+  () => new Set(props.existingPrefixes.map((p) => p.toLowerCase())),
+);
 
 const filtered = computed(() => {
   const term = search.value.trim().toLowerCase();
   if (!term) return models.value;
   return models.value.filter(
     (model) =>
-      model.id.toLowerCase().includes(term) || model.name.toLowerCase().includes(term),
+      model.id.toLowerCase().includes(term) ||
+      model.name.toLowerCase().includes(term),
   );
 });
 
@@ -61,22 +64,27 @@ const plans = computed(() => {
     .filter((model): model is UpstreamModel => model !== undefined)
     .map((model, index) => ({
       model,
-      prefix: uniquePrefix(fallbackPrefix(modelPrefixSlug(model.id), index), taken),
+      prefix: uniquePrefix(
+        fallbackPrefix(modelPrefixSlug(model.id), index),
+        taken,
+      ),
     }));
 });
 
 const allFilteredSelected = computed(
-  () => filtered.value.length > 0 && filtered.value.every((model) => selected.value.has(model.id)),
+  () =>
+    filtered.value.length > 0 &&
+    filtered.value.every((model) => selected.value.has(model.id)),
 );
 
 watch(
   () => props.open,
   (open) => {
     if (!open) return;
-    connectionId.value = props.connections[0]?.id ?? '';
+    connectionId.value = props.connections[0]?.id ?? "";
     models.value = [];
     error.value = null;
-    search.value = '';
+    search.value = "";
     selected.value = new Set();
     if (connectionId.value) void loadModels();
   },
@@ -113,7 +121,8 @@ async function loadModels(): Promise<void> {
     models.value = result.models;
   } catch (caught) {
     models.value = [];
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load models';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Failed to load models";
   } finally {
     loading.value = false;
   }
@@ -135,15 +144,19 @@ async function importSelected(): Promise<void> {
   );
   importing.value = false;
 
-  const failed = results.filter((result) => result.status === 'rejected').length;
+  const failed = results.filter(
+    (result) => result.status === "rejected",
+  ).length;
   if (failed === 0) {
     toast.success(`Imported ${plan.length} aliases`);
   } else {
-    toast.warning(`Imported ${plan.length - failed} of ${plan.length} aliases; ${failed} failed`);
+    toast.warning(
+      `Imported ${plan.length - failed} of ${plan.length} aliases; ${failed} failed`,
+    );
   }
 
-  emit('saved');
-  emit('update:open', false);
+  emit("saved");
+  emit("update:open", false);
 }
 </script>
 
@@ -153,9 +166,9 @@ async function importSelected(): Promise<void> {
       <DialogHeader>
         <DialogTitle>Import models as aliases</DialogTitle>
         <DialogDescription>
-          Reads the connection's upstream <code>/models</code> and creates one alias per selected
-          model. Prefixes are generated from the model id and de-duplicated against existing
-          aliases.
+          Reads the connection's upstream <code>/models</code> and creates one
+          alias per selected model. Prefixes are generated from the model id and
+          de-duplicated against existing aliases.
         </DialogDescription>
       </DialogHeader>
 
@@ -167,7 +180,11 @@ async function importSelected(): Promise<void> {
               <SelectValue placeholder="Select a connection" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="connection in connections" :key="connection.id" :value="connection.id">
+              <SelectItem
+                v-for="connection in connections"
+                :key="connection.id"
+                :value="connection.id"
+              >
                 {{ connection.name }}
               </SelectItem>
             </SelectContent>
@@ -177,11 +194,17 @@ async function importSelected(): Promise<void> {
           </p>
         </div>
 
-        <div v-if="loading" class="rounded-md border p-6 text-center text-sm text-muted-foreground">
+        <div
+          v-if="loading"
+          class="rounded-md border p-6 text-center text-sm text-muted-foreground"
+        >
           Loading models…
         </div>
 
-        <div v-else-if="error" class="grid gap-2 rounded-md border border-destructive/40 p-4">
+        <div
+          v-else-if="error"
+          class="grid gap-2 rounded-md border border-destructive/40 p-4"
+        >
           <p class="text-sm text-destructive">{{ error }}</p>
           <Button variant="outline" size="sm" class="w-fit" @click="loadModels">
             <RefreshCw /> Retry
@@ -194,10 +217,14 @@ async function importSelected(): Promise<void> {
               <Search
                 class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
               />
-              <Input v-model="search" placeholder="Filter models" class="pl-8" />
+              <Input
+                v-model="search"
+                placeholder="Filter models"
+                class="pl-8"
+              />
             </div>
             <Button variant="outline" size="sm" @click="toggleAll">
-              {{ allFilteredSelected ? 'Clear' : 'Select all' }}
+              {{ allFilteredSelected ? "Clear" : "Select all" }}
             </Button>
           </div>
 
@@ -212,7 +239,9 @@ async function importSelected(): Promise<void> {
                 @update:model-value="toggle(model.id, $event === true)"
               />
               <span class="min-w-0 flex-1">
-                <span class="block truncate font-mono text-xs">{{ model.id }}</span>
+                <span class="block truncate font-mono text-xs">{{
+                  model.id
+                }}</span>
                 <span
                   v-if="model.name !== model.id"
                   class="block truncate text-xs text-muted-foreground"
@@ -220,11 +249,18 @@ async function importSelected(): Promise<void> {
                   {{ model.name }}
                 </span>
               </span>
-              <Badge v-if="existing.has(modelPrefixSlug(model.id))" variant="outline" class="text-xs">
+              <Badge
+                v-if="existing.has(modelPrefixSlug(model.id))"
+                variant="outline"
+                class="text-xs"
+              >
                 prefix exists
               </Badge>
             </label>
-            <p v-if="!filtered.length" class="p-4 text-center text-sm text-muted-foreground">
+            <p
+              v-if="!filtered.length"
+              class="p-4 text-center text-sm text-muted-foreground"
+            >
               No models match "{{ search }}".
             </p>
           </div>
@@ -232,8 +268,14 @@ async function importSelected(): Promise<void> {
           <p class="text-xs text-muted-foreground">
             <template v-if="selected.size">
               {{ selected.size }} selected ·
-              {{ plans.map((plan) => plan.prefix).slice(0, 4).join(', ')
-              }}<template v-if="plans.length > 4"> +{{ plans.length - 4 }} more</template>
+              {{
+                plans
+                  .map((plan) => plan.prefix)
+                  .slice(0, 4)
+                  .join(", ")
+              }}<template v-if="plans.length > 4">
+                +{{ plans.length - 4 }} more</template
+              >
             </template>
             <template v-else>Nothing selected yet.</template>
           </p>
@@ -245,9 +287,15 @@ async function importSelected(): Promise<void> {
       </div>
 
       <DialogFooter>
-        <Button variant="outline" @click="emit('update:open', false)">Cancel</Button>
+        <Button variant="outline" @click="emit('update:open', false)"
+          >Cancel</Button
+        >
         <Button :disabled="importing || !selected.size" @click="importSelected">
-          {{ importing ? 'Importing…' : `Import ${selected.size || ''} aliases`.trim() }}
+          {{
+            importing
+              ? "Importing…"
+              : `Import ${selected.size || ""} aliases`.trim()
+          }}
         </Button>
       </DialogFooter>
     </DialogScrollContent>

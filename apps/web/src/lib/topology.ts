@@ -1,7 +1,7 @@
-import type { ConnectionActivity } from '@/types/api';
+import type { ConnectionActivity } from "@/types/api";
 
 /** Layout constants for the provider topology, in flow coordinates (px). */
-export const ROUTER_ID = 'router';
+export const ROUTER_ID = "router";
 export const ROW_HEIGHT = 104;
 export const NODE_WIDTH = 176;
 export const ROUTER_SIZE = 96;
@@ -12,12 +12,12 @@ export const RIGHT_X = ROUTER_X + ROUTER_SIZE + COLUMN_GAP;
 
 export interface TopologyNodeData {
   connection: ConnectionActivity;
-  side: 'left' | 'right';
+  side: "left" | "right";
 }
 
 export interface TopologyNode {
   id: string;
-  type: 'router' | 'connection';
+  type: "router" | "connection";
   position: { x: number; y: number };
   data: TopologyNodeData | null;
   draggable: boolean;
@@ -54,9 +54,9 @@ export function buildTopology(connections: ConnectionActivity[]): Topology {
   left.forEach((connection, index) => {
     nodes.push({
       id: connection.id,
-      type: 'connection',
+      type: "connection",
       position: { x: LEFT_X, y: index * ROW_HEIGHT },
-      data: { connection, side: 'left' },
+      data: { connection, side: "left" },
       draggable: false,
     });
   });
@@ -64,16 +64,16 @@ export function buildTopology(connections: ConnectionActivity[]): Topology {
   right.forEach((connection, index) => {
     nodes.push({
       id: connection.id,
-      type: 'connection',
+      type: "connection",
       position: { x: RIGHT_X, y: index * ROW_HEIGHT },
-      data: { connection, side: 'right' },
+      data: { connection, side: "right" },
       draggable: false,
     });
   });
 
   nodes.push({
     id: ROUTER_ID,
-    type: 'router',
+    type: "router",
     position: { x: ROUTER_X, y: centerY },
     data: null,
     draggable: false,
@@ -82,13 +82,15 @@ export function buildTopology(connections: ConnectionActivity[]): Topology {
 
   const edges: TopologyEdge[] = connections.map((connection) => {
     const active = connection.in_flight > 0;
-    const side = left.some((item) => item.id === connection.id) ? 'left' : 'right';
+    const side = left.some((item) => item.id === connection.id)
+      ? "left"
+      : "right";
     const style: Record<string, string | number> = active
-      ? { stroke: '#10b981', strokeWidth: 2.5 }
+      ? { stroke: "#10b981", strokeWidth: 2.5 }
       : {
-          stroke: 'var(--muted-foreground)',
+          stroke: "var(--muted-foreground)",
           strokeWidth: 2,
-          strokeDasharray: '7 5',
+          strokeDasharray: "7 5",
           opacity: 0.7,
         };
 
@@ -96,7 +98,7 @@ export function buildTopology(connections: ConnectionActivity[]): Topology {
       id: `edge-${connection.id}`,
       source: connection.id,
       target: ROUTER_ID,
-      sourceHandle: 'source',
+      sourceHandle: "source",
       targetHandle: side,
       animated: active,
       style,

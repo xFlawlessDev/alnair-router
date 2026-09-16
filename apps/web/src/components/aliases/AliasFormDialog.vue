@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { RefreshCw } from '@lucide/vue';
-import { computed, ref, watch } from 'vue';
-import { toast } from 'vue-sonner';
+import { RefreshCw } from "@lucide/vue";
+import { computed, ref, watch } from "vue";
+import { toast } from "vue-sonner";
 
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -11,30 +11,34 @@ import {
   DialogHeader,
   DialogScrollContent,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { ApiError, api } from '@/lib/api';
-import type { Alias, AliasInput, Connection, UpstreamModel } from '@/types/api';
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { ApiError, api } from "@/lib/api";
+import type { Alias, AliasInput, Connection, UpstreamModel } from "@/types/api";
 
-const props = defineProps<{ open: boolean; alias: Alias | null; connections: Connection[] }>();
-const emit = defineEmits<{ 'update:open': [boolean]; saved: [] }>();
+const props = defineProps<{
+  open: boolean;
+  alias: Alias | null;
+  connections: Connection[];
+}>();
+const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
 
-type OverrideMode = 'none' | 'list' | 'custom';
+type OverrideMode = "none" | "list" | "custom";
 
-const prefix = ref('');
-const connectionId = ref('');
-const overrideMode = ref<OverrideMode>('none');
-const selectedModel = ref('');
-const modelOverride = ref('');
+const prefix = ref("");
+const connectionId = ref("");
+const overrideMode = ref<OverrideMode>("none");
+const selectedModel = ref("");
+const modelOverride = ref("");
 const sortOrder = ref(0);
 const enabled = ref(true);
 const saving = ref(false);
@@ -50,11 +54,11 @@ watch(
   (open) => {
     if (!open) return;
     const alias = props.alias;
-    prefix.value = alias?.prefix ?? '';
-    connectionId.value = alias?.connection_id ?? props.connections[0]?.id ?? '';
-    modelOverride.value = alias?.model_override ?? '';
-    overrideMode.value = alias?.model_override ? 'custom' : 'none';
-    selectedModel.value = '';
+    prefix.value = alias?.prefix ?? "";
+    connectionId.value = alias?.connection_id ?? props.connections[0]?.id ?? "";
+    modelOverride.value = alias?.model_override ?? "";
+    overrideMode.value = alias?.model_override ? "custom" : "none";
+    selectedModel.value = "";
     models.value = [];
     modelsError.value = null;
     sortOrder.value = alias?.sort_order ?? 0;
@@ -76,35 +80,37 @@ async function loadModels(): Promise<void> {
     models.value = result.models;
     const current = modelOverride.value.trim();
     if (current && result.models.some((model) => model.id === current)) {
-      overrideMode.value = 'list';
+      overrideMode.value = "list";
       selectedModel.value = current;
     }
   } catch (caught) {
     models.value = [];
-    modelsError.value = caught instanceof ApiError ? caught.message : 'Failed to load models';
+    modelsError.value =
+      caught instanceof ApiError ? caught.message : "Failed to load models";
   } finally {
     loadingModels.value = false;
   }
 }
 
 function effectiveOverride(): string | null {
-  if (overrideMode.value === 'list') return selectedModel.value || null;
-  if (overrideMode.value === 'custom') return modelOverride.value.trim() || null;
+  if (overrideMode.value === "list") return selectedModel.value || null;
+  if (overrideMode.value === "custom")
+    return modelOverride.value.trim() || null;
   return null;
 }
 
 async function save(): Promise<void> {
   const trimmedPrefix = prefix.value.trim();
   if (!trimmedPrefix) {
-    toast.error('Prefix is required');
+    toast.error("Prefix is required");
     return;
   }
   if (!connectionId.value) {
-    toast.error('Select a connection first');
+    toast.error("Select a connection first");
     return;
   }
-  if (overrideMode.value === 'list' && !selectedModel.value) {
-    toast.error('Pick a model, or switch to Any model');
+  if (overrideMode.value === "list" && !selectedModel.value) {
+    toast.error("Pick a model, or switch to Any model");
     return;
   }
 
@@ -125,10 +131,12 @@ async function save(): Promise<void> {
       await api.createAlias(body);
       toast.success(`Alias “${trimmedPrefix}” created`);
     }
-    emit('saved');
-    emit('update:open', false);
+    emit("saved");
+    emit("update:open", false);
   } catch (error) {
-    toast.error(error instanceof ApiError ? error.message : 'Failed to save alias');
+    toast.error(
+      error instanceof ApiError ? error.message : "Failed to save alias",
+    );
   } finally {
     saving.value = false;
   }
@@ -139,9 +147,10 @@ async function save(): Promise<void> {
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogScrollContent>
       <DialogHeader>
-        <DialogTitle>{{ isEdit ? 'Edit alias' : 'New alias' }}</DialogTitle>
+        <DialogTitle>{{ isEdit ? "Edit alias" : "New alias" }}</DialogTitle>
         <DialogDescription>
-          Maps a model prefix like <code>glm</code> to a connection, so <code>glm/glm-4.6</code>
+          Maps a model prefix like <code>glm</code> to a connection, so
+          <code>glm/glm-4.6</code>
           routes there.
         </DialogDescription>
       </DialogHeader>
@@ -149,7 +158,12 @@ async function save(): Promise<void> {
       <div class="grid gap-4">
         <div class="grid gap-2">
           <Label for="alias-prefix">Prefix</Label>
-          <Input id="alias-prefix" v-model="prefix" placeholder="glm" autocapitalize="off" />
+          <Input
+            id="alias-prefix"
+            v-model="prefix"
+            placeholder="glm"
+            autocapitalize="off"
+          />
           <p class="text-xs text-muted-foreground">
             Trimmed and lowercased; no slashes or whitespace.
           </p>
@@ -162,7 +176,11 @@ async function save(): Promise<void> {
               <SelectValue placeholder="Select a connection" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="connection in connections" :key="connection.id" :value="connection.id">
+              <SelectItem
+                v-for="connection in connections"
+                :key="connection.id"
+                :value="connection.id"
+              >
                 {{ connection.name }}
               </SelectItem>
             </SelectContent>
@@ -183,7 +201,7 @@ async function save(): Promise<void> {
               @click="loadModels"
             >
               <RefreshCw :class="loadingModels ? 'animate-spin' : ''" />
-              {{ models.length ? 'Reload models' : 'Load models' }}
+              {{ models.length ? "Reload models" : "Load models" }}
             </Button>
           </div>
           <Select v-model="overrideMode">
@@ -191,8 +209,12 @@ async function save(): Promise<void> {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">Any model — the prefix keeps the caller's model</SelectItem>
-              <SelectItem v-if="models.length" value="list">Pick from upstream models</SelectItem>
+              <SelectItem value="none"
+                >Any model — the prefix keeps the caller's model</SelectItem
+              >
+              <SelectItem v-if="models.length" value="list"
+                >Pick from upstream models</SelectItem
+              >
               <SelectItem value="custom">Custom model id…</SelectItem>
             </SelectContent>
           </Select>
@@ -202,7 +224,11 @@ async function save(): Promise<void> {
               <SelectValue placeholder="Select an upstream model" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="model in models" :key="model.id" :value="model.id">
+              <SelectItem
+                v-for="model in models"
+                :key="model.id"
+                :value="model.id"
+              >
                 {{ model.id }}
               </SelectItem>
             </SelectContent>
@@ -215,7 +241,9 @@ async function save(): Promise<void> {
             placeholder="Optional, e.g. glm-4.6"
           />
 
-          <p v-if="loadingModels" class="text-xs text-muted-foreground">Loading models…</p>
+          <p v-if="loadingModels" class="text-xs text-muted-foreground">
+            Loading models…
+          </p>
           <p v-else-if="modelsError" class="text-xs text-destructive">
             {{ modelsError }} — enter the model manually instead.
           </p>
@@ -227,23 +255,33 @@ async function save(): Promise<void> {
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="grid gap-2">
             <Label for="alias-sort-order">Sort order</Label>
-            <Input id="alias-sort-order" v-model.number="sortOrder" type="number" />
+            <Input
+              id="alias-sort-order"
+              v-model.number="sortOrder"
+              type="number"
+            />
           </div>
         </div>
 
-        <div class="flex items-center justify-between gap-4 rounded-md border p-3">
+        <div
+          class="flex items-center justify-between gap-4 rounded-md border p-3"
+        >
           <div>
             <Label for="alias-enabled">Enabled</Label>
-            <p class="text-xs text-muted-foreground">Disabled aliases do not resolve.</p>
+            <p class="text-xs text-muted-foreground">
+              Disabled aliases do not resolve.
+            </p>
           </div>
           <Switch id="alias-enabled" v-model="enabled" />
         </div>
       </div>
 
       <DialogFooter>
-        <Button variant="outline" @click="emit('update:open', false)">Cancel</Button>
+        <Button variant="outline" @click="emit('update:open', false)"
+          >Cancel</Button
+        >
         <Button :disabled="saving || !connections.length" @click="save">
-          {{ saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create alias' }}
+          {{ saving ? "Saving…" : isEdit ? "Save changes" : "Create alias" }}
         </Button>
       </DialogFooter>
     </DialogScrollContent>

@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { Layers, Pencil, Plus, RefreshCw, Trash2 } from '@lucide/vue';
-import { onMounted, ref } from 'vue';
-import { toast } from 'vue-sonner';
+import { Layers, Pencil, Plus, RefreshCw, Trash2 } from "@lucide/vue";
+import { onMounted, ref } from "vue";
+import { toast } from "vue-sonner";
 
-import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import EmptyState from '@/components/EmptyState.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
-import ComboFormDialog from '@/components/combos/ComboFormDialog.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import ComboFormDialog from "@/components/combos/ComboFormDialog.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -19,10 +19,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { ApiError, api } from '@/lib/api';
-import { formatDateTime, isEnabled } from '@/lib/format';
-import type { Alias, ComboWithEntries } from '@/types/api';
+} from "@/components/ui/table";
+import { ApiError, api } from "@/lib/api";
+import { formatDateTime, isEnabled } from "@/lib/format";
+import type { Alias, ComboWithEntries } from "@/types/api";
 
 const combos = ref<ComboWithEntries[]>([]);
 const aliases = ref<Alias[]>([]);
@@ -37,11 +37,15 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const [comboList, aliasList] = await Promise.all([api.listCombos(), api.listAliases()]);
+    const [comboList, aliasList] = await Promise.all([
+      api.listCombos(),
+      api.listAliases(),
+    ]);
     combos.value = comboList;
     aliases.value = aliasList;
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load combos';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Failed to load combos";
   } finally {
     loading.value = false;
   }
@@ -62,9 +66,13 @@ async function toggleEnabled(combo: ComboWithEntries): Promise<void> {
   try {
     await api.updateCombo(combo.combo.id, { enabled });
     await load();
-    toast.success(`Combo “${combo.combo.name}” ${enabled ? 'enabled' : 'disabled'}`);
+    toast.success(
+      `Combo “${combo.combo.name}” ${enabled ? "enabled" : "disabled"}`,
+    );
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to update combo');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to update combo",
+    );
   }
 }
 
@@ -78,7 +86,9 @@ async function confirmDelete(): Promise<void> {
     deleting.value = null;
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete combo');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to delete combo",
+    );
   } finally {
     deletingBusy.value = false;
   }
@@ -102,10 +112,14 @@ onMounted(load);
     </PageHeader>
 
     <Card v-if="error">
-      <CardContent class="p-6 text-sm text-destructive">{{ error }}</CardContent>
+      <CardContent class="p-6 text-sm text-destructive">{{
+        error
+      }}</CardContent>
     </Card>
 
-    <p v-else-if="loading" class="text-sm text-muted-foreground">Loading combos…</p>
+    <p v-else-if="loading" class="text-sm text-muted-foreground">
+      Loading combos…
+    </p>
 
     <EmptyState
       v-else-if="!combos.length"
@@ -135,14 +149,23 @@ onMounted(load);
             <TableCell>
               <div class="flex flex-col gap-1">
                 <code class="text-sm font-medium">{{ combo.combo.name }}</code>
-                <span v-if="combo.combo.description" class="max-w-64 text-xs text-muted-foreground">
+                <span
+                  v-if="combo.combo.description"
+                  class="max-w-64 text-xs text-muted-foreground"
+                >
                   {{ combo.combo.description }}
                 </span>
               </div>
             </TableCell>
             <TableCell>
-              <div v-if="combo.entries.length" class="flex flex-wrap items-center gap-1">
-                <template v-for="(entry, index) in combo.entries" :key="entry.id">
+              <div
+                v-if="combo.entries.length"
+                class="flex flex-wrap items-center gap-1"
+              >
+                <template
+                  v-for="(entry, index) in combo.entries"
+                  :key="entry.id"
+                >
                   <Badge variant="secondary" class="font-mono text-xs">
                     {{ index + 1 }} · {{ entry.model_ref }}
                   </Badge>
@@ -150,7 +173,9 @@ onMounted(load);
               </div>
               <span v-else class="text-xs text-muted-foreground">No tiers</span>
             </TableCell>
-            <TableCell><StatusBadge :enabled="isEnabled(combo.combo.enabled)" /></TableCell>
+            <TableCell
+              ><StatusBadge :enabled="isEnabled(combo.combo.enabled)"
+            /></TableCell>
             <TableCell>
               <Switch
                 :model-value="isEnabled(combo.combo.enabled)"

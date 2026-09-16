@@ -1,15 +1,28 @@
 <script setup lang="ts">
-import { CloudDownload, Pencil, Plus, RefreshCw, Search, Trash2 } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
-import { toast } from 'vue-sonner';
+import {
+  CloudDownload,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from "@lucide/vue";
+import { computed, onMounted, ref } from "vue";
+import { toast } from "vue-sonner";
 
-import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import PriceFormDialog from '@/components/pricing/PriceFormDialog.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import PriceFormDialog from "@/components/pricing/PriceFormDialog.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -17,17 +30,17 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { ApiError, api } from '@/lib/api';
-import { formatDateTime } from '@/lib/format';
-import type { ModelPrice, PriceMatch, PricingSyncStatus } from '@/types/api';
+} from "@/components/ui/table";
+import { ApiError, api } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
+import type { ModelPrice, PriceMatch, PricingSyncStatus } from "@/types/api";
 
 /** Long catalogs are searchable; render at most this many rows at once. */
 const VISIBLE_LIMIT = 200;
 
 const prices = ref<ModelPrice[]>([]);
 const status = ref<PricingSyncStatus | null>(null);
-const search = ref('');
+const search = ref("");
 const loading = ref(true);
 const syncing = ref(false);
 const error = ref<string | null>(null);
@@ -35,34 +48,42 @@ const formOpen = ref(false);
 const editing = ref<ModelPrice | null>(null);
 const deleting = ref<ModelPrice | null>(null);
 const deletingBusy = ref(false);
-const matchModel = ref('');
+const matchModel = ref("");
 const matchResult = ref<PriceMatch | null>(null);
 const matchBusy = ref(false);
 
-const overrides = computed(() => prices.value.filter((price) => price.source === 'override').length);
+const overrides = computed(
+  () => prices.value.filter((price) => price.source === "override").length,
+);
 
 const filtered = computed(() => {
   const term = search.value.trim().toLowerCase();
   if (!term) return prices.value;
-  return prices.value.filter((price) => price.model.toLowerCase().includes(term));
+  return prices.value.filter((price) =>
+    price.model.toLowerCase().includes(term),
+  );
 });
 
 const visible = computed(() => filtered.value.slice(0, VISIBLE_LIMIT));
 
 function rate(value: number | null): string {
-  if (value === null) return '—';
-  return `$${value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
+  if (value === null) return "—";
+  return `$${value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}`;
 }
 
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const [priceList, syncStatus] = await Promise.all([api.listPricing(), api.pricingSyncStatus()]);
+    const [priceList, syncStatus] = await Promise.all([
+      api.listPricing(),
+      api.pricingSyncStatus(),
+    ]);
     prices.value = priceList;
     status.value = syncStatus;
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load pricing';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Failed to load pricing";
   } finally {
     loading.value = false;
   }
@@ -75,7 +96,7 @@ async function syncNow(): Promise<void> {
     toast.success(`Crawled ${result.model_count} model prices`);
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Sync failed');
+    toast.error(caught instanceof ApiError ? caught.message : "Sync failed");
   } finally {
     syncing.value = false;
   }
@@ -94,7 +115,9 @@ async function testMatch(): Promise<void> {
   try {
     matchResult.value = await api.matchPricing(model);
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Match lookup failed');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Match lookup failed",
+    );
   } finally {
     matchBusy.value = false;
   }
@@ -115,7 +138,11 @@ async function confirmDelete(): Promise<void> {
     deleting.value = null;
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete the override');
+    toast.error(
+      caught instanceof ApiError
+        ? caught.message
+        : "Failed to delete the override",
+    );
   } finally {
     deletingBusy.value = false;
   }
@@ -136,7 +163,7 @@ onMounted(load);
         </Button>
         <Button variant="outline" :disabled="syncing" @click="syncNow">
           <CloudDownload :class="syncing ? 'animate-pulse' : ''" />
-          {{ syncing ? 'Syncing…' : 'Sync now' }}
+          {{ syncing ? "Syncing…" : "Sync now" }}
         </Button>
         <Button @click="openCreate"><Plus /> Add override</Button>
       </template>
@@ -159,7 +186,11 @@ onMounted(load);
             aria-label="Model id to match"
             @keyup.enter="testMatch"
           />
-          <Button variant="outline" :disabled="matchBusy || !matchModel.trim()" @click="testMatch">
+          <Button
+            variant="outline"
+            :disabled="matchBusy || !matchModel.trim()"
+            @click="testMatch"
+          >
             <Search /> Test match
           </Button>
         </div>
@@ -175,7 +206,8 @@ onMounted(load);
             </span>
           </template>
           <span v-else class="text-destructive">
-            No catalog entry matches — add an override or set the connection's pricing model.
+            No catalog entry matches — add an override or set the connection's
+            pricing model.
           </span>
         </p>
       </CardContent>
@@ -188,21 +220,27 @@ onMounted(load);
           {{
             status
               ? `Last crawl ${formatDateTime(status.synced_at)} · ${status.model_count} models`
-              : 'No crawl yet — add overrides manually or enable pricing.sync_enabled.'
+              : "No crawl yet — add overrides manually or enable pricing.sync_enabled."
           }}
         </CardDescription>
       </CardHeader>
       <CardContent class="grid gap-3">
-        <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div
+          class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+        >
           <Badge variant="outline">{{ prices.length }} rows</Badge>
           <Badge variant="secondary">{{ overrides }} overrides</Badge>
-          <span v-if="status" class="truncate" :title="status.source">{{ status.source }}</span>
+          <span v-if="status" class="truncate" :title="status.source">{{
+            status.source
+          }}</span>
         </div>
       </CardContent>
     </Card>
 
     <Card v-if="error">
-      <CardContent class="p-6 text-sm text-destructive">{{ error }}</CardContent>
+      <CardContent class="p-6 text-sm text-destructive">{{
+        error
+      }}</CardContent>
     </Card>
 
     <template v-else>
@@ -213,11 +251,13 @@ onMounted(load);
         aria-label="Filter model prices"
       />
 
-      <p v-if="loading" class="text-sm text-muted-foreground">Loading pricing…</p>
+      <p v-if="loading" class="text-sm text-muted-foreground">
+        Loading pricing…
+      </p>
 
       <p v-else-if="!prices.length" class="text-sm text-muted-foreground">
-        No prices stored. Use <strong>Sync now</strong> to crawl the configured catalog, or add an
-        override.
+        No prices stored. Use <strong>Sync now</strong> to crawl the configured
+        catalog, or add an override.
       </p>
 
       <Card v-else>
@@ -236,23 +276,45 @@ onMounted(load);
             </TableRow>
           </TableHeader>
           <TableBody>
-            <TableRow v-for="price in visible" :key="`${price.model}:${price.source}`">
-              <TableCell><code class="text-xs">{{ price.model }}</code></TableCell>
-              <TableCell class="text-xs">{{ rate(price.input_per_million_usd) }}</TableCell>
-              <TableCell class="text-xs">{{ rate(price.output_per_million_usd) }}</TableCell>
-              <TableCell class="text-xs">{{ rate(price.cache_read_per_million_usd) }}</TableCell>
-              <TableCell class="text-xs">{{ rate(price.cache_write_per_million_usd) }}</TableCell>
-              <TableCell class="text-xs">{{ rate(price.reasoning_per_million_usd) }}</TableCell>
+            <TableRow
+              v-for="price in visible"
+              :key="`${price.model}:${price.source}`"
+            >
+              <TableCell
+                ><code class="text-xs">{{ price.model }}</code></TableCell
+              >
+              <TableCell class="text-xs">{{
+                rate(price.input_per_million_usd)
+              }}</TableCell>
+              <TableCell class="text-xs">{{
+                rate(price.output_per_million_usd)
+              }}</TableCell>
+              <TableCell class="text-xs">{{
+                rate(price.cache_read_per_million_usd)
+              }}</TableCell>
+              <TableCell class="text-xs">{{
+                rate(price.cache_write_per_million_usd)
+              }}</TableCell>
+              <TableCell class="text-xs">{{
+                rate(price.reasoning_per_million_usd)
+              }}</TableCell>
               <TableCell>
-                <Badge :variant="price.source === 'override' ? 'default' : 'outline'">
+                <Badge
+                  :variant="price.source === 'override' ? 'default' : 'outline'"
+                >
                   {{ price.source }}
                 </Badge>
               </TableCell>
-              <TableCell class="text-xs whitespace-nowrap text-muted-foreground">
+              <TableCell
+                class="text-xs whitespace-nowrap text-muted-foreground"
+              >
                 {{ formatDateTime(price.updated_at) }}
               </TableCell>
               <TableCell class="text-right">
-                <div v-if="price.source === 'override'" class="flex justify-end gap-1">
+                <div
+                  v-if="price.source === 'override'"
+                  class="flex justify-end gap-1"
+                >
                   <Button
                     variant="ghost"
                     size="icon-sm"
@@ -275,8 +337,12 @@ onMounted(load);
             </TableRow>
           </TableBody>
         </Table>
-        <p v-if="filtered.length > VISIBLE_LIMIT" class="border-t p-3 text-xs text-muted-foreground">
-          Showing the first {{ VISIBLE_LIMIT }} of {{ filtered.length }} matches — refine the filter.
+        <p
+          v-if="filtered.length > VISIBLE_LIMIT"
+          class="border-t p-3 text-xs text-muted-foreground"
+        >
+          Showing the first {{ VISIBLE_LIMIT }} of {{ filtered.length }} matches
+          — refine the filter.
         </p>
       </Card>
     </template>

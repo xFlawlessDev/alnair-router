@@ -1,20 +1,33 @@
 <script setup lang="ts">
-import { DatabaseBackup, Download, RefreshCw, RotateCcw, Save, Upload } from '@lucide/vue';
-import { computed, onMounted, reactive, ref } from 'vue';
-import { toast } from 'vue-sonner';
+import {
+  DatabaseBackup,
+  Download,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Upload,
+} from "@lucide/vue";
+import { computed, onMounted, reactive, ref } from "vue";
+import { toast } from "vue-sonner";
 
-import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-import { ApiError, api } from '@/lib/api';
-import { setAdminToken } from '@/lib/adminToken';
-import type { SettingsPatch, SettingsResponse } from '@/types/api';
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { ApiError, api } from "@/lib/api";
+import { setAdminToken } from "@/lib/adminToken";
+import type { SettingsPatch, SettingsResponse } from "@/types/api";
 
 const settings = ref<SettingsResponse | null>(null);
 const loading = ref(true);
@@ -35,12 +48,12 @@ const error = ref<string | null>(null);
 const form = reactive({
   require_api_key: false,
   admin_token_enabled: false,
-  admin_token: '',
+  admin_token: "",
   readiness_upstream_checks: false,
   public_usage: true,
   lan_access: false,
-  cors_origins: '',
-  default_connection: '',
+  cors_origins: "",
+  default_connection: "",
   max_attempts: 5,
   max_retries_per_tier: 2,
   max_retry_delay_ms: 30000,
@@ -54,7 +67,7 @@ const form = reactive({
   burst: 0,
   pricing_sync_enabled: false,
   pricing_sync_interval_secs: 86400,
-  pricing_source_url: '',
+  pricing_source_url: "",
 });
 
 const deployment = computed(() => settings.value?.deployment ?? null);
@@ -62,19 +75,21 @@ const deployment = computed(() => settings.value?.deployment ?? null);
 /** Clearing the admin token on a public bind would reopen the admin API. */
 const adminTokenLocked = computed(() => {
   const info = deployment.value;
-  return info !== null && !info.binds_loopback && !info.allow_unauthenticated_admin;
+  return (
+    info !== null && !info.binds_loopback && !info.allow_unauthenticated_admin
+  );
 });
 
 function hydrate(response: SettingsResponse): void {
   settings.value = response;
   form.require_api_key = response.server.require_api_key;
   form.admin_token_enabled = response.server.admin_token_set;
-  form.admin_token = '';
+  form.admin_token = "";
   form.readiness_upstream_checks = response.server.readiness_upstream_checks;
   form.public_usage = response.server.public_usage;
   form.lan_access = response.server.lan_access;
-  form.cors_origins = response.server.cors_origins.join('\n');
-  form.default_connection = response.router.default_connection ?? '';
+  form.cors_origins = response.server.cors_origins.join("\n");
+  form.default_connection = response.router.default_connection ?? "";
   form.max_attempts = response.router.max_attempts;
   form.max_retries_per_tier = response.router.max_retries_per_tier;
   form.max_retry_delay_ms = response.router.max_retry_delay_ms;
@@ -82,7 +97,8 @@ function hydrate(response: SettingsResponse): void {
   form.connect_timeout_ms = response.router.connect_timeout_ms;
   form.idle_timeout_ms = response.router.idle_timeout_ms;
   form.max_concurrent = response.limits.max_concurrent;
-  form.max_concurrent_per_connection = response.limits.max_concurrent_per_connection;
+  form.max_concurrent_per_connection =
+    response.limits.max_concurrent_per_connection;
   form.acquire_timeout_ms = response.limits.acquire_timeout_ms;
   form.requests_per_minute = response.rate_limit.requests_per_minute;
   form.burst = response.rate_limit.burst;
@@ -97,7 +113,8 @@ async function load(): Promise<void> {
   try {
     hydrate(await api.settings());
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load settings';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Failed to load settings";
   } finally {
     loading.value = false;
   }
@@ -123,7 +140,9 @@ function buildPatch(): SettingsPatch {
   } else if (form.admin_token.trim()) {
     patch.admin_token = form.admin_token.trim();
   }
-  if (form.readiness_upstream_checks !== current.server.readiness_upstream_checks) {
+  if (
+    form.readiness_upstream_checks !== current.server.readiness_upstream_checks
+  ) {
     patch.readiness_upstream_checks = form.readiness_upstream_checks;
   }
   if (form.public_usage !== current.server.public_usage) {
@@ -136,34 +155,66 @@ function buildPatch(): SettingsPatch {
   const origins = form.cors_origins
     .split(/[\n,]/)
     .map((value) => value.trim())
-    .filter((value) => value !== '');
-  if (origins.join('\n') !== current.server.cors_origins.join('\n')) {
+    .filter((value) => value !== "");
+  if (origins.join("\n") !== current.server.cors_origins.join("\n")) {
     patch.cors_origins = origins;
   }
 
   const connection = form.default_connection.trim();
-  if (connection !== (current.router.default_connection ?? '')) {
-    patch.default_connection = connection === '' ? null : connection;
+  if (connection !== (current.router.default_connection ?? "")) {
+    patch.default_connection = connection === "" ? null : connection;
   }
 
   const numbers: Array<[keyof SettingsPatch, number, number]> = [
-    ['max_attempts', toInt(form.max_attempts, 1), current.router.max_attempts],
-    ['max_retries_per_tier', toInt(form.max_retries_per_tier), current.router.max_retries_per_tier],
-    ['max_retry_delay_ms', toInt(form.max_retry_delay_ms), current.router.max_retry_delay_ms],
-    ['catalog_ttl_ms', toInt(form.catalog_ttl_ms), current.router.catalog_ttl_ms],
-    ['connect_timeout_ms', toInt(form.connect_timeout_ms), current.router.connect_timeout_ms],
-    ['idle_timeout_ms', toInt(form.idle_timeout_ms), current.router.idle_timeout_ms],
-    ['max_concurrent', toInt(form.max_concurrent), current.limits.max_concurrent],
+    ["max_attempts", toInt(form.max_attempts, 1), current.router.max_attempts],
     [
-      'max_concurrent_per_connection',
+      "max_retries_per_tier",
+      toInt(form.max_retries_per_tier),
+      current.router.max_retries_per_tier,
+    ],
+    [
+      "max_retry_delay_ms",
+      toInt(form.max_retry_delay_ms),
+      current.router.max_retry_delay_ms,
+    ],
+    [
+      "catalog_ttl_ms",
+      toInt(form.catalog_ttl_ms),
+      current.router.catalog_ttl_ms,
+    ],
+    [
+      "connect_timeout_ms",
+      toInt(form.connect_timeout_ms),
+      current.router.connect_timeout_ms,
+    ],
+    [
+      "idle_timeout_ms",
+      toInt(form.idle_timeout_ms),
+      current.router.idle_timeout_ms,
+    ],
+    [
+      "max_concurrent",
+      toInt(form.max_concurrent),
+      current.limits.max_concurrent,
+    ],
+    [
+      "max_concurrent_per_connection",
       toInt(form.max_concurrent_per_connection),
       current.limits.max_concurrent_per_connection,
     ],
-    ['acquire_timeout_ms', toInt(form.acquire_timeout_ms), current.limits.acquire_timeout_ms],
-    ['requests_per_minute', toInt(form.requests_per_minute), current.rate_limit.requests_per_minute],
-    ['burst', toInt(form.burst), current.rate_limit.burst],
     [
-      'pricing_sync_interval_secs',
+      "acquire_timeout_ms",
+      toInt(form.acquire_timeout_ms),
+      current.limits.acquire_timeout_ms,
+    ],
+    [
+      "requests_per_minute",
+      toInt(form.requests_per_minute),
+      current.rate_limit.requests_per_minute,
+    ],
+    ["burst", toInt(form.burst), current.rate_limit.burst],
+    [
+      "pricing_sync_interval_secs",
       toInt(form.pricing_sync_interval_secs),
       current.pricing.sync_interval_secs,
     ],
@@ -187,26 +238,32 @@ function buildPatch(): SettingsPatch {
 async function save(): Promise<void> {
   const current = settings.value;
   if (!current) return;
-  if (form.admin_token_enabled && !current.server.admin_token_set && !form.admin_token.trim()) {
-    toast.error('Enter an admin token or turn the requirement off');
+  if (
+    form.admin_token_enabled &&
+    !current.server.admin_token_set &&
+    !form.admin_token.trim()
+  ) {
+    toast.error("Enter an admin token or turn the requirement off");
     return;
   }
 
   const patch = buildPatch();
   if (Object.keys(patch).length === 0) {
-    toast.info('No changes to save');
+    toast.info("No changes to save");
     return;
   }
 
   saving.value = true;
   try {
     const response = await api.updateSettings(patch);
-    if (typeof patch.admin_token === 'string') setAdminToken(patch.admin_token);
-    if (patch.admin_token === null) setAdminToken('');
+    if (typeof patch.admin_token === "string") setAdminToken(patch.admin_token);
+    if (patch.admin_token === null) setAdminToken("");
     hydrate(response);
-    toast.success('Settings saved');
+    toast.success("Settings saved");
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to save settings');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to save settings",
+    );
   } finally {
     saving.value = false;
   }
@@ -217,16 +274,21 @@ async function reset(): Promise<void> {
   try {
     hydrate(await api.resetSettings());
     resetOpen.value = false;
-    toast.success('Overrides cleared; file configuration restored');
+    toast.success("Overrides cleared; file configuration restored");
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to reset settings');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to reset settings",
+    );
   } finally {
     resetting.value = false;
   }
 }
 
 function sectionOverridden(prefix: string): boolean {
-  return settings.value?.overrides.some((key) => key.startsWith(`${prefix}.`)) ?? false;
+  return (
+    settings.value?.overrides.some((key) => key.startsWith(`${prefix}.`)) ??
+    false
+  );
 }
 
 async function downloadBackup(): Promise<void> {
@@ -234,15 +296,15 @@ async function downloadBackup(): Promise<void> {
   try {
     const blob = await api.downloadBackup();
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     link.href = url;
     link.download = `alnair-router-backup-${stamp}.sqlite`;
     link.click();
     URL.revokeObjectURL(url);
-    toast.success('Backup downloaded');
+    toast.success("Backup downloaded");
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Backup failed');
+    toast.error(caught instanceof ApiError ? caught.message : "Backup failed");
   } finally {
     backingUp.value = false;
   }
@@ -255,7 +317,7 @@ function openRestorePicker(): void {
 function pickRestoreFile(event: Event): void {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0] ?? null;
-  input.value = '';
+  input.value = "";
   if (!file) return;
   restoreFile.value = file;
   restoreOpen.value = true;
@@ -270,9 +332,11 @@ async function restore(): Promise<void> {
     restoreOpen.value = false;
     restoreFile.value = null;
     await load();
-    toast.success(`Restored ${summary.total_rows} rows across ${summary.tables.length} tables`);
+    toast.success(
+      `Restored ${summary.total_rows} rows across ${summary.tables.length} tables`,
+    );
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Restore failed');
+    toast.error(caught instanceof ApiError ? caught.message : "Restore failed");
   } finally {
     restoring.value = false;
   }
@@ -293,13 +357,15 @@ onMounted(load);
         </Button>
         <Button
           variant="outline"
-          :disabled="loading || saving || !settings || settings.overrides.length === 0"
+          :disabled="
+            loading || saving || !settings || settings.overrides.length === 0
+          "
           @click="resetOpen = true"
         >
           <RotateCcw /> Reset overrides
         </Button>
         <Button :disabled="loading || saving || !settings" @click="save">
-          <Save /> {{ saving ? 'Saving…' : 'Save' }}
+          <Save /> {{ saving ? "Saving…" : "Save" }}
         </Button>
       </template>
     </PageHeader>
@@ -316,31 +382,44 @@ onMounted(load);
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             Security
-            <Badge v-if="sectionOverridden('server')" variant="secondary">Customized</Badge>
+            <Badge v-if="sectionOverridden('server')" variant="secondary"
+              >Customized</Badge
+            >
           </CardTitle>
           <CardDescription>
-            Client keys and admin access. The admin token never leaves the router once saved.
+            Client keys and admin access. The admin token never leaves the
+            router once saved.
           </CardDescription>
         </CardHeader>
         <CardContent class="grid gap-5">
-          <div class="flex items-start justify-between gap-4 rounded-md border p-4">
+          <div
+            class="flex items-start justify-between gap-4 rounded-md border p-4"
+          >
             <div class="space-y-1">
-              <Label for="setting-require-api-key">Require client API key</Label>
+              <Label for="setting-require-api-key"
+                >Require client API key</Label
+              >
               <p class="text-xs text-muted-foreground">
                 Every <code>/v1</code> request must carry
-                <code>Authorization: Bearer &lt;key&gt;</code>, using a key from the API Keys page.
+                <code>Authorization: Bearer &lt;key&gt;</code>, using a key from
+                the API Keys page.
               </p>
             </div>
-            <Switch id="setting-require-api-key" v-model="form.require_api_key" />
+            <Switch
+              id="setting-require-api-key"
+              v-model="form.require_api_key"
+            />
           </div>
 
           <div class="grid gap-2 rounded-md border p-4">
             <div class="flex items-start justify-between gap-4">
               <div class="space-y-1">
-                <Label for="setting-admin-token-enabled">Require admin token</Label>
+                <Label for="setting-admin-token-enabled"
+                  >Require admin token</Label
+                >
                 <p class="text-xs text-muted-foreground">
-                  Guards <code>/api/*</code> with a bearer token. Enforced everywhere once set, even
-                  on loopback.
+                  Guards <code>/api/*</code> with a bearer token. Enforced
+                  everywhere once set, even on loopback.
                   <span v-if="adminTokenLocked" class="text-destructive">
                     Cannot be disabled on a non-loopback bind without
                     <code>allow_unauthenticated_admin</code>.
@@ -372,22 +451,33 @@ onMounted(load);
             </div>
           </div>
 
-          <div class="flex items-start justify-between gap-4 rounded-md border p-4">
+          <div
+            class="flex items-start justify-between gap-4 rounded-md border p-4"
+          >
             <div class="space-y-1">
-              <Label for="setting-readiness-checks">Check upstreams on /api/ready</Label>
+              <Label for="setting-readiness-checks"
+                >Check upstreams on /api/ready</Label
+              >
               <p class="text-xs text-muted-foreground">
-                Adds best-effort TCP reachability of each enabled connection to the readiness probe.
+                Adds best-effort TCP reachability of each enabled connection to
+                the readiness probe.
               </p>
             </div>
-            <Switch id="setting-readiness-checks" v-model="form.readiness_upstream_checks" />
+            <Switch
+              id="setting-readiness-checks"
+              v-model="form.readiness_upstream_checks"
+            />
           </div>
 
-          <div class="flex items-start justify-between gap-4 rounded-md border p-4">
+          <div
+            class="flex items-start justify-between gap-4 rounded-md border p-4"
+          >
             <div class="space-y-1">
               <Label for="setting-public-usage">Self-service usage page</Label>
               <p class="text-xs text-muted-foreground">
-                Exposes <code>/me</code> and <code>/api/public/usage</code>, where a client reads its
-                own rollup with a router-issued API key. No key, no data.
+                Exposes <code>/me</code> and <code>/api/public/usage</code>,
+                where a client reads its own rollup with a router-issued API
+                key. No key, no data.
               </p>
             </div>
             <Switch id="setting-public-usage" v-model="form.public_usage" />
@@ -397,8 +487,9 @@ onMounted(load);
             <div class="space-y-1">
               <Label for="setting-cors">CORS origins</Label>
               <p class="text-xs text-muted-foreground">
-                Browser origins allowed to call the API cross-origin, one per line. Empty emits no
-                CORS headers; <code>*</code> allows any origin.
+                Browser origins allowed to call the API cross-origin, one per
+                line. Empty emits no CORS headers; <code>*</code> allows any
+                origin.
               </p>
             </div>
             <Textarea
@@ -410,12 +501,15 @@ onMounted(load);
             />
           </div>
 
-          <div class="flex items-start justify-between gap-4 rounded-md border p-4">
+          <div
+            class="flex items-start justify-between gap-4 rounded-md border p-4"
+          >
             <div class="space-y-1">
               <Label for="setting-lan-access">LAN access</Label>
               <p class="text-xs text-muted-foreground">
-                Bind every interface so other devices on the network can reach the router; the
-                listener re-binds immediately. Admin routes then require the dashboard password.
+                Bind every interface so other devices on the network can reach
+                the router; the listener re-binds immediately. Admin routes then
+                require the dashboard password.
               </p>
             </div>
             <Switch id="setting-lan-access" v-model="form.lan_access" />
@@ -427,9 +521,13 @@ onMounted(load);
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             Routing
-            <Badge v-if="sectionOverridden('router')" variant="secondary">Customized</Badge>
+            <Badge v-if="sectionOverridden('router')" variant="secondary"
+              >Customized</Badge
+            >
           </CardTitle>
-          <CardDescription>Fallback behaviour and upstream timeouts.</CardDescription>
+          <CardDescription
+            >Fallback behaviour and upstream timeouts.</CardDescription
+          >
         </CardHeader>
         <CardContent class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div class="grid gap-2 sm:col-span-2 lg:col-span-3">
@@ -442,7 +540,12 @@ onMounted(load);
           </div>
           <div class="grid gap-2">
             <Label for="setting-max-attempts">Max fallback tiers</Label>
-            <Input id="setting-max-attempts" v-model.number="form.max_attempts" type="number" min="1" />
+            <Input
+              id="setting-max-attempts"
+              v-model.number="form.max_attempts"
+              type="number"
+              min="1"
+            />
           </div>
           <div class="grid gap-2">
             <Label for="setting-max-retries">Retries per tier</Label>
@@ -464,7 +567,12 @@ onMounted(load);
           </div>
           <div class="grid gap-2">
             <Label for="setting-catalog-ttl">Catalog cache TTL (ms)</Label>
-            <Input id="setting-catalog-ttl" v-model.number="form.catalog_ttl_ms" type="number" min="0" />
+            <Input
+              id="setting-catalog-ttl"
+              v-model.number="form.catalog_ttl_ms"
+              type="number"
+              min="0"
+            />
           </div>
           <div class="grid gap-2">
             <Label for="setting-connect-timeout">Connect timeout (ms)</Label>
@@ -492,13 +600,17 @@ onMounted(load);
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               Concurrency limits
-              <Badge v-if="sectionOverridden('limits')" variant="secondary">Customized</Badge>
+              <Badge v-if="sectionOverridden('limits')" variant="secondary"
+                >Customized</Badge
+              >
             </CardTitle>
             <CardDescription>Zero disables the matching cap.</CardDescription>
           </CardHeader>
           <CardContent class="grid gap-4">
             <div class="grid gap-2">
-              <Label for="setting-max-concurrent">Max concurrent upstream calls</Label>
+              <Label for="setting-max-concurrent"
+                >Max concurrent upstream calls</Label
+              >
               <Input
                 id="setting-max-concurrent"
                 v-model.number="form.max_concurrent"
@@ -507,7 +619,9 @@ onMounted(load);
               />
             </div>
             <div class="grid gap-2">
-              <Label for="setting-max-per-connection">Max concurrent per connection</Label>
+              <Label for="setting-max-per-connection"
+                >Max concurrent per connection</Label
+              >
               <Input
                 id="setting-max-per-connection"
                 v-model.number="form.max_concurrent_per_connection"
@@ -516,7 +630,9 @@ onMounted(load);
               />
             </div>
             <div class="grid gap-2">
-              <Label for="setting-acquire-timeout">Slot wait timeout (ms)</Label>
+              <Label for="setting-acquire-timeout"
+                >Slot wait timeout (ms)</Label
+              >
               <Input
                 id="setting-acquire-timeout"
                 v-model.number="form.acquire_timeout_ms"
@@ -532,23 +648,37 @@ onMounted(load);
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               Rate limits
-              <Badge v-if="sectionOverridden('rate_limit')" variant="secondary">Customized</Badge>
+              <Badge v-if="sectionOverridden('rate_limit')" variant="secondary"
+                >Customized</Badge
+              >
             </CardTitle>
             <CardDescription>
-              Defaults for client keys; individual keys and plans can override them.
+              Defaults for client keys; individual keys and plans can override
+              them.
             </CardDescription>
           </CardHeader>
           <CardContent class="grid gap-4">
             <div class="grid gap-2">
               <Label for="setting-rpm">Requests per minute</Label>
-              <Input id="setting-rpm" v-model.number="form.requests_per_minute" type="number" min="0" />
+              <Input
+                id="setting-rpm"
+                v-model.number="form.requests_per_minute"
+                type="number"
+                min="0"
+              />
               <p class="text-xs text-muted-foreground">0 is unlimited.</p>
             </div>
             <div class="grid gap-2">
               <Label for="setting-burst">Burst capacity</Label>
-              <Input id="setting-burst" v-model.number="form.burst" type="number" min="0" />
+              <Input
+                id="setting-burst"
+                v-model.number="form.burst"
+                type="number"
+                min="0"
+              />
               <p class="text-xs text-muted-foreground">
-                0 uses one minute's worth of tokens (the requests-per-minute value).
+                0 uses one minute's worth of tokens (the requests-per-minute
+                value).
               </p>
             </div>
           </CardContent>
@@ -559,21 +689,30 @@ onMounted(load);
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             Pricing catalog
-            <Badge v-if="sectionOverridden('pricing')" variant="secondary">Customized</Badge>
+            <Badge v-if="sectionOverridden('pricing')" variant="secondary"
+              >Customized</Badge
+            >
           </CardTitle>
           <CardDescription>
-            Background crawl of a LiteLLM or models.dev catalog; dashboard overrides always win.
+            Background crawl of a LiteLLM or models.dev catalog; dashboard
+            overrides always win.
           </CardDescription>
         </CardHeader>
         <CardContent class="grid gap-4">
-          <div class="flex items-start justify-between gap-4 rounded-md border p-4">
+          <div
+            class="flex items-start justify-between gap-4 rounded-md border p-4"
+          >
             <div class="space-y-1">
               <Label for="setting-pricing-sync">Sync pricing catalog</Label>
               <p class="text-xs text-muted-foreground">
-                Crawl the source URL in the background on the configured interval.
+                Crawl the source URL in the background on the configured
+                interval.
               </p>
             </div>
-            <Switch id="setting-pricing-sync" v-model="form.pricing_sync_enabled" />
+            <Switch
+              id="setting-pricing-sync"
+              v-model="form.pricing_sync_enabled"
+            />
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="grid gap-2">
@@ -584,11 +723,17 @@ onMounted(load);
                 type="number"
                 min="60"
               />
-              <p class="text-xs text-muted-foreground">Clamped to at least 60 seconds.</p>
+              <p class="text-xs text-muted-foreground">
+                Clamped to at least 60 seconds.
+              </p>
             </div>
             <div class="grid gap-2 sm:col-span-2">
               <Label for="setting-source-url">Source URL</Label>
-              <Input id="setting-source-url" v-model="form.pricing_source_url" type="url" />
+              <Input
+                id="setting-source-url"
+                v-model="form.pricing_source_url"
+                type="url"
+              />
             </div>
           </div>
         </CardContent>
@@ -600,14 +745,18 @@ onMounted(load);
             <DatabaseBackup class="size-4" /> Backup
           </CardTitle>
           <CardDescription>
-            Download every connection, alias, combo, key, plan, usage record and price rate as a
-            SQLite snapshot, or import one to replace them. Runtime settings and the admin token
-            are not part of a backup.
+            Download every connection, alias, combo, key, plan, usage record and
+            price rate as a SQLite snapshot, or import one to replace them.
+            Runtime settings and the admin token are not part of a backup.
           </CardDescription>
         </CardHeader>
         <CardContent class="flex flex-wrap items-center gap-2">
-          <Button variant="outline" :disabled="backingUp || restoring" @click="downloadBackup">
-            <Download /> {{ backingUp ? 'Preparing…' : 'Download backup' }}
+          <Button
+            variant="outline"
+            :disabled="backingUp || restoring"
+            @click="downloadBackup"
+          >
+            <Download /> {{ backingUp ? "Preparing…" : "Download backup" }}
           </Button>
           <input
             ref="fileInput"
@@ -616,12 +765,16 @@ onMounted(load);
             class="hidden"
             @change="pickRestoreFile"
           />
-          <Button variant="outline" :disabled="backingUp || restoring" @click="openRestorePicker">
-            <Upload /> {{ restoring ? 'Importing…' : 'Import backup' }}
+          <Button
+            variant="outline"
+            :disabled="backingUp || restoring"
+            @click="openRestorePicker"
+          >
+            <Upload /> {{ restoring ? "Importing…" : "Import backup" }}
           </Button>
           <p class="w-full text-xs text-muted-foreground">
-            Imports replace all data tables in one transaction. An interrupted import leaves the
-            database unchanged.
+            Imports replace all data tables in one transaction. An interrupted
+            import leaves the database unchanged.
           </p>
         </CardContent>
       </Card>
@@ -630,35 +783,41 @@ onMounted(load);
         <CardHeader>
           <CardTitle>Deployment</CardTitle>
           <CardDescription>
-            Read-only: these come from <code>config.toml</code> or environment variables and need a
-            restart.
+            Read-only: these come from <code>config.toml</code> or environment
+            variables and need a restart.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <dl class="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
             <div class="flex items-center justify-between gap-4">
               <dt class="text-muted-foreground">Listen address</dt>
-              <dd class="font-mono">{{ deployment.host }}:{{ deployment.port }}</dd>
+              <dd class="font-mono">
+                {{ deployment.host }}:{{ deployment.port }}
+              </dd>
             </div>
             <div class="flex items-center justify-between gap-4">
               <dt class="text-muted-foreground">Loopback only</dt>
-              <dd>{{ deployment.binds_loopback ? 'Yes' : 'No' }}</dd>
+              <dd>{{ deployment.binds_loopback ? "Yes" : "No" }}</dd>
             </div>
             <div class="flex items-center justify-between gap-4">
               <dt class="text-muted-foreground">Serve dashboard</dt>
-              <dd>{{ deployment.serve_dashboard ? 'Yes' : 'No' }}</dd>
+              <dd>{{ deployment.serve_dashboard ? "Yes" : "No" }}</dd>
             </div>
             <div class="flex items-center justify-between gap-4">
               <dt class="text-muted-foreground">System tray</dt>
-              <dd>{{ deployment.tray ? 'Yes' : 'No' }}</dd>
+              <dd>{{ deployment.tray ? "Yes" : "No" }}</dd>
             </div>
             <div class="flex items-center justify-between gap-4">
               <dt class="text-muted-foreground">Allow unauthenticated admin</dt>
-              <dd>{{ deployment.allow_unauthenticated_admin ? 'Yes' : 'No' }}</dd>
+              <dd>
+                {{ deployment.allow_unauthenticated_admin ? "Yes" : "No" }}
+              </dd>
             </div>
             <div class="flex items-center justify-between gap-4">
               <dt class="text-muted-foreground">Encryption key</dt>
-              <dd>{{ deployment.secrets_key_set ? 'Configured' : 'Missing' }}</dd>
+              <dd>
+                {{ deployment.secrets_key_set ? "Configured" : "Missing" }}
+              </dd>
             </div>
             <div class="flex items-center justify-between gap-4 sm:col-span-2">
               <dt class="text-muted-foreground">Database</dt>

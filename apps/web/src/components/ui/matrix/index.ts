@@ -1,2 +1,2 @@
-export { default as Matrix } from './Matrix.vue'
-export * from './types.ts'
+export { default as Matrix } from "./Matrix.vue";
+export * from "./types.ts";

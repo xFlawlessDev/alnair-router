@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import type { MenubarItemEmits, MenubarItemProps } from 'reka-ui';
-import type { HTMLAttributes } from 'vue';
-import { reactiveOmit } from '@vueuse/core';
-import { MenubarItem, useForwardPropsEmits } from 'reka-ui';
-import { cn } from '@/lib/utils';
+import type { MenubarItemEmits, MenubarItemProps } from "reka-ui";
+import type { HTMLAttributes } from "vue";
+import { reactiveOmit } from "@vueuse/core";
+import { MenubarItem, useForwardPropsEmits } from "reka-ui";
+import { cn } from "@/lib/utils";
 
 const props = defineProps<
-  MenubarItemProps & { class?: HTMLAttributes['class']; inset?: boolean }
+  MenubarItemProps & { class?: HTMLAttributes["class"]; inset?: boolean }
 >();
 
 const emits = defineEmits<MenubarItemEmits>();
 
-const delegatedProps = reactiveOmit(props, 'class');
+const delegatedProps = reactiveOmit(props, "class");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>

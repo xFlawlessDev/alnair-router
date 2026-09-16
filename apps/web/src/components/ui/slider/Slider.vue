@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import type { SliderRootEmits, SliderRootProps } from 'reka-ui';
-import type { HTMLAttributes } from 'vue';
-import { reactiveOmit } from '@vueuse/core';
-import { SliderRange, SliderRoot, SliderThumb, SliderTrack, useForwardPropsEmits } from 'reka-ui';
-import { cn } from '@/lib/utils';
+import type { SliderRootEmits, SliderRootProps } from "reka-ui";
+import type { HTMLAttributes } from "vue";
+import { reactiveOmit } from "@vueuse/core";
+import {
+  SliderRange,
+  SliderRoot,
+  SliderThumb,
+  SliderTrack,
+  useForwardPropsEmits,
+} from "reka-ui";
+import { cn } from "@/lib/utils";
 
-const props = defineProps<SliderRootProps & { class?: HTMLAttributes['class'] }>();
+const props = defineProps<
+  SliderRootProps & { class?: HTMLAttributes["class"] }
+>();
 const emits = defineEmits<SliderRootEmits>();
 
-const delegatedProps = reactiveOmit(props, 'class');
+const delegatedProps = reactiveOmit(props, "class");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>
@@ -26,7 +34,9 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
     <SliderTrack
       class="relative h-1.5 w-full data-[orientation=vertical]:w-1.5 grow overflow-hidden rounded-full bg-primary/20"
     >
-      <SliderRange class="absolute h-full data-[orientation=vertical]:w-full bg-primary" />
+      <SliderRange
+        class="absolute h-full data-[orientation=vertical]:w-full bg-primary"
+      />
     </SliderTrack>
     <SliderThumb
       v-for="(_, key) in modelValue"

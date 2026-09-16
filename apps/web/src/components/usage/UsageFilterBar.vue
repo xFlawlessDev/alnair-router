@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { X } from '@lucide/vue';
+import { computed, ref, watch } from "vue";
+import { X } from "@lucide/vue";
 
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import {
   Combobox,
   ComboboxAnchor,
@@ -10,19 +10,19 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
-} from '@/components/ui/combobox';
-import { Label } from '@/components/ui/label';
+} from "@/components/ui/combobox";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import type { ApiKey, UsageFacets } from '@/types/api';
+} from "@/components/ui/select";
+import type { ApiKey, UsageFacets } from "@/types/api";
 
 /** Sentinel because Select values cannot be empty strings. */
-const ALL = '__all__';
+const ALL = "__all__";
 
 const props = defineProps<{
   keys: ApiKey[];
@@ -33,10 +33,10 @@ const props = defineProps<{
   connection: string;
 }>();
 const emit = defineEmits<{
-  'update:apiKeyId': [string];
-  'update:model': [string];
-  'update:provider': [string];
-  'update:connection': [string];
+  "update:apiKeyId": [string];
+  "update:model": [string];
+  "update:provider": [string];
+  "update:connection": [string];
   clear: [];
 }>();
 
@@ -55,27 +55,29 @@ const models = computed<ModelSuggestion[]>(() =>
 const hasFilters = computed(
   () =>
     props.apiKeyId !== ALL ||
-    props.model.trim() !== '' ||
+    props.model.trim() !== "" ||
     props.provider !== ALL ||
     props.connection !== ALL,
 );
 
 watch(picked, (suggestion) => {
   if (!suggestion) return;
-  emit('update:model', suggestion.pattern);
+  emit("update:model", suggestion.pattern);
   picked.value = null;
 });
 
 /** The input doubles as the filter value, so partial matches work too. */
 function updateModel(value: unknown): void {
-  emit('update:model', typeof value === 'string' ? value : '');
+  emit("update:model", typeof value === "string" ? value : "");
 }
 </script>
 
 <template>
   <div class="flex flex-wrap items-end gap-3 rounded-lg border p-3">
     <div class="grid gap-1.5">
-      <Label for="usage-key-filter" class="text-xs text-muted-foreground">API key</Label>
+      <Label for="usage-key-filter" class="text-xs text-muted-foreground"
+        >API key</Label
+      >
       <Select
         :model-value="apiKeyId"
         @update:model-value="emit('update:apiKeyId', String($event))"
@@ -93,7 +95,9 @@ function updateModel(value: unknown): void {
     </div>
 
     <div class="grid gap-1.5">
-      <Label for="usage-model-filter" class="text-xs text-muted-foreground">Model</Label>
+      <Label for="usage-model-filter" class="text-xs text-muted-foreground"
+        >Model</Label
+      >
       <Combobox
         v-model="picked"
         by="id"
@@ -112,7 +116,12 @@ function updateModel(value: unknown): void {
         </ComboboxAnchor>
         <ComboboxList class="w-[var(--reka-combobox-trigger-width)]">
           <ComboboxEmpty>No recorded model matches</ComboboxEmpty>
-          <ComboboxItem v-for="item in models" :key="item.id" :value="item" class="text-xs">
+          <ComboboxItem
+            v-for="item in models"
+            :key="item.id"
+            :value="item"
+            class="text-xs"
+          >
             <span class="truncate font-mono">{{ item.pattern }}</span>
           </ComboboxItem>
         </ComboboxList>
@@ -120,7 +129,9 @@ function updateModel(value: unknown): void {
     </div>
 
     <div class="grid gap-1.5">
-      <Label for="usage-connection-filter" class="text-xs text-muted-foreground">Connection</Label>
+      <Label for="usage-connection-filter" class="text-xs text-muted-foreground"
+        >Connection</Label
+      >
       <Select
         :model-value="connection"
         @update:model-value="emit('update:connection', String($event))"
@@ -130,7 +141,11 @@ function updateModel(value: unknown): void {
         </SelectTrigger>
         <SelectContent>
           <SelectItem :value="ALL">All connections</SelectItem>
-          <SelectItem v-for="item in facets?.connections ?? []" :key="item" :value="item">
+          <SelectItem
+            v-for="item in facets?.connections ?? []"
+            :key="item"
+            :value="item"
+          >
             {{ item }}
           </SelectItem>
         </SelectContent>
@@ -138,7 +153,9 @@ function updateModel(value: unknown): void {
     </div>
 
     <div class="grid gap-1.5">
-      <Label for="usage-provider-filter" class="text-xs text-muted-foreground">Provider type</Label>
+      <Label for="usage-provider-filter" class="text-xs text-muted-foreground"
+        >Provider type</Label
+      >
       <Select
         :model-value="provider"
         @update:model-value="emit('update:provider', String($event))"
@@ -148,7 +165,11 @@ function updateModel(value: unknown): void {
         </SelectTrigger>
         <SelectContent>
           <SelectItem :value="ALL">All provider types</SelectItem>
-          <SelectItem v-for="item in facets?.providers ?? []" :key="item" :value="item">
+          <SelectItem
+            v-for="item in facets?.providers ?? []"
+            :key="item"
+            :value="item"
+          >
             {{ item }}
           </SelectItem>
         </SelectContent>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Badge } from '@/components/ui/badge';
+import { Badge } from "@/components/ui/badge";
 
 withDefaults(
   defineProps<{
@@ -7,7 +7,7 @@ withDefaults(
     enabledLabel?: string;
     disabledLabel?: string;
   }>(),
-  { enabledLabel: 'Enabled', disabledLabel: 'Disabled' },
+  { enabledLabel: "Enabled", disabledLabel: "Disabled" },
 );
 </script>
 

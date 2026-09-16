@@ -1,25 +1,25 @@
 <script setup lang="ts">
-import { LayoutGrid, List, Search, X } from '@lucide/vue';
-import { computed } from 'vue';
+import { LayoutGrid, List, Search, X } from "@lucide/vue";
+import { computed } from "vue";
 
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+} from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   hasActiveFilters,
   type ConnectionFilters,
   type ConnectionsGroup,
   type ConnectionsView,
-} from '@/lib/connectionsView';
-import { PROVIDER_TYPES, type ProviderType } from '@/types/api';
+} from "@/lib/connectionsView";
+import { PROVIDER_TYPES, type ProviderType } from "@/types/api";
 
 const props = defineProps<{
   filters: ConnectionFilters;
@@ -31,11 +31,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'update:search': [string];
-  'update:type': [ProviderType | 'all'];
-  'update:status': [ConnectionFilters['status']];
-  'update:view': [ConnectionsView];
-  'update:group': [ConnectionsGroup];
+  "update:search": [string];
+  "update:type": [ProviderType | "all"];
+  "update:status": [ConnectionFilters["status"]];
+  "update:view": [ConnectionsView];
+  "update:group": [ConnectionsGroup];
   clear: [];
 }>();
 
@@ -43,18 +43,23 @@ const filtering = computed(() => hasActiveFilters(props.filters));
 
 /** Clicking the active toggle would deselect it; keep the current view instead. */
 function pickView(value: unknown): void {
-  if (value === 'list' || value === 'grid') emit('update:view', value);
+  if (value === "list" || value === "grid") emit("update:view", value);
 }
 
 function pickType(value: unknown): void {
-  emit('update:type', (value === 'all' ? 'all' : value) as ProviderType | 'all');
+  emit(
+    "update:type",
+    (value === "all" ? "all" : value) as ProviderType | "all",
+  );
 }
 </script>
 
 <template>
   <div class="flex flex-wrap items-end gap-3 rounded-lg border p-3">
     <div class="grid min-w-56 flex-1 gap-1.5">
-      <Label for="connection-search" class="text-xs text-muted-foreground">Search</Label>
+      <Label for="connection-search" class="text-xs text-muted-foreground"
+        >Search</Label
+      >
       <div class="relative">
         <Search
           class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
@@ -87,10 +92,16 @@ function pickType(value: unknown): void {
     </div>
 
     <div class="grid gap-1.5">
-      <Label for="connection-status-filter" class="text-xs text-muted-foreground">Status</Label>
+      <Label
+        for="connection-status-filter"
+        class="text-xs text-muted-foreground"
+        >Status</Label
+      >
       <Select
         :model-value="filters.status"
-        @update:model-value="emit('update:status', $event as ConnectionFilters['status'])"
+        @update:model-value="
+          emit('update:status', $event as ConnectionFilters['status'])
+        "
       >
         <SelectTrigger id="connection-status-filter" class="h-9 w-36">
           <SelectValue />
@@ -104,10 +115,14 @@ function pickType(value: unknown): void {
     </div>
 
     <div class="ml-auto flex items-end gap-3">
-      <span class="pb-2 text-xs text-muted-foreground">{{ shown }} of {{ total }}</span>
+      <span class="pb-2 text-xs text-muted-foreground"
+        >{{ shown }} of {{ total }}</span
+      >
 
       <div class="grid gap-1.5">
-        <Label for="connection-group" class="text-xs text-muted-foreground">Group by</Label>
+        <Label for="connection-group" class="text-xs text-muted-foreground"
+          >Group by</Label
+        >
         <Select
           :model-value="group"
           @update:model-value="emit('update:group', $event as ConnectionsGroup)"
@@ -139,7 +154,13 @@ function pickType(value: unknown): void {
         </ToggleGroupItem>
       </ToggleGroup>
 
-      <Button v-if="filtering" variant="ghost" size="sm" class="mb-0.5" @click="emit('clear')">
+      <Button
+        v-if="filtering"
+        variant="ghost"
+        size="sm"
+        class="mb-0.5"
+        @click="emit('clear')"
+      >
         <X /> Clear filters
       </Button>
     </div>

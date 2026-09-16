@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { RouterView, useRoute } from 'vue-router';
+import { computed } from "vue";
+import { RouterView, useRoute } from "vue-router";
 
-import Logo from '@/components/Logo.vue';
-import AppHeader from '@/components/layout/AppHeader.vue';
-import AppSidebar from '@/components/layout/AppSidebar.vue';
-import ThemeToggle from '@/components/layout/ThemeToggle.vue';
-import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
-import { Toaster } from '@/components/ui/sonner';
+import Logo from "@/components/Logo.vue";
+import AppHeader from "@/components/layout/AppHeader.vue";
+import AppSidebar from "@/components/layout/AppSidebar.vue";
+import ThemeToggle from "@/components/layout/ThemeToggle.vue";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 
 const route = useRoute();
 const isPublic = computed(() => route.meta.public === true);
@@ -15,10 +15,14 @@ const isPublic = computed(() => route.meta.public === true);
 
 <template>
   <div v-if="isPublic" class="flex min-h-svh flex-col bg-muted/30">
-    <header class="flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4 sm:px-6">
+    <header
+      class="flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4 sm:px-6"
+    >
       <Logo class="size-6" />
       <span class="font-semibold">Alnair Router</span>
-      <span class="text-sm text-muted-foreground">· {{ route.meta.title ?? 'My usage' }}</span>
+      <span class="text-sm text-muted-foreground"
+        >· {{ route.meta.title ?? "My usage" }}</span
+      >
       <div class="ml-auto">
         <ThemeToggle />
       </div>

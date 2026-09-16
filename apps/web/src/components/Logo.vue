@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import raw from '@assets/alnair-white.svg?raw';
+import raw from "@assets/alnair-white.svg?raw";
 
 /**
  * Alnair brand mark, rendered from the shared SVG asset. The artwork ships
@@ -9,9 +9,9 @@ import raw from '@assets/alnair-white.svg?raw';
  * Decorative by default (the surrounding UI carries the name); pass `title`
  * to expose it as an image with an accessible label instead.
  */
-withDefaults(defineProps<{ title?: string }>(), { title: '' });
+withDefaults(defineProps<{ title?: string }>(), { title: "" });
 
-const artwork = raw.replace('#fff', 'currentColor');
+const artwork = raw.replace("#fff", "currentColor");
 </script>
 
 <template>

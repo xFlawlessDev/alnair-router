@@ -1,19 +1,29 @@
 <script setup lang="ts">
-import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
-import { toast } from 'vue-sonner';
+import {
+  Check,
+  Copy,
+  KeyRound,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  TriangleAlert,
+} from "@lucide/vue";
+import { computed, onMounted, ref } from "vue";
+import { toast } from "vue-sonner";
 
-import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import EmptyState from '@/components/EmptyState.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
-import BudgetUsage from '@/components/keys/BudgetUsage.vue';
-import KeyFormDialog from '@/components/keys/KeyFormDialog.vue';
-import PlanFormDialog from '@/components/keys/PlanFormDialog.vue';
-import PlansCard from '@/components/keys/PlansCard.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import BudgetUsage from "@/components/keys/BudgetUsage.vue";
+import KeyFormDialog from "@/components/keys/KeyFormDialog.vue";
+import PlanFormDialog from "@/components/keys/PlanFormDialog.vue";
+import PlansCard from "@/components/keys/PlansCard.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -21,14 +31,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -36,14 +46,25 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { ApiError, api } from '@/lib/api';
-import { formatDateTime, formatCost, isEnabled } from '@/lib/format';
-import { configuredCaps, effectiveCaps, effectiveTokenCaps, isExpired } from '@/lib/limits';
-import type { Alias, ApiKey, ComboWithEntries, KeyPlan, KeySpend } from '@/types/api';
+} from "@/components/ui/table";
+import { ApiError, api } from "@/lib/api";
+import { formatDateTime, formatCost, isEnabled } from "@/lib/format";
+import {
+  configuredCaps,
+  effectiveCaps,
+  effectiveTokenCaps,
+  isExpired,
+} from "@/lib/limits";
+import type {
+  Alias,
+  ApiKey,
+  ComboWithEntries,
+  KeyPlan,
+  KeySpend,
+} from "@/types/api";
 
 /** Sentinel because Select values cannot be empty strings. */
-const NO_PLAN = '__no_plan__';
+const NO_PLAN = "__no_plan__";
 
 const keys = ref<ApiKey[]>([]);
 const plans = ref<KeyPlan[]>([]);
@@ -63,8 +84,12 @@ const editingPlan = ref<KeyPlan | null>(null);
 const deletingPlan = ref<KeyPlan | null>(null);
 const deletingPlanBusy = ref(false);
 
-const plansById = computed(() => new Map(plans.value.map((plan) => [plan.id, plan])));
-const spendsById = computed(() => new Map(spends.value.map((spend) => [spend.api_key_id, spend])));
+const plansById = computed(
+  () => new Map(plans.value.map((plan) => [plan.id, plan])),
+);
+const spendsById = computed(
+  () => new Map(spends.value.map((spend) => [spend.api_key_id, spend])),
+);
 
 /** The plan supplying caps a key leaves empty, if any. */
 function planFor(key: ApiKey): KeyPlan | undefined {
@@ -75,20 +100,22 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const [keyList, planList, aliasList, comboList, spendList] = await Promise.all([
-      api.listKeys(),
-      api.listPlans(),
-      api.listAliases(),
-      api.listCombos(),
-      api.usageByKey(),
-    ]);
+    const [keyList, planList, aliasList, comboList, spendList] =
+      await Promise.all([
+        api.listKeys(),
+        api.listPlans(),
+        api.listAliases(),
+        api.listCombos(),
+        api.usageByKey(),
+      ]);
     keys.value = keyList;
     plans.value = planList;
     aliases.value = aliasList;
     combos.value = comboList;
     spends.value = spendList;
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load API keys';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Failed to load API keys";
   } finally {
     loading.value = false;
   }
@@ -124,18 +151,22 @@ function handleSaved(createdSecret?: string): void {
 
 /** Applies (or detaches) a plan straight from the key row. */
 async function applyPlanValue(key: ApiKey, value: unknown): Promise<void> {
-  const planId = typeof value === 'string' && value !== NO_PLAN ? value : null;
+  const planId = typeof value === "string" && value !== NO_PLAN ? value : null;
   if (planId === key.plan_id) return;
 
   const plan = planId ? plansById.value.get(planId) : null;
   try {
     await api.updateKey(key.id, { plan_id: planId });
     toast.success(
-      plan ? `Plan “${plan.name}” applied to “${key.name}”` : `Plan detached from “${key.name}”`,
+      plan
+        ? `Plan “${plan.name}” applied to “${key.name}”`
+        : `Plan detached from “${key.name}”`,
     );
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to update the key');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to update the key",
+    );
   }
 }
 
@@ -149,7 +180,9 @@ async function confirmDeletePlan(): Promise<void> {
     deletingPlan.value = null;
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete the plan');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to delete the plan",
+    );
   } finally {
     deletingPlanBusy.value = false;
   }
@@ -160,9 +193,9 @@ async function copySecret(): Promise<void> {
   try {
     await navigator.clipboard.writeText(secret.value);
     copied.value = true;
-    toast.success('Key copied to clipboard');
+    toast.success("Key copied to clipboard");
   } catch {
-    toast.error('Clipboard is unavailable');
+    toast.error("Clipboard is unavailable");
   }
 }
 
@@ -172,7 +205,7 @@ async function copyPrefix(key: ApiKey): Promise<void> {
     await navigator.clipboard.writeText(key.prefix);
     toast.success(`Prefix for “${key.name}” copied`);
   } catch {
-    toast.error('Clipboard is unavailable');
+    toast.error("Clipboard is unavailable");
   }
 }
 
@@ -186,7 +219,9 @@ async function confirmDelete(): Promise<void> {
     deleting.value = null;
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete key');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to delete key",
+    );
   } finally {
     deletingBusy.value = false;
   }
@@ -210,10 +245,14 @@ onMounted(load);
     </PageHeader>
 
     <Card v-if="error">
-      <CardContent class="p-6 text-sm text-destructive">{{ error }}</CardContent>
+      <CardContent class="p-6 text-sm text-destructive">{{
+        error
+      }}</CardContent>
     </Card>
 
-    <p v-else-if="loading" class="text-sm text-muted-foreground">Loading API keys…</p>
+    <p v-else-if="loading" class="text-sm text-muted-foreground">
+      Loading API keys…
+    </p>
 
     <EmptyState
       v-else-if="!keys.length"
@@ -247,7 +286,9 @@ onMounted(load);
             <TableCell class="font-medium">{{ key.name }}</TableCell>
             <TableCell>
               <div class="flex items-center gap-1">
-                <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{{ key.prefix }}…</code>
+                <code class="rounded bg-muted px-1.5 py-0.5 text-xs"
+                  >{{ key.prefix }}…</code
+                >
                 <Button
                   variant="ghost"
                   size="icon-sm"
@@ -264,20 +305,31 @@ onMounted(load);
                   :model-value="key.plan_id ?? NO_PLAN"
                   @update:model-value="applyPlanValue(key, $event)"
                 >
-                  <SelectTrigger class="h-7 w-36 text-xs" :aria-label="`Plan for ${key.name}`">
+                  <SelectTrigger
+                    class="h-7 w-36 text-xs"
+                    :aria-label="`Plan for ${key.name}`"
+                  >
                     <SelectValue placeholder="No plan" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem :value="NO_PLAN">No plan</SelectItem>
-                    <SelectItem v-for="plan in plans" :key="plan.id" :value="plan.id">
+                    <SelectItem
+                      v-for="plan in plans"
+                      :key="plan.id"
+                      :value="plan.id"
+                    >
                       {{ plan.name }}
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                <Badge v-if="key.allowed_models?.length" variant="secondary" class="w-fit gap-1">
+                <Badge
+                  v-if="key.allowed_models?.length"
+                  variant="secondary"
+                  class="w-fit gap-1"
+                >
                   <ShieldCheck class="size-3" />
                   {{ key.allowed_models.length }}
-                  model{{ key.allowed_models.length > 1 ? 's' : '' }}
+                  model{{ key.allowed_models.length > 1 ? "s" : "" }}
                 </Badge>
                 <Badge
                   v-if="key.plan_id && isExpired(planFor(key)?.expires_at)"
@@ -302,7 +354,9 @@ onMounted(load);
                 <Badge
                   v-for="{ cap, amount } in configuredCaps(key)"
                   :key="cap.field"
-                  :variant="key.budget_mode === 'block' ? 'destructive' : 'outline'"
+                  :variant="
+                    key.budget_mode === 'block' ? 'destructive' : 'outline'
+                  "
                 >
                   {{ formatCost(amount) }}/{{ cap.suffix }}
                 </Badge>
@@ -310,7 +364,9 @@ onMounted(load);
                   {{ key.budget_mode }}
                 </Badge>
                 <span
-                  v-if="!key.rate_limit_per_minute && !configuredCaps(key).length"
+                  v-if="
+                    !key.rate_limit_per_minute && !configuredCaps(key).length
+                  "
                   class="text-muted-foreground"
                 >
                   Default
@@ -324,9 +380,13 @@ onMounted(load);
                 :token-caps="effectiveTokenCaps(key, planFor(key))"
               />
             </TableCell>
-            <TableCell><StatusBadge :enabled="isEnabled(key.enabled)" /></TableCell>
+            <TableCell
+              ><StatusBadge :enabled="isEnabled(key.enabled)"
+            /></TableCell>
             <TableCell class="text-xs">
-              <Badge v-if="isExpired(key.expires_at)" variant="destructive">Expired</Badge>
+              <Badge v-if="isExpired(key.expires_at)" variant="destructive"
+                >Expired</Badge
+              >
               <span v-else class="text-muted-foreground">
                 {{ formatDateTime(key.expires_at) }}
               </span>
@@ -393,14 +453,22 @@ onMounted(load);
           <DialogTitle>Copy your key now</DialogTitle>
           <DialogDescription class="flex items-start gap-2">
             <TriangleAlert class="mt-0.5 size-4 shrink-0 text-destructive" />
-            This is the only time the secret is visible. Store it somewhere safe.
+            This is the only time the secret is visible. Store it somewhere
+            safe.
           </DialogDescription>
         </DialogHeader>
         <div class="flex items-center gap-2">
-          <code class="min-w-0 flex-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">
+          <code
+            class="min-w-0 flex-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs"
+          >
             {{ secret }}
           </code>
-          <Button variant="outline" size="icon" aria-label="Copy key" @click="copySecret">
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Copy key"
+            @click="copySecret"
+          >
             <Check v-if="copied" class="text-primary" />
             <Copy v-else />
           </Button>

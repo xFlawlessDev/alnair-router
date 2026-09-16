@@ -1,18 +1,28 @@
 <script setup lang="ts">
-import { Activity, ListPlus, Loader2, MessageSquare, Pencil, Plus, RefreshCw, Tags, Trash2 } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
-import { toast } from 'vue-sonner';
+import {
+  Activity,
+  ListPlus,
+  Loader2,
+  MessageSquare,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Tags,
+  Trash2,
+} from "@lucide/vue";
+import { computed, onMounted, ref } from "vue";
+import { toast } from "vue-sonner";
 
-import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import EmptyState from '@/components/EmptyState.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
-import AliasFormDialog from '@/components/aliases/AliasFormDialog.vue';
-import AliasChatDialog from '@/components/aliases/AliasChatDialog.vue';
-import ImportAliasesDialog from '@/components/aliases/ImportAliasesDialog.vue';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import AliasFormDialog from "@/components/aliases/AliasFormDialog.vue";
+import AliasChatDialog from "@/components/aliases/AliasChatDialog.vue";
+import ImportAliasesDialog from "@/components/aliases/ImportAliasesDialog.vue";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -20,10 +30,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { ApiError, api } from '@/lib/api';
-import { formatDateTime, isEnabled } from '@/lib/format';
-import type { Alias, Connection } from '@/types/api';
+} from "@/components/ui/table";
+import { ApiError, api } from "@/lib/api";
+import { formatDateTime, isEnabled } from "@/lib/format";
+import type { Alias, Connection } from "@/types/api";
 
 const aliases = ref<Alias[]>([]);
 const connections = ref<Connection[]>([]);
@@ -40,7 +50,8 @@ const chatAlias = ref<Alias | null>(null);
 
 const connectionNames = computed(() => {
   const names = new Map<string, string>();
-  for (const connection of connections.value) names.set(connection.id, connection.name);
+  for (const connection of connections.value)
+    names.set(connection.id, connection.name);
   return names;
 });
 
@@ -48,11 +59,15 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const [aliasList, connectionList] = await Promise.all([api.listAliases(), api.listConnections()]);
+    const [aliasList, connectionList] = await Promise.all([
+      api.listAliases(),
+      api.listConnections(),
+    ]);
     aliases.value = aliasList;
     connections.value = connectionList;
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load aliases';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Failed to load aliases";
   } finally {
     loading.value = false;
   }
@@ -72,9 +87,13 @@ async function toggleEnabled(alias: Alias): Promise<void> {
   try {
     await api.updateAlias(alias.id, { enabled: !isEnabled(alias.enabled) });
     await load();
-    toast.success(`Alias “${alias.prefix}” ${isEnabled(alias.enabled) ? 'disabled' : 'enabled'}`);
+    toast.success(
+      `Alias “${alias.prefix}” ${isEnabled(alias.enabled) ? "disabled" : "enabled"}`,
+    );
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to update alias');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to update alias",
+    );
   }
 }
 
@@ -88,7 +107,9 @@ async function confirmDelete(): Promise<void> {
     deleting.value = null;
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete alias');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Failed to delete alias",
+    );
   } finally {
     deletingBusy.value = false;
   }
@@ -106,7 +127,9 @@ async function runTest(alias: Alias): Promise<void> {
     if (result.ok) toast.success(`${alias.prefix}/ — ${result.message}`);
     else toast.warning(`${alias.prefix}/ — ${result.message}`);
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Alias test failed');
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Alias test failed",
+    );
   } finally {
     testingId.value = null;
   }
@@ -138,10 +161,14 @@ onMounted(load);
     </PageHeader>
 
     <Card v-if="error">
-      <CardContent class="p-6 text-sm text-destructive">{{ error }}</CardContent>
+      <CardContent class="p-6 text-sm text-destructive">{{
+        error
+      }}</CardContent>
     </Card>
 
-    <p v-else-if="loading" class="text-sm text-muted-foreground">Loading aliases…</p>
+    <p v-else-if="loading" class="text-sm text-muted-foreground">
+      Loading aliases…
+    </p>
 
     <EmptyState
       v-else-if="!aliases.length"
@@ -176,17 +203,28 @@ onMounted(load);
         <TableBody>
           <TableRow v-for="alias in aliases" :key="alias.id">
             <TableCell>
-              <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{{ alias.prefix }}/</code>
+              <code class="rounded bg-muted px-1.5 py-0.5 text-xs"
+                >{{ alias.prefix }}/</code
+              >
             </TableCell>
             <TableCell>
-              {{ connectionNames.get(alias.connection_id) ?? '(missing connection)' }}
+              {{
+                connectionNames.get(alias.connection_id) ??
+                "(missing connection)"
+              }}
             </TableCell>
             <TableCell>
-              <code v-if="alias.model_override" class="text-xs">{{ alias.model_override }}</code>
+              <code v-if="alias.model_override" class="text-xs">{{
+                alias.model_override
+              }}</code>
               <span v-else class="text-muted-foreground">—</span>
             </TableCell>
-            <TableCell class="text-muted-foreground">{{ alias.sort_order }}</TableCell>
-            <TableCell><StatusBadge :enabled="isEnabled(alias.enabled)" /></TableCell>
+            <TableCell class="text-muted-foreground">{{
+              alias.sort_order
+            }}</TableCell>
+            <TableCell
+              ><StatusBadge :enabled="isEnabled(alias.enabled)"
+            /></TableCell>
             <TableCell>
               <Switch
                 :model-value="isEnabled(alias.enabled)"

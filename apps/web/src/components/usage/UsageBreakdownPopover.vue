@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from "vue";
 
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { formatCost, formatNumber } from '@/lib/format';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { formatCost, formatNumber } from "@/lib/format";
 
 /** One line of a breakdown: token count or USD amount. */
 export interface BreakdownRow {
   label: string;
   value: number;
-  format?: 'tokens' | 'cost';
+  format?: "tokens" | "cost";
   hint?: string;
 }
 
@@ -16,14 +20,14 @@ const props = withDefaults(
   defineProps<{
     title: string;
     total: number;
-    totalFormat?: 'tokens' | 'cost';
+    totalFormat?: "tokens" | "cost";
     rows: BreakdownRow[];
     /** Optional second section comparing one metric per model. */
     byModel?: BreakdownRow[];
     /** Show each main row's share of the total. */
     showPercent?: boolean;
   }>(),
-  { totalFormat: 'tokens', byModel: () => [], showPercent: false },
+  { totalFormat: "tokens", byModel: () => [], showPercent: false },
 );
 
 interface Section {
@@ -33,19 +37,29 @@ interface Section {
 }
 
 const sections = computed<Section[]>(() => {
-  const sections: Section[] = [{ title: '', rows: props.rows, percent: props.showPercent }];
+  const sections: Section[] = [
+    { title: "", rows: props.rows, percent: props.showPercent },
+  ];
   if (props.byModel.length) {
-    sections.push({ title: 'Share by model', rows: props.byModel, percent: true });
+    sections.push({
+      title: "Share by model",
+      rows: props.byModel,
+      percent: true,
+    });
   }
   return sections;
 });
 
 function formatted(row: BreakdownRow): string {
-  return (row.format ?? 'tokens') === 'cost' ? formatCost(row.value) : formatNumber(row.value);
+  return (row.format ?? "tokens") === "cost"
+    ? formatCost(row.value)
+    : formatNumber(row.value);
 }
 
 function total(): string {
-  return props.totalFormat === 'cost' ? formatCost(props.total) : formatNumber(props.total);
+  return props.totalFormat === "cost"
+    ? formatCost(props.total)
+    : formatNumber(props.total);
 }
 
 function share(value: number): number {
@@ -54,7 +68,7 @@ function share(value: number): number {
 }
 
 function percentage(value: number): string {
-  if (props.total <= 0) return '0%';
+  if (props.total <= 0) return "0%";
   const percent = (value / props.total) * 100;
   return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
 }
@@ -70,7 +84,10 @@ function percentage(value: number): string {
         <slot />
       </button>
     </PopoverTrigger>
-    <PopoverContent class="w-72 max-w-[calc(100vw-2rem)] overflow-hidden" align="start">
+    <PopoverContent
+      class="w-72 max-w-[calc(100vw-2rem)] overflow-hidden"
+      align="start"
+    >
       <p class="truncate text-xs font-medium" :title="title">{{ title }}</p>
 
       <template v-for="section in sections" :key="section.title">
@@ -86,11 +103,18 @@ function percentage(value: number): string {
             :key="row.label"
             class="grid w-full min-w-0 grid-cols-1 gap-1"
           >
-            <div class="flex w-full min-w-0 items-baseline justify-between gap-2 text-xs">
-              <dt class="min-w-0 flex-1 truncate text-muted-foreground" :title="row.label">
+            <div
+              class="flex w-full min-w-0 items-baseline justify-between gap-2 text-xs"
+            >
+              <dt
+                class="min-w-0 flex-1 truncate text-muted-foreground"
+                :title="row.label"
+              >
                 {{ row.label }}
               </dt>
-              <dd class="flex shrink-0 items-baseline gap-2 font-medium tabular-nums">
+              <dd
+                class="flex shrink-0 items-baseline gap-2 font-medium tabular-nums"
+              >
                 <span class="whitespace-nowrap">{{ formatted(row) }}</span>
                 <span
                   v-if="section.percent"
@@ -117,7 +141,9 @@ function percentage(value: number): string {
         </dl>
       </template>
 
-      <div class="mt-3 flex items-baseline justify-between border-t pt-2 text-xs">
+      <div
+        class="mt-3 flex items-baseline justify-between border-t pt-2 text-xs"
+      >
         <span class="text-muted-foreground">Total</span>
         <span class="font-medium">{{ total() }}</span>
       </div>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { toast } from 'vue-sonner';
+import { computed, ref, watch } from "vue";
+import { toast } from "vue-sonner";
 
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -10,14 +10,19 @@ import {
   DialogHeader,
   DialogScrollContent,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import LimitFields from '@/components/keys/LimitFields.vue';
-import ModelAllowlistInput from '@/components/keys/ModelAllowlistInput.vue';
-import { ApiError, api } from '@/lib/api';
-import { fromLocalDateTime, parsePositive, parsePositiveInt, toLocalDateTime } from '@/lib/limits';
-import type { Alias, BudgetMode, ComboWithEntries, KeyPlan } from '@/types/api';
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import LimitFields from "@/components/keys/LimitFields.vue";
+import ModelAllowlistInput from "@/components/keys/ModelAllowlistInput.vue";
+import { ApiError, api } from "@/lib/api";
+import {
+  fromLocalDateTime,
+  parsePositive,
+  parsePositiveInt,
+  toLocalDateTime,
+} from "@/lib/limits";
+import type { Alias, BudgetMode, ComboWithEntries, KeyPlan } from "@/types/api";
 
 const props = defineProps<{
   open: boolean;
@@ -25,22 +30,22 @@ const props = defineProps<{
   aliases: Alias[];
   combos: ComboWithEntries[];
 }>();
-const emit = defineEmits<{ 'update:open': [boolean]; saved: [] }>();
+const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
 
-const name = ref('');
-const description = ref('');
+const name = ref("");
+const description = ref("");
 const models = ref<string[]>([]);
-const rateLimit = ref('');
-const daily = ref('');
-const weekly = ref('');
-const monthly = ref('');
-const lifetime = ref('');
-const dailyTokens = ref('');
-const weeklyTokens = ref('');
-const monthlyTokens = ref('');
-const lifetimeTokens = ref('');
-const budgetMode = ref<BudgetMode>('off');
-const expires = ref('');
+const rateLimit = ref("");
+const daily = ref("");
+const weekly = ref("");
+const monthly = ref("");
+const lifetime = ref("");
+const dailyTokens = ref("");
+const weeklyTokens = ref("");
+const monthlyTokens = ref("");
+const lifetimeTokens = ref("");
+const budgetMode = ref<BudgetMode>("off");
+const expires = ref("");
 const saving = ref(false);
 
 const isEdit = computed(() => props.plan !== null);
@@ -50,41 +55,51 @@ watch(
   (open) => {
     if (!open) return;
     const plan = props.plan;
-    name.value = plan?.name ?? '';
-    description.value = plan?.description ?? '';
+    name.value = plan?.name ?? "";
+    description.value = plan?.description ?? "";
     models.value = plan ? [...plan.allowed_models] : [];
     rateLimit.value =
-      plan?.rate_limit_per_minute != null ? String(plan.rate_limit_per_minute) : '';
-    daily.value = plan?.daily_budget_usd != null ? String(plan.daily_budget_usd) : '';
-    weekly.value = plan?.weekly_budget_usd != null ? String(plan.weekly_budget_usd) : '';
-    monthly.value = plan?.monthly_budget_usd != null ? String(plan.monthly_budget_usd) : '';
-    lifetime.value = plan?.lifetime_budget_usd != null ? String(plan.lifetime_budget_usd) : '';
-    dailyTokens.value = plan?.daily_token_limit != null ? String(plan.daily_token_limit) : '';
-    weeklyTokens.value = plan?.weekly_token_limit != null ? String(plan.weekly_token_limit) : '';
+      plan?.rate_limit_per_minute != null
+        ? String(plan.rate_limit_per_minute)
+        : "";
+    daily.value =
+      plan?.daily_budget_usd != null ? String(plan.daily_budget_usd) : "";
+    weekly.value =
+      plan?.weekly_budget_usd != null ? String(plan.weekly_budget_usd) : "";
+    monthly.value =
+      plan?.monthly_budget_usd != null ? String(plan.monthly_budget_usd) : "";
+    lifetime.value =
+      plan?.lifetime_budget_usd != null ? String(plan.lifetime_budget_usd) : "";
+    dailyTokens.value =
+      plan?.daily_token_limit != null ? String(plan.daily_token_limit) : "";
+    weeklyTokens.value =
+      plan?.weekly_token_limit != null ? String(plan.weekly_token_limit) : "";
     monthlyTokens.value =
-      plan?.monthly_token_limit != null ? String(plan.monthly_token_limit) : '';
+      plan?.monthly_token_limit != null ? String(plan.monthly_token_limit) : "";
     lifetimeTokens.value =
-      plan?.lifetime_token_limit != null ? String(plan.lifetime_token_limit) : '';
-    budgetMode.value = plan?.budget_mode ?? 'off';
+      plan?.lifetime_token_limit != null
+        ? String(plan.lifetime_token_limit)
+        : "";
+    budgetMode.value = plan?.budget_mode ?? "off";
     expires.value = toLocalDateTime(plan?.expires_at);
   },
 );
 
 async function save(): Promise<void> {
   if (!name.value.trim()) {
-    toast.error('Name is required');
+    toast.error("Name is required");
     return;
   }
   if (rateLimit.value.trim() && parsePositive(rateLimit.value) === null) {
-    toast.error('Rate limit must be a positive number');
+    toast.error("Rate limit must be a positive number");
     return;
   }
 
   for (const [label, value] of [
-    ['Daily', daily.value],
-    ['Weekly', weekly.value],
-    ['Monthly', monthly.value],
-    ['Lifetime', lifetime.value],
+    ["Daily", daily.value],
+    ["Weekly", weekly.value],
+    ["Monthly", monthly.value],
+    ["Lifetime", lifetime.value],
   ] as const) {
     if (value.trim() && parsePositive(value) === null) {
       toast.error(`${label} budget must be a positive number`);
@@ -93,10 +108,10 @@ async function save(): Promise<void> {
   }
 
   for (const [label, value] of [
-    ['Daily', dailyTokens.value],
-    ['Weekly', weeklyTokens.value],
-    ['Monthly', monthlyTokens.value],
-    ['Lifetime', lifetimeTokens.value],
+    ["Daily", dailyTokens.value],
+    ["Weekly", weeklyTokens.value],
+    ["Monthly", monthlyTokens.value],
+    ["Lifetime", lifetimeTokens.value],
   ] as const) {
     if (value.trim() && parsePositiveInt(value) === null) {
       toast.error(`${label} token limit must be a positive whole number`);
@@ -114,7 +129,7 @@ async function save(): Promise<void> {
   const monthlyTok = parsePositiveInt(monthlyTokens.value);
   const lifetimeTok = parsePositiveInt(lifetimeTokens.value);
   if (
-    budgetMode.value !== 'off' &&
+    budgetMode.value !== "off" &&
     dailyUsd === null &&
     weeklyUsd === null &&
     monthlyUsd === null &&
@@ -124,7 +139,9 @@ async function save(): Promise<void> {
     monthlyTok === null &&
     lifetimeTok === null
   ) {
-    toast.error('Set at least one budget or token limit before choosing warn or block');
+    toast.error(
+      "Set at least one budget or token limit before choosing warn or block",
+    );
     return;
   }
 
@@ -154,10 +171,12 @@ async function save(): Promise<void> {
       await api.createPlan(body);
       toast.success(`Plan “${body.name}” created`);
     }
-    emit('saved');
-    emit('update:open', false);
+    emit("saved");
+    emit("update:open", false);
   } catch (error) {
-    toast.error(error instanceof ApiError ? error.message : 'Failed to save plan');
+    toast.error(
+      error instanceof ApiError ? error.message : "Failed to save plan",
+    );
   } finally {
     saving.value = false;
   }
@@ -168,9 +187,10 @@ async function save(): Promise<void> {
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogScrollContent>
       <DialogHeader>
-        <DialogTitle>{{ isEdit ? 'Edit plan' : 'Create plan' }}</DialogTitle>
+        <DialogTitle>{{ isEdit ? "Edit plan" : "Create plan" }}</DialogTitle>
         <DialogDescription>
-          Set the rules once, then apply the plan to any key. Values set on a key win over the plan.
+          Set the rules once, then apply the plan to any key. Values set on a
+          key win over the plan.
         </DialogDescription>
       </DialogHeader>
 
@@ -182,7 +202,11 @@ async function save(): Promise<void> {
 
         <div class="grid gap-2">
           <Label for="plan-description">Description</Label>
-          <Input id="plan-description" v-model="description" placeholder="What this plan is for" />
+          <Input
+            id="plan-description"
+            v-model="description"
+            placeholder="What this plan is for"
+          />
         </div>
 
         <div class="grid gap-2">
@@ -213,9 +237,11 @@ async function save(): Promise<void> {
       </div>
 
       <DialogFooter>
-        <Button variant="outline" @click="emit('update:open', false)">Cancel</Button>
+        <Button variant="outline" @click="emit('update:open', false)"
+          >Cancel</Button
+        >
         <Button :disabled="saving" @click="save">
-          {{ saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create plan' }}
+          {{ saving ? "Saving…" : isEdit ? "Save changes" : "Create plan" }}
         </Button>
       </DialogFooter>
     </DialogScrollContent>

@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import { Activity, Copy, Eye, EyeOff, Loader2, Pencil, Trash2 } from '@lucide/vue';
+import {
+  Activity,
+  Copy,
+  Eye,
+  EyeOff,
+  Loader2,
+  Pencil,
+  Trash2,
+} from "@lucide/vue";
 
-import ProviderIcon from '@/components/ProviderIcon.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
-import { formatDateTime, isEnabled, maskSecret } from '@/lib/format';
-import type { Connection } from '@/types/api';
+import ProviderIcon from "@/components/ProviderIcon.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { formatDateTime, isEnabled, maskSecret } from "@/lib/format";
+import type { Connection } from "@/types/api";
 
 const props = defineProps<{
   connection: Connection;
@@ -40,7 +48,10 @@ const emit = defineEmits<{
           :label="providerLabel || connection.provider_type"
           class="mt-0.5 text-muted-foreground"
         />
-        <span class="min-w-0 flex-1 truncate font-medium" :title="connection.name">
+        <span
+          class="min-w-0 flex-1 truncate font-medium"
+          :title="connection.name"
+        >
           {{ connection.name }}
         </span>
         <StatusBadge :enabled="isEnabled(connection.enabled)" />
@@ -52,7 +63,9 @@ const emit = defineEmits<{
       </div>
 
       <div class="flex flex-wrap items-center gap-1">
-        <Badge v-if="connection.provider_id" variant="secondary">{{ providerLabel }}</Badge>
+        <Badge v-if="connection.provider_id" variant="secondary">{{
+          providerLabel
+        }}</Badge>
         <Badge variant="outline">{{ connection.provider_type }}</Badge>
         <Badge
           v-if="connection.account_count"
@@ -63,12 +76,19 @@ const emit = defineEmits<{
         </Badge>
       </div>
 
-      <code class="truncate text-xs text-muted-foreground" :title="connection.base_url">
+      <code
+        class="truncate text-xs text-muted-foreground"
+        :title="connection.base_url"
+      >
         {{ connection.base_url }}
       </code>
 
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>{{ headers ? `${headers} header(s)` : 'No custom headers' }}</span>
+      <div
+        class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+      >
+        <span>{{
+          headers ? `${headers} header(s)` : "No custom headers"
+        }}</span>
         <span>Updated {{ formatDateTime(connection.updated_at) }}</span>
       </div>
 
@@ -86,7 +106,12 @@ const emit = defineEmits<{
             <EyeOff v-if="revealed" />
             <Eye v-else />
           </Button>
-          <Button variant="ghost" size="icon-sm" aria-label="Copy API key" @click="emit('copy')">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Copy API key"
+            @click="emit('copy')"
+          >
             <Copy />
           </Button>
         </template>

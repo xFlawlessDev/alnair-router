@@ -1,21 +1,21 @@
 <script setup lang="ts">
-import { KeyRound, LogOut } from '@lucide/vue';
-import { computed } from 'vue';
-import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { toast } from 'vue-sonner';
+import { KeyRound, LogOut } from "@lucide/vue";
+import { computed } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
+import { toast } from "vue-sonner";
 
-import Logo from '@/components/Logo.vue';
-import ThemeToggle from '@/components/layout/ThemeToggle.vue';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { SidebarTrigger } from '@/components/ui/sidebar';
-import { api } from '@/lib/api';
-import { clearAuthStatus } from '@/lib/authState';
-import { getSession, setSession } from '@/lib/session';
+import Logo from "@/components/Logo.vue";
+import ThemeToggle from "@/components/layout/ThemeToggle.vue";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { api } from "@/lib/api";
+import { clearAuthStatus } from "@/lib/authState";
+import { getSession, setSession } from "@/lib/session";
 
 const route = useRoute();
 const router = useRouter();
-const pageTitle = computed(() => route.meta.title ?? 'Alnair Router');
+const pageTitle = computed(() => route.meta.title ?? "Alnair Router");
 const signedIn = computed(() => getSession() !== null);
 
 async function signOut(): Promise<void> {
@@ -26,8 +26,8 @@ async function signOut(): Promise<void> {
   }
   setSession(null);
   clearAuthStatus();
-  toast.success('Signed out');
-  await router.replace({ name: 'login' });
+  toast.success("Signed out");
+  await router.replace({ name: "login" });
 }
 </script>
 
@@ -60,7 +60,11 @@ async function signOut(): Promise<void> {
         <LogOut />
       </Button>
       <Button v-else as-child variant="ghost" size="icon">
-        <RouterLink to="/login" aria-label="Dashboard password" title="Dashboard password">
+        <RouterLink
+          to="/login"
+          aria-label="Dashboard password"
+          title="Dashboard password"
+        >
           <KeyRound />
         </RouterLink>
       </Button>

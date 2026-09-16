@@ -1,4 +1,4 @@
-import { useStorage } from '@vueuse/core';
+import { useStorage } from "@vueuse/core";
 
 /**
  * The optional bearer token guarding `/api/*` on the router.
@@ -6,9 +6,9 @@ import { useStorage } from '@vueuse/core';
  * Admin routes are unauthenticated on loopback, but a non-loopback deployment
  * requires `server.admin_token`; the UI attaches this token when set.
  */
-const STORAGE_KEY = 'alnair-router.admin-token';
+const STORAGE_KEY = "alnair-router.admin-token";
 
-const token = useStorage(STORAGE_KEY, '');
+const token = useStorage(STORAGE_KEY, "");
 
 export function getAdminToken(): string {
   return token.value.trim();
@@ -19,5 +19,5 @@ export function setAdminToken(value: string): void {
 }
 
 export function useAdminToken() {
-  return { token, set: setAdminToken, clear: () => setAdminToken('') };
+  return { token, set: setAdminToken, clear: () => setAdminToken("") };
 }

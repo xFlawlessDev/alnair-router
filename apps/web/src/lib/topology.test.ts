@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 
 import {
   LEFT_X,
@@ -8,8 +8,8 @@ import {
   ROUTER_SIZE,
   ROUTER_X,
   buildTopology,
-} from './topology';
-import type { ConnectionActivity } from '@/types/api';
+} from "./topology";
+import type { ConnectionActivity } from "@/types/api";
 
 function connection(id: string, inFlight = 0): ConnectionActivity {
   return {
@@ -24,9 +24,13 @@ function connection(id: string, inFlight = 0): ConnectionActivity {
   };
 }
 
-describe('buildTopology', () => {
-  it('keeps columns from overlapping the router hub', () => {
-    const { nodes } = buildTopology([connection('a'), connection('b'), connection('c')]);
+describe("buildTopology", () => {
+  it("keeps columns from overlapping the router hub", () => {
+    const { nodes } = buildTopology([
+      connection("a"),
+      connection("b"),
+      connection("c"),
+    ]);
     const router = nodes.find((node) => node.id === ROUTER_ID);
 
     expect(router).toBeDefined();
@@ -35,27 +39,34 @@ describe('buildTopology', () => {
     expect(router!.position.x).toBe(ROUTER_X);
   });
 
-  it('creates one edge per connection, animated only while in flight', () => {
+  it("creates one edge per connection, animated only while in flight", () => {
     const { edges } = buildTopology([
-      connection('idle'),
-      connection('busy', 2),
+      connection("idle"),
+      connection("busy", 2),
     ]);
 
-    const idle = edges.find((edge) => edge.source === 'idle');
-    const busy = edges.find((edge) => edge.source === 'busy');
+    const idle = edges.find((edge) => edge.source === "idle");
+    const busy = edges.find((edge) => edge.source === "busy");
 
     expect(edges).toHaveLength(2);
     expect(idle!.animated).toBe(false);
-    expect(idle!.style.strokeDasharray).toBe('7 5');
+    expect(idle!.style.strokeDasharray).toBe("7 5");
     expect(busy!.animated).toBe(true);
-    expect(busy!.style.stroke).toBe('#10b981');
-    expect(busy!.targetHandle).toBe('right');
+    expect(busy!.style.stroke).toBe("#10b981");
+    expect(busy!.targetHandle).toBe("right");
   });
 
-  it('routes left-column edges to the router left handle', () => {
-    const { edges } = buildTopology([connection('first'), connection('second')]);
+  it("routes left-column edges to the router left handle", () => {
+    const { edges } = buildTopology([
+      connection("first"),
+      connection("second"),
+    ]);
 
-    expect(edges.find((edge) => edge.source === 'first')!.targetHandle).toBe('left');
-    expect(edges.find((edge) => edge.source === 'second')!.targetHandle).toBe('right');
+    expect(edges.find((edge) => edge.source === "first")!.targetHandle).toBe(
+      "left",
+    );
+    expect(edges.find((edge) => edge.source === "second")!.targetHandle).toBe(
+      "right",
+    );
   });
 });

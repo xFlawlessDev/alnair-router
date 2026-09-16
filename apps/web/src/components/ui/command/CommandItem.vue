@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import type { ListboxItemEmits, ListboxItemProps } from 'reka-ui';
-import type { HTMLAttributes } from 'vue';
-import { reactiveOmit, useCurrentElement } from '@vueuse/core';
-import { ListboxItem, useForwardPropsEmits, useId } from 'reka-ui';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { cn } from '@/lib/utils';
-import { useCommand, useCommandGroup } from '.';
+import type { ListboxItemEmits, ListboxItemProps } from "reka-ui";
+import type { HTMLAttributes } from "vue";
+import { reactiveOmit, useCurrentElement } from "@vueuse/core";
+import { ListboxItem, useForwardPropsEmits, useId } from "reka-ui";
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { cn } from "@/lib/utils";
+import { useCommand, useCommandGroup } from ".";
 
-const props = defineProps<ListboxItemProps & { class?: HTMLAttributes['class'] }>();
+const props = defineProps<
+  ListboxItemProps & { class?: HTMLAttributes["class"] }
+>();
 const emits = defineEmits<ListboxItemEmits>();
 
-const delegatedProps = reactiveOmit(props, 'class');
+const delegatedProps = reactiveOmit(props, "class");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 
@@ -40,7 +42,10 @@ onMounted(() => {
   if (!(currentElement.value instanceof HTMLElement)) return;
 
   // textValue to perform filter
-  allItems.value.set(id, currentElement.value.textContent ?? props?.value!.toString());
+  allItems.value.set(
+    id,
+    currentElement.value.textContent ?? props?.value!.toString(),
+  );
 
   const groupId = groupContext?.id;
   if (groupId) {

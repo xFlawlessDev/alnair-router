@@ -1,23 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 
-import { router } from './index';
+import { router } from "./index";
 
-describe('router', () => {
-  it('defines the dashboard routes', () => {
+describe("router", () => {
+  it("defines the dashboard routes", () => {
     expect(router.getRoutes().map((route) => route.name)).toEqual([
-      'overview',
-      'connections',
-      'aliases',
-      'combos',
-      'keys',
-      'pricing',
-      'settings',
-      'usage',
-      'console',
-      'guide',
-      'login',
-      'my-usage',
-      'not-found',
+      "overview",
+      "connections",
+      "aliases",
+      "combos",
+      "keys",
+      "pricing",
+      "settings",
+      "usage",
+      "console",
+      "guide",
+      "login",
+      "my-usage",
+      "not-found",
     ]);
   });
 });

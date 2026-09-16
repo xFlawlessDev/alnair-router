@@ -1,31 +1,51 @@
 <script setup lang="ts">
-import { Boxes, Copy, Eye, EyeOff, KeyRound, LogOut, RefreshCw } from '@lucide/vue';
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue';
-import { toast } from 'vue-sonner';
-import UsageSummaryCards from '@/components/UsageSummaryCards.vue';
-import BudgetCard from '@/components/usage/BudgetCard.vue';
+import {
+  Boxes,
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LogOut,
+  RefreshCw,
+} from "@lucide/vue";
+import {
+  computed,
+  defineAsyncComponent,
+  onMounted,
+  onUnmounted,
+  ref,
+} from "vue";
+import { toast } from "vue-sonner";
+import UsageSummaryCards from "@/components/UsageSummaryCards.vue";
+import BudgetCard from "@/components/usage/BudgetCard.vue";
 import UsageBreakdownPopover, {
   type BreakdownRow,
-} from '@/components/usage/UsageBreakdownPopover.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+} from "@/components/usage/UsageBreakdownPopover.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Spinner } from '@/components/ui/spinner';
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from '@/components/ui/tooltip';
+} from "@/components/ui/tooltip";
 import {
   Table,
   TableBody,
@@ -33,27 +53,32 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { ApiError, api } from '@/lib/api';
-import { getClientKey, setClientKey, useClientKey } from '@/lib/clientKey';
-import { formatCompact, formatCost, formatNumber, formatRate } from '@/lib/format';
-import { USAGE_RANGES, rangeToSince } from '@/lib/ranges';
+} from "@/components/ui/table";
+import { ApiError, api } from "@/lib/api";
+import { getClientKey, setClientKey, useClientKey } from "@/lib/clientKey";
+import {
+  formatCompact,
+  formatCost,
+  formatNumber,
+  formatRate,
+} from "@/lib/format";
+import { USAGE_RANGES, rangeToSince } from "@/lib/ranges";
 import type {
   MyUsageResponse,
   PublicCatalogEntry,
   PublicCatalogResponse,
   PublicModelUsage,
-} from '@/types/api';
+} from "@/types/api";
 
 const { clear } = useClientKey();
 
 /** Unovis is heavy; keep it out of the main bundle until the chart renders. */
 const UsageTrendChart = defineAsyncComponent(
-  () => import('@/components/usage/UsageTrendChart.vue'),
+  () => import("@/components/usage/UsageTrendChart.vue"),
 );
 
-const connected = ref(getClientKey() !== '');
-const draft = ref('');
+const connected = ref(getClientKey() !== "");
+const draft = ref("");
 const connecting = ref(false);
 const connectError = ref<string | null>(null);
 const reveal = ref(false);
@@ -61,8 +86,8 @@ const usage = ref<MyUsageResponse | null>(null);
 const catalog = ref<PublicCatalogResponse | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
-const range = ref('all');
-const month = ref('any');
+const range = ref("all");
+const month = ref("any");
 
 /** Last 12 months for the month selector, newest first. */
 const MONTHS = Array.from({ length: 12 }, (_, index) => {
@@ -70,34 +95,40 @@ const MONTHS = Array.from({ length: 12 }, (_, index) => {
     Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - index, 1),
   );
   return {
-    value: `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`,
-    label: new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(date),
+    value: `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`,
+    label: new Intl.DateTimeFormat(undefined, {
+      month: "long",
+      year: "numeric",
+    }).format(date),
   };
 });
 
 /** Short ranges read better with hour buckets; longer ones with days. */
-function bucketFor(value: string): 'hour' | 'day' {
-  return value === '1h' || value === '24h' ? 'hour' : 'day';
+function bucketFor(value: string): "hour" | "day" {
+  return value === "1h" || value === "24h" ? "hour" : "day";
 }
 
 /** A selected month wins over the quick ranges; both feed the same window. */
 function queryWindow(): { since: string | null; until: string | null } {
-  if (month.value === 'any') {
+  if (month.value === "any") {
     return { since: rangeToSince(range.value), until: null };
   }
 
-  const [year, monthIndex] = month.value.split('-').map(Number);
+  const [year, monthIndex] = month.value.split("-").map(Number);
   const start = Date.UTC(year, monthIndex - 1, 1);
   const nextMonth = Date.UTC(year, monthIndex, 1);
   const now = Date.now();
   const end = nextMonth > now ? now : nextMonth - 1;
-  return { since: new Date(start).toISOString(), until: new Date(end).toISOString() };
+  return {
+    since: new Date(start).toISOString(),
+    until: new Date(end).toISOString(),
+  };
 }
 
 const since = computed(() => queryWindow().since);
 const until = computed(() => queryWindow().until);
-const bucket = computed<'hour' | 'day'>(() =>
-  month.value !== 'any' ? 'day' : bucketFor(range.value),
+const bucket = computed<"hour" | "day">(() =>
+  month.value !== "any" ? "day" : bucketFor(range.value),
 );
 
 /** OpenAI-compatible base URL customers point their SDK at. */
@@ -127,7 +158,7 @@ function modelTokenRows(row: PublicModelUsage): BreakdownRow[] {
     {
       label: row.model,
       value: row.prompt_tokens + row.completion_tokens,
-      format: 'tokens',
+      format: "tokens",
       hint: `${formatNumber(row.prompt_tokens)} prompt · ${formatNumber(row.completion_tokens)} completion`,
     },
   ];
@@ -139,7 +170,7 @@ function modelCostRows(row: PublicModelUsage): BreakdownRow[] {
     {
       label: row.model,
       value: row.cost_usd,
-      format: 'cost',
+      format: "cost",
       hint: `${formatNumber(row.requests)} requests · ${formatNumber(row.error_requests)} failed`,
     },
   ];
@@ -150,17 +181,17 @@ async function copyText(value: string): Promise<void> {
     await navigator.clipboard.writeText(value);
     toast.success(`Copied “${value}”`);
   } catch {
-    toast.error('Clipboard is not available');
+    toast.error("Clipboard is not available");
   }
 }
 
 function onRangeChange(): void {
-  month.value = 'any';
+  month.value = "any";
   void load();
 }
 
 function onMonthChange(): void {
-  if (month.value !== 'any') range.value = 'all';
+  if (month.value !== "any") range.value = "all";
   void load();
 }
 
@@ -181,12 +212,14 @@ async function connect(): Promise<void> {
     usage.value = usageResponse;
     catalog.value = catalogResponse;
     connected.value = true;
-    draft.value = '';
+    draft.value = "";
     reveal.value = false;
   } catch (caught) {
     clear();
     connectError.value =
-      caught instanceof ApiError ? caught.message : 'Could not connect with that key';
+      caught instanceof ApiError
+        ? caught.message
+        : "Could not connect with that key";
   } finally {
     connecting.value = false;
   }
@@ -207,7 +240,8 @@ async function load(silent = false): Promise<void> {
     usage.value = usageResponse;
     catalog.value = catalogResponse;
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load your usage';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Failed to load your usage";
   } finally {
     if (!silent) loading.value = false;
   }
@@ -220,7 +254,7 @@ let pollTimer: number | undefined;
 function startPolling(): void {
   stopPolling();
   pollTimer = window.setInterval(() => {
-    if (document.visibilityState === 'visible') void load(true);
+    if (document.visibilityState === "visible") void load(true);
   }, LIVE_INTERVAL_MS);
 }
 
@@ -232,7 +266,7 @@ function stopPolling(): void {
 }
 
 function onVisibilityChange(): void {
-  if (document.visibilityState === 'visible') void load(true);
+  if (document.visibilityState === "visible") void load(true);
 }
 
 function disconnect(): void {
@@ -241,24 +275,27 @@ function disconnect(): void {
   usage.value = null;
   catalog.value = null;
   error.value = null;
-  toast.success('Disconnected');
+  toast.success("Disconnected");
 }
 
 onMounted(() => {
   if (connected.value) void load();
   startPolling();
-  document.addEventListener('visibilitychange', onVisibilityChange);
+  document.addEventListener("visibilitychange", onVisibilityChange);
 });
 
 onUnmounted(() => {
   stopPolling();
-  document.removeEventListener('visibilitychange', onVisibilityChange);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
 });
 </script>
 
 <template>
   <div class="flex flex-col gap-6">
-    <div v-if="!connected" class="mx-auto flex w-full max-w-md flex-col gap-4 py-4 sm:py-12">
+    <div
+      v-if="!connected"
+      class="mx-auto flex w-full max-w-md flex-col gap-4 py-4 sm:py-12"
+    >
       <Card>
         <CardHeader class="items-center gap-3 text-center">
           <div
@@ -268,8 +305,8 @@ onUnmounted(() => {
           </div>
           <CardTitle class="text-lg">Connect your API key</CardTitle>
           <CardDescription>
-            Paste a router-issued key (starts with <code>sk-router-</code>) to see your own usage.
-            Ask the router operator if you do not have one.
+            Paste a router-issued key (starts with <code>sk-router-</code>) to
+            see your own usage. Ask the router operator if you do not have one.
           </CardDescription>
         </CardHeader>
         <CardContent class="grid gap-4">
@@ -285,7 +322,9 @@ onUnmounted(() => {
                 :type="reveal ? 'text' : 'password'"
                 :class="[
                   'h-10 pl-9 pr-10 font-mono',
-                  connectError ? 'border-destructive focus-visible:ring-destructive' : '',
+                  connectError
+                    ? 'border-destructive focus-visible:ring-destructive'
+                    : '',
                 ]"
                 autocomplete="off"
                 spellcheck="false"
@@ -303,14 +342,21 @@ onUnmounted(() => {
                 <Eye v-else class="size-4" />
               </button>
             </div>
-            <p v-if="connectError" class="text-xs text-destructive">{{ connectError }}</p>
+            <p v-if="connectError" class="text-xs text-destructive">
+              {{ connectError }}
+            </p>
             <p v-else class="text-xs text-muted-foreground">
-              Kept in this browser tab only; sent to this router and nowhere else.
+              Kept in this browser tab only; sent to this router and nowhere
+              else.
             </p>
           </div>
-          <Button class="w-full" :disabled="!draft.trim() || connecting" @click="connect">
+          <Button
+            class="w-full"
+            :disabled="!draft.trim() || connecting"
+            @click="connect"
+          >
             <Spinner v-if="connecting" />
-            {{ connecting ? 'Connecting…' : 'Connect' }}
+            {{ connecting ? "Connecting…" : "Connect" }}
           </Button>
         </CardContent>
       </Card>
@@ -321,8 +367,12 @@ onUnmounted(() => {
         class="sticky top-0 z-10 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:-mx-6 sm:px-6"
       >
         <div class="flex items-center gap-2">
-          <Badge variant="secondary">{{ usage?.key.name ?? 'Connected key' }}</Badge>
-          <code v-if="usage" class="text-xs text-muted-foreground">{{ usage.key.prefix }}…</code>
+          <Badge variant="secondary">{{
+            usage?.key.name ?? "Connected key"
+          }}</Badge>
+          <code v-if="usage" class="text-xs text-muted-foreground"
+            >{{ usage.key.prefix }}…</code
+          >
           <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span class="size-2 animate-pulse rounded-full bg-emerald-500" />
             Live · 30s
@@ -335,7 +385,11 @@ onUnmounted(() => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="any">Any month</SelectItem>
-              <SelectItem v-for="option in MONTHS" :key="option.value" :value="option.value">
+              <SelectItem
+                v-for="option in MONTHS"
+                :key="option.value"
+                :value="option.value"
+              >
                 {{ option.label }}
               </SelectItem>
             </SelectContent>
@@ -345,7 +399,11 @@ onUnmounted(() => {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="item in USAGE_RANGES" :key="item.value" :value="item.value">
+              <SelectItem
+                v-for="item in USAGE_RANGES"
+                :key="item.value"
+                :value="item.value"
+              >
                 {{ item.label }}
               </SelectItem>
             </SelectContent>
@@ -353,22 +411,25 @@ onUnmounted(() => {
           <Button variant="outline" :disabled="loading" @click="load()">
             <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
           </Button>
-          <Button variant="outline" @click="disconnect"><LogOut /> Disconnect</Button>
+          <Button variant="outline" @click="disconnect"
+            ><LogOut /> Disconnect</Button
+          >
         </div>
       </div>
 
       <Card v-if="error" class="border-destructive/40">
-        <CardContent class="p-6 text-sm text-destructive">{{ error }}</CardContent>
+        <CardContent class="p-6 text-sm text-destructive">{{
+          error
+        }}</CardContent>
       </Card>
 
       <template v-else>
-        <UsageSummaryCards :summary="usage?.summary ?? null" :models="usage?.models ?? []" />
-
-        <BudgetCard
-          v-if="usage"
-          :spend="usage.spend"
-          :budget="usage.budget"
+        <UsageSummaryCards
+          :summary="usage?.summary ?? null"
+          :models="usage?.models ?? []"
         />
+
+        <BudgetCard v-if="usage" :spend="usage.spend" :budget="usage.budget" />
 
         <UsageTrendChart
           v-if="usage"
@@ -399,7 +460,9 @@ onUnmounted(() => {
               <TableBody>
                 <TableRow v-for="row in usage.models" :key="row.model">
                   <TableCell class="min-w-0">
-                    <code class="block truncate text-xs" :title="row.model">{{ row.model }}</code>
+                    <code class="block truncate text-xs" :title="row.model">{{
+                      row.model
+                    }}</code>
                   </TableCell>
                   <TableCell>{{ formatNumber(row.requests) }}</TableCell>
                   <TableCell>{{ formatNumber(row.error_requests) }}</TableCell>
@@ -410,7 +473,9 @@ onUnmounted(() => {
                       :rows="modelTokenRows(row)"
                       show-percent
                     >
-                      {{ formatCompact(row.prompt_tokens + row.completion_tokens) }}
+                      {{
+                        formatCompact(row.prompt_tokens + row.completion_tokens)
+                      }}
                     </UsageBreakdownPopover>
                   </TableCell>
                   <TableCell>
@@ -427,7 +492,9 @@ onUnmounted(() => {
                 </TableRow>
               </TableBody>
             </Table>
-            <p v-else class="text-sm text-muted-foreground">No usage in this window.</p>
+            <p v-else class="text-sm text-muted-foreground">
+              No usage in this window.
+            </p>
           </CardContent>
         </Card>
 
@@ -440,8 +507,8 @@ onUnmounted(() => {
             <CardDescription>
               {{
                 catalog?.allowed_models.length
-                  ? 'Your key is limited to the patterns below.'
-                  : 'Your key can call every model on this router.'
+                  ? "Your key is limited to the patterns below."
+                  : "Your key can call every model on this router."
               }}
             </CardDescription>
             <div
@@ -460,7 +527,10 @@ onUnmounted(() => {
           <CardContent>
             <div class="mb-3 flex flex-wrap items-center gap-2">
               <span class="text-xs text-muted-foreground">Base URL</span>
-              <Badge variant="outline" class="font-mono text-[10px] font-normal">
+              <Badge
+                variant="outline"
+                class="font-mono text-[10px] font-normal"
+              >
                 {{ baseUrl }}
               </Badge>
               <Button
@@ -486,10 +556,15 @@ onUnmounted(() => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow v-for="entry in catalogRows" :key="`${entry.kind}:${entry.id}`">
+                <TableRow
+                  v-for="entry in catalogRows"
+                  :key="`${entry.kind}:${entry.id}`"
+                >
                   <TableCell class="min-w-0">
                     <div class="flex min-w-0 items-center gap-2">
-                      <code class="block truncate text-xs" :title="entry.id">{{ entry.id }}</code>
+                      <code class="block truncate text-xs" :title="entry.id">{{
+                        entry.id
+                      }}</code>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -503,48 +578,100 @@ onUnmounted(() => {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.input_per_million_usd">
+                    <TooltipProvider
+                      v-if="
+                        entry.kind === 'combo' &&
+                        entry.price?.input_per_million_usd
+                      "
+                    >
                       <Tooltip>
                         <TooltipTrigger as-child>
-                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.input_per_million_usd) }}</span>
+                          <span
+                            class="cursor-help border-b border-dashed border-muted-foreground/50"
+                            >{{
+                              formatRate(entry.price?.input_per_million_usd)
+                            }}</span
+                          >
                         </TooltipTrigger>
                         <TooltipContent>Pricing varies by tier</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    <template v-else>{{ formatRate(entry.price?.input_per_million_usd) }}</template>
+                    <template v-else>{{
+                      formatRate(entry.price?.input_per_million_usd)
+                    }}</template>
                   </TableCell>
                   <TableCell>
-                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.output_per_million_usd">
+                    <TooltipProvider
+                      v-if="
+                        entry.kind === 'combo' &&
+                        entry.price?.output_per_million_usd
+                      "
+                    >
                       <Tooltip>
                         <TooltipTrigger as-child>
-                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.output_per_million_usd) }}</span>
+                          <span
+                            class="cursor-help border-b border-dashed border-muted-foreground/50"
+                            >{{
+                              formatRate(entry.price?.output_per_million_usd)
+                            }}</span
+                          >
                         </TooltipTrigger>
                         <TooltipContent>Pricing varies by tier</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    <template v-else>{{ formatRate(entry.price?.output_per_million_usd) }}</template>
+                    <template v-else>{{
+                      formatRate(entry.price?.output_per_million_usd)
+                    }}</template>
                   </TableCell>
                   <TableCell>
-                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.cache_read_per_million_usd">
+                    <TooltipProvider
+                      v-if="
+                        entry.kind === 'combo' &&
+                        entry.price?.cache_read_per_million_usd
+                      "
+                    >
                       <Tooltip>
                         <TooltipTrigger as-child>
-                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.cache_read_per_million_usd) }}</span>
+                          <span
+                            class="cursor-help border-b border-dashed border-muted-foreground/50"
+                            >{{
+                              formatRate(
+                                entry.price?.cache_read_per_million_usd,
+                              )
+                            }}</span
+                          >
                         </TooltipTrigger>
                         <TooltipContent>Pricing varies by tier</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    <template v-else>{{ formatRate(entry.price?.cache_read_per_million_usd) }}</template>
+                    <template v-else>{{
+                      formatRate(entry.price?.cache_read_per_million_usd)
+                    }}</template>
                   </TableCell>
                   <TableCell>
-                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.cache_write_per_million_usd">
+                    <TooltipProvider
+                      v-if="
+                        entry.kind === 'combo' &&
+                        entry.price?.cache_write_per_million_usd
+                      "
+                    >
                       <Tooltip>
                         <TooltipTrigger as-child>
-                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.cache_write_per_million_usd) }}</span>
+                          <span
+                            class="cursor-help border-b border-dashed border-muted-foreground/50"
+                            >{{
+                              formatRate(
+                                entry.price?.cache_write_per_million_usd,
+                              )
+                            }}</span
+                          >
                         </TooltipTrigger>
                         <TooltipContent>Pricing varies by tier</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    <template v-else>{{ formatRate(entry.price?.cache_write_per_million_usd) }}</template>
+                    <template v-else>{{
+                      formatRate(entry.price?.cache_write_per_million_usd)
+                    }}</template>
                   </TableCell>
                 </TableRow>
               </TableBody>

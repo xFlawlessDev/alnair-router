@@ -1,26 +1,32 @@
 <script setup lang="ts">
-import { KeyRound } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { toast } from 'vue-sonner';
+import { KeyRound } from "@lucide/vue";
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { toast } from "vue-sonner";
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Spinner } from '@/components/ui/spinner';
-import { ApiError, api } from '@/lib/api';
-import { clearAuthStatus, loadAuthStatus } from '@/lib/authState';
-import { setSession } from '@/lib/session';
-import type { AuthStatus } from '@/types/api';
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
+import { ApiError, api } from "@/lib/api";
+import { clearAuthStatus, loadAuthStatus } from "@/lib/authState";
+import { setSession } from "@/lib/session";
+import type { AuthStatus } from "@/types/api";
 
 const route = useRoute();
 const router = useRouter();
 
 const status = ref<AuthStatus | null>(null);
-const password = ref('');
-const confirm = ref('');
-const setupCode = ref('');
+const password = ref("");
+const confirm = ref("");
+const setupCode = ref("");
 const busy = ref(false);
 const error = ref<string | null>(null);
 
@@ -28,7 +34,9 @@ const setupMode = computed(() => status.value?.setup_required === true);
 
 function redirectTarget(): string {
   const redirect = route.query.redirect;
-  return typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/';
+  return typeof redirect === "string" && redirect.startsWith("/")
+    ? redirect
+    : "/";
 }
 
 onMounted(async () => {
@@ -39,11 +47,11 @@ onMounted(async () => {
 async function submit(): Promise<void> {
   if (setupMode.value) {
     if (!setupCode.value.trim()) {
-      error.value = 'Enter the setup code printed in the router log';
+      error.value = "Enter the setup code printed in the router log";
       return;
     }
     if (password.value !== confirm.value) {
-      error.value = 'Passwords do not match';
+      error.value = "Passwords do not match";
       return;
     }
   }
@@ -56,10 +64,11 @@ async function submit(): Promise<void> {
       : await api.login(password.value);
     setSession(session);
     clearAuthStatus();
-    toast.success(setupMode.value ? 'Password set — signed in' : 'Signed in');
+    toast.success(setupMode.value ? "Password set — signed in" : "Signed in");
     await router.replace(redirectTarget());
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Sign-in failed';
+    error.value =
+      caught instanceof ApiError ? caught.message : "Sign-in failed";
   } finally {
     busy.value = false;
   }
@@ -76,14 +85,16 @@ async function submit(): Promise<void> {
           <KeyRound class="size-6" />
         </div>
         <CardTitle class="text-lg">
-          {{ setupMode ? 'Set the dashboard password' : 'Sign in' }}
+          {{ setupMode ? "Set the dashboard password" : "Sign in" }}
         </CardTitle>
         <CardDescription>
           <template v-if="setupMode">
-            No dashboard password exists yet. Copy the setup code from the router log, then choose a
-            password of at least 8 characters.
+            No dashboard password exists yet. Copy the setup code from the
+            router log, then choose a password of at least 8 characters.
           </template>
-          <template v-else>Enter the dashboard password to manage this router.</template>
+          <template v-else
+            >Enter the dashboard password to manage this router.</template
+          >
         </CardDescription>
       </CardHeader>
       <CardContent class="grid gap-4">
@@ -121,7 +132,7 @@ async function submit(): Promise<void> {
         <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
         <Button class="w-full" :disabled="busy || !password" @click="submit">
           <Spinner v-if="busy" />
-          {{ setupMode ? 'Set password' : 'Sign in' }}
+          {{ setupMode ? "Set password" : "Sign in" }}
         </Button>
       </CardContent>
     </Card>

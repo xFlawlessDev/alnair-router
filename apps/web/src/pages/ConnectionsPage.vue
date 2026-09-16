@@ -1,21 +1,32 @@
 <script setup lang="ts">
-import { Activity, Copy, Eye, EyeOff, Loader2, Pencil, Plug, Plus, RefreshCw, Trash2 } from '@lucide/vue';
-import { computed, onMounted, ref, watch } from 'vue';
-import { toast } from 'vue-sonner';
+import {
+  Activity,
+  Copy,
+  Eye,
+  EyeOff,
+  Loader2,
+  Pencil,
+  Plug,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "@lucide/vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { toast } from "vue-sonner";
 
-import ConfirmDialog from '@/components/ConfirmDialog.vue';
-import EmptyState from '@/components/EmptyState.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import ProviderIcon from '@/components/ProviderIcon.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
-import ConnectionCard from '@/components/connections/ConnectionCard.vue';
-import ConnectionFormDialog from '@/components/connections/ConnectionFormDialog.vue';
-import ConnectionsToolbar from '@/components/connections/ConnectionsToolbar.vue';
-import ProviderPickerDialog from '@/components/connections/ProviderPickerDialog.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import ProviderIcon from "@/components/ProviderIcon.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import ConnectionCard from "@/components/connections/ConnectionCard.vue";
+import ConnectionFormDialog from "@/components/connections/ConnectionFormDialog.vue";
+import ConnectionsToolbar from "@/components/connections/ConnectionsToolbar.vue";
+import ProviderPickerDialog from "@/components/connections/ProviderPickerDialog.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -23,8 +34,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { ApiError, api } from '@/lib/api';
+} from "@/components/ui/table";
+import { ApiError, api } from "@/lib/api";
 import {
   DEFAULT_FILTERS,
   filterConnections,
@@ -32,9 +43,14 @@ import {
   loadViewPreferences,
   saveViewPreferences,
   type ConnectionFilters,
-} from '@/lib/connectionsView';
-import { formatDateTime, isEnabled, maskSecret, parseHeaders } from '@/lib/format';
-import type { Connection, ProviderPreset } from '@/types/api';
+} from "@/lib/connectionsView";
+import {
+  formatDateTime,
+  isEnabled,
+  maskSecret,
+  parseHeaders,
+} from "@/lib/format";
+import type { Connection, ProviderPreset } from "@/types/api";
 
 const stored = loadViewPreferences();
 
@@ -54,7 +70,9 @@ const filters = ref<ConnectionFilters>({ ...DEFAULT_FILTERS });
 const view = ref(stored.view);
 const group = ref(stored.group);
 
-watch([view, group], () => saveViewPreferences({ view: view.value, group: group.value }));
+watch([view, group], () =>
+  saveViewPreferences({ view: view.value, group: group.value }),
+);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -67,7 +85,10 @@ async function load(): Promise<void> {
     connections.value = connectionList;
     presets.value = providerList.data;
   } catch (caught) {
-    error.value = caught instanceof ApiError ? caught.message : 'Failed to load connections';
+    error.value =
+      caught instanceof ApiError
+        ? caught.message
+        : "Failed to load connections";
   } finally {
     loading.value = false;
   }
@@ -97,10 +118,10 @@ function openEdit(connection: Connection): void {
 }
 
 function providerLabel(connection: Connection): string {
-  if (!connection.provider_id) return '';
+  if (!connection.provider_id) return "";
   return (
-    presets.value.find((preset) => preset.id === connection.provider_id)?.label ??
-    connection.provider_id
+    presets.value.find((preset) => preset.id === connection.provider_id)
+      ?.label ?? connection.provider_id
   );
 }
 
@@ -108,9 +129,11 @@ function providerLabel(connection: Connection): string {
 function suggestName(preset: ProviderPreset): string {
   const base = preset.label
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-  const taken = new Set(connections.value.map((connection) => connection.name.toLowerCase()));
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const taken = new Set(
+    connections.value.map((connection) => connection.name.toLowerCase()),
+  );
   if (!taken.has(base)) return base;
 
   for (let index = 2; ; index += 1) {
@@ -127,7 +150,9 @@ function headerCount(connection: Connection): number {
 const visible = computed(() =>
   filterConnections(connections.value, filters.value, providerLabel),
 );
-const groups = computed(() => groupConnections(visible.value, group.value, providerLabel));
+const groups = computed(() =>
+  groupConnections(visible.value, group.value, providerLabel),
+);
 
 function clearFilters(): void {
   filters.value = { ...DEFAULT_FILTERS };
@@ -143,19 +168,27 @@ function toggleReveal(id: string): void {
 async function copySecret(secret: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(secret);
-    toast.success('API key copied');
+    toast.success("API key copied");
   } catch {
-    toast.error('Clipboard is unavailable');
+    toast.error("Clipboard is unavailable");
   }
 }
 
 async function toggleEnabled(connection: Connection): Promise<void> {
   try {
-    await api.updateConnection(connection.id, { enabled: !isEnabled(connection.enabled) });
+    await api.updateConnection(connection.id, {
+      enabled: !isEnabled(connection.enabled),
+    });
     await load();
-    toast.success(`Connection “${connection.name}” ${isEnabled(connection.enabled) ? 'disabled' : 'enabled'}`);
+    toast.success(
+      `Connection “${connection.name}” ${isEnabled(connection.enabled) ? "disabled" : "enabled"}`,
+    );
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to update connection');
+    toast.error(
+      caught instanceof ApiError
+        ? caught.message
+        : "Failed to update connection",
+    );
   }
 }
 
@@ -169,7 +202,11 @@ async function confirmDelete(): Promise<void> {
     deleting.value = null;
     await load();
   } catch (caught) {
-    toast.error(caught instanceof ApiError ? caught.message : 'Failed to delete connection');
+    toast.error(
+      caught instanceof ApiError
+        ? caught.message
+        : "Failed to delete connection",
+    );
   } finally {
     deletingBusy.value = false;
   }
@@ -184,7 +221,7 @@ async function runTest(connection: Connection): Promise<void> {
     );
   } catch (caught) {
     toast.error(
-      `${connection.name} — ${caught instanceof ApiError ? caught.message : 'Test failed'}`,
+      `${connection.name} — ${caught instanceof ApiError ? caught.message : "Test failed"}`,
     );
   } finally {
     testingId.value = null;
@@ -204,16 +241,22 @@ onMounted(load);
         <Button variant="outline" :disabled="loading" @click="load">
           <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
         </Button>
-        <Button variant="outline" @click="openCreate"><Plus /> Add connection</Button>
+        <Button variant="outline" @click="openCreate"
+          ><Plus /> Add connection</Button
+        >
         <Button @click="openPicker"><Plug /> Add provider</Button>
       </template>
     </PageHeader>
 
     <Card v-if="error">
-      <CardContent class="p-6 text-sm text-destructive">{{ error }}</CardContent>
+      <CardContent class="p-6 text-sm text-destructive">{{
+        error
+      }}</CardContent>
     </Card>
 
-    <p v-else-if="loading" class="text-sm text-muted-foreground">Loading connections…</p>
+    <p v-else-if="loading" class="text-sm text-muted-foreground">
+      Loading connections…
+    </p>
 
     <EmptyState
       v-else-if="!connections.length"
@@ -224,7 +267,9 @@ onMounted(load);
       <template #action>
         <div class="flex flex-wrap items-center justify-center gap-2">
           <Button @click="openPicker"><Plug /> Add provider</Button>
-          <Button variant="outline" @click="openCreate"><Plus /> Add connection</Button>
+          <Button variant="outline" @click="openCreate"
+            ><Plus /> Add connection</Button
+          >
         </div>
       </template>
     </EmptyState>
@@ -249,7 +294,9 @@ onMounted(load);
         class="flex flex-wrap items-center justify-center gap-2 rounded-lg border p-6 text-sm text-muted-foreground"
       >
         No connections match your filters.
-        <Button variant="link" size="sm" @click="clearFilters">Clear filters</Button>
+        <Button variant="link" size="sm" @click="clearFilters"
+          >Clear filters</Button
+        >
       </p>
 
       <template v-for="bucket in groups" :key="bucket.key">
@@ -261,7 +308,10 @@ onMounted(load);
             {{ bucket.label }} · {{ bucket.items.length }}
           </h3>
 
-          <div v-if="view === 'grid'" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div
+            v-if="view === 'grid'"
+            class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+          >
             <ConnectionCard
               v-for="connection in bucket.items"
               :key="connection.id"
@@ -294,7 +344,10 @@ onMounted(load);
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow v-for="connection in bucket.items" :key="connection.id">
+                <TableRow
+                  v-for="connection in bucket.items"
+                  :key="connection.id"
+                >
                   <TableCell>
                     <div class="flex flex-col gap-1">
                       <span class="font-medium">{{ connection.name }}</span>
@@ -302,13 +355,21 @@ onMounted(load);
                         <ProviderIcon
                           :id="connection.provider_id"
                           :type="connection.provider_type"
-                          :label="providerLabel(connection) || connection.provider_type"
+                          :label="
+                            providerLabel(connection) ||
+                            connection.provider_type
+                          "
                           class="mr-0.5 text-muted-foreground"
                         />
-                        <Badge v-if="connection.provider_id" variant="secondary">
+                        <Badge
+                          v-if="connection.provider_id"
+                          variant="secondary"
+                        >
                           {{ providerLabel(connection) }}
                         </Badge>
-                        <Badge variant="outline">{{ connection.provider_type }}</Badge>
+                        <Badge variant="outline">{{
+                          connection.provider_type
+                        }}</Badge>
                         <Badge
                           v-if="connection.account_count"
                           variant="secondary"
@@ -326,7 +387,10 @@ onMounted(load);
                     {{ connection.base_url }}
                   </TableCell>
                   <TableCell>
-                    <div v-if="connection.api_key" class="flex items-center gap-1">
+                    <div
+                      v-if="connection.api_key"
+                      class="flex items-center gap-1"
+                    >
                       <code class="text-xs">
                         {{
                           revealed.has(connection.id)
@@ -338,7 +402,9 @@ onMounted(load);
                         variant="ghost"
                         size="icon-sm"
                         :aria-label="
-                          revealed.has(connection.id) ? 'Hide API key' : 'Reveal API key'
+                          revealed.has(connection.id)
+                            ? 'Hide API key'
+                            : 'Reveal API key'
                         "
                         @click="toggleReveal(connection.id)"
                       >
@@ -385,7 +451,10 @@ onMounted(load);
                         :title="`Test ${connection.name} against its /models endpoint`"
                         @click="runTest(connection)"
                       >
-                        <Loader2 v-if="testingId === connection.id" class="animate-spin" />
+                        <Loader2
+                          v-if="testingId === connection.id"
+                          class="animate-spin"
+                        />
                         <Activity v-else />
                       </Button>
                       <Button
@@ -415,7 +484,10 @@ onMounted(load);
       </template>
     </template>
 
-    <ProviderPickerDialog v-model:open="pickerOpen" @select="onPresetSelected" />
+    <ProviderPickerDialog
+      v-model:open="pickerOpen"
+      @select="onPresetSelected"
+    />
 
     <ConnectionFormDialog
       v-model:open="formOpen"

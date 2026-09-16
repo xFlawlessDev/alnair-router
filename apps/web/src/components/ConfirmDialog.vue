@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -8,7 +8,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from "@/components/ui/alert-dialog";
 
 withDefaults(
   defineProps<{
@@ -19,10 +19,10 @@ withDefaults(
     pendingLabel?: string;
     pending?: boolean;
   }>(),
-  { confirmLabel: 'Delete', pendingLabel: 'Deleting…', pending: false },
+  { confirmLabel: "Delete", pendingLabel: "Deleting…", pending: false },
 );
 
-const emit = defineEmits<{ 'update:open': [boolean]; confirm: [] }>();
+const emit = defineEmits<{ "update:open": [boolean]; confirm: [] }>();
 </script>
 
 <template>
@@ -40,7 +40,11 @@ const emit = defineEmits<{ 'update:open': [boolean]; confirm: [] }>();
           item is cleared before `confirm` runs and deletes become no-ops. The
           parent closes the dialog by clearing its item after the request.
         -->
-        <Button variant="destructive" :disabled="pending" @click="emit('confirm')">
+        <Button
+          variant="destructive"
+          :disabled="pending"
+          @click="emit('confirm')"
+        >
           {{ pending ? pendingLabel : confirmLabel }}
         </Button>
       </AlertDialogFooter>

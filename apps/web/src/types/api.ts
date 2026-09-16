@@ -1,14 +1,15 @@
 export type ID = string;
 
-export type AsyncState = 'idle' | 'loading' | 'success' | 'error';
+export type AsyncState = "idle" | "loading" | "success" | "error";
 
 /** Provider families the router can dispatch to. */
-export type ProviderType = 'openai-compatible' | 'anthropic-native' | 'command-code';
+export type ProviderType =
+  "openai-compatible" | "anthropic-native" | "command-code";
 
 export const PROVIDER_TYPES: ProviderType[] = [
-  'openai-compatible',
-  'anthropic-native',
-  'command-code',
+  "openai-compatible",
+  "anthropic-native",
+  "command-code",
 ];
 
 export interface HealthResponse {
@@ -85,13 +86,13 @@ export interface ConnectionInput {
 }
 
 /** Tier a provider preset belongs to; the picker groups by this. */
-export type ProviderCategory = 'api_key' | 'free_tier' | 'local';
+export type ProviderCategory = "api_key" | "free_tier" | "local";
 
 /** Picker section order; mirrors the order the API returns. */
 export const PROVIDER_CATEGORIES: { id: ProviderCategory; label: string }[] = [
-  { id: 'api_key', label: 'API key providers' },
-  { id: 'free_tier', label: 'Free tier providers' },
-  { id: 'local', label: 'Local servers' },
+  { id: "api_key", label: "API key providers" },
+  { id: "free_tier", label: "Free tier providers" },
+  { id: "local", label: "Local servers" },
 ];
 
 /** A built-in upstream template shown by the provider picker. */
@@ -101,7 +102,7 @@ export interface ProviderPreset {
   provider_type: ProviderType;
   base_url: string;
   category: ProviderCategory;
-  auth: 'api_key' | 'none';
+  auth: "api_key" | "none";
   default_headers: Record<string, string>;
   api_key_url: string | null;
   docs_url: string | null;
@@ -111,7 +112,7 @@ export interface ProviderPreset {
 }
 
 export interface ProviderPresetResponse {
-  object: 'list';
+  object: "list";
   data: ProviderPreset[];
 }
 
@@ -143,7 +144,7 @@ export interface PriceQuote {
 export interface PriceMatch {
   model: string;
   matched: string | null;
-  source?: 'override' | 'sync';
+  source?: "override" | "sync";
   price?: PriceQuote;
 }
 
@@ -278,7 +279,7 @@ export interface ApiKey {
   expires_at: string | null;
 }
 
-export type BudgetMode = 'off' | 'warn' | 'block';
+export type BudgetMode = "off" | "warn" | "block";
 
 export interface ApiKeyInput {
   name: string;
@@ -403,7 +404,7 @@ export interface ModelPrice {
   cache_write_per_million_usd: number | null;
   reasoning_per_million_usd: number | null;
   /** `override` (set here) or `sync` (crawled catalog). */
-  source: 'override' | 'sync';
+  source: "override" | "sync";
   updated_at: string;
 }
 
@@ -485,7 +486,7 @@ export interface ConnectionActivity {
 export interface ActivityEvent {
   seq: number;
   at: string;
-  level: 'info' | 'warn' | 'error';
+  level: "info" | "warn" | "error";
   kind: string;
   connection?: string;
   model?: string;
@@ -580,7 +581,7 @@ export interface RestoreSummary {
 export interface ModelCatalogEntry {
   /** Model id to pass as `model` on /v1 calls. */
   id: string;
-  kind: 'alias' | 'combo';
+  kind: "alias" | "combo";
   /** Connection that serves this row. */
   provider: string;
   provider_type: ProviderType;
@@ -591,11 +592,11 @@ export interface ModelCatalogEntry {
   price: PriceQuote | null;
   /** Catalog key that answered, when it differs from the upstream model. */
   price_matched: string | null;
-  price_source: 'override' | 'sync' | null;
+  price_source: "override" | "sync" | null;
 }
 
 export interface ModelCatalogResponse {
-  object: 'list';
+  object: "list";
   data: ModelCatalogEntry[];
 }
 
@@ -609,7 +610,7 @@ export interface PublicModelUsage {
   cost_usd: number;
 }
 
-export type UsageBucketSize = 'hour' | 'day';
+export type UsageBucketSize = "hour" | "day";
 
 /** One (bucket, model) cell of the usage trend. */
 export interface UsageBucket {
@@ -652,7 +653,7 @@ export interface MyUsageResponse {
 /** One catalog row the connected key may call. */
 export interface PublicCatalogEntry {
   id: string;
-  kind: 'alias' | 'combo';
+  kind: "alias" | "combo";
   /** 1-based combo tier; null for aliases. */
   tier: number | null;
   /** Concrete upstream model; null for aliases that accept any model. */

@@ -1,4 +1,4 @@
-import type { Alias, ComboWithEntries, ID } from '@/types/api';
+import type { Alias, ComboWithEntries, ID } from "@/types/api";
 
 /** One selectable pattern: an alias prefix or a combo name. */
 export interface Suggestion {
@@ -26,11 +26,14 @@ export function buildSuggestions(input: {
   const taken = new Set(input.taken ?? []);
 
   const aliases = input.aliases
-    .filter((alias) => alias.enabled !== 0 && alias.prefix && !taken.has(alias.prefix))
+    .filter(
+      (alias) =>
+        alias.enabled !== 0 && alias.prefix && !taken.has(alias.prefix),
+    )
     .map((alias) => ({
       id: `alias:${alias.id}`,
       pattern: alias.prefix,
-      detail: alias.model_override ?? '',
+      detail: alias.model_override ?? "",
     }))
     .sort(byPattern);
 
@@ -45,7 +48,9 @@ export function buildSuggestions(input: {
     .map(({ combo, entries }) => ({
       id: `combo:${combo.id}`,
       pattern: combo.name,
-      detail: entries.length ? `${entries.length} tier${entries.length > 1 ? 's' : ''}` : '',
+      detail: entries.length
+        ? `${entries.length} tier${entries.length > 1 ? "s" : ""}`
+        : "",
     }))
     .sort(byPattern);
 

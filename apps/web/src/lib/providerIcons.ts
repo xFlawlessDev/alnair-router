@@ -9,17 +9,20 @@
  * so no name translation happens at runtime. Providers without a file get a
  * monogram tile instead — see `ProviderIcon.vue`.
  */
-import type { ProviderType } from '@/types/api';
+import type { ProviderType } from "@/types/api";
 
-const files = import.meta.glob('../assets/providers/*.svg', {
-  query: '?raw',
-  import: 'default',
+const files = import.meta.glob("../assets/providers/*.svg", {
+  query: "?raw",
+  import: "default",
   eager: true,
 }) as Record<string, string>;
 
 /** Preset id → SVG source, keyed by file name. */
 export const providerIcons: Record<string, string> = Object.fromEntries(
-  Object.entries(files).map(([path, svg]) => [path.slice(path.lastIndexOf('/') + 1, -'.svg'.length), svg]),
+  Object.entries(files).map(([path, svg]) => [
+    path.slice(path.lastIndexOf("/") + 1, -".svg".length),
+    svg,
+  ]),
 );
 
 /** The glyph for a preset, or `null` when the provider has none. */
@@ -33,9 +36,9 @@ export function providerIcon(id?: string | null): string | null {
  * preset behind it) still shows a mark instead of an empty column.
  */
 const PROVIDER_TYPE_ICONS: Record<ProviderType, string> = {
-  'openai-compatible': 'openai',
-  'anthropic-native': 'anthropic',
-  'command-code': 'commandcode',
+  "openai-compatible": "openai",
+  "anthropic-native": "anthropic",
+  "command-code": "commandcode",
 };
 
 /** The glyph for a wire family, or `null` when it has none (monogram). */
@@ -51,7 +54,7 @@ export function providerInitials(label: string): string {
     .trim()
     .split(/[\s()-]+/)
     .filter(Boolean);
-  if (!words.length) return '?';
+  if (!words.length) return "?";
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[1][0]).toUpperCase();
 }

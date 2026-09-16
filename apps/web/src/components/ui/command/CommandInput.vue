@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import type { ListboxFilterProps } from 'reka-ui';
-import type { HTMLAttributes } from 'vue';
-import { reactiveOmit } from '@vueuse/core';
-import { Search } from '@lucide/vue';
-import { ListboxFilter, useForwardProps } from 'reka-ui';
-import { cn } from '@/lib/utils';
-import { useCommand } from '.';
+import type { ListboxFilterProps } from "reka-ui";
+import type { HTMLAttributes } from "vue";
+import { reactiveOmit } from "@vueuse/core";
+import { Search } from "@lucide/vue";
+import { ListboxFilter, useForwardProps } from "reka-ui";
+import { cn } from "@/lib/utils";
+import { useCommand } from ".";
 
 defineOptions({
   inheritAttrs: false,
@@ -13,11 +13,11 @@ defineOptions({
 
 const props = defineProps<
   ListboxFilterProps & {
-    class?: HTMLAttributes['class'];
+    class?: HTMLAttributes["class"];
   }
 >();
 
-const delegatedProps = reactiveOmit(props, 'class');
+const delegatedProps = reactiveOmit(props, "class");
 
 const forwardedProps = useForwardProps(delegatedProps);
 

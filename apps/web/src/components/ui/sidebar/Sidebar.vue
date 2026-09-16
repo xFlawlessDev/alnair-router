@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import type { SidebarProps } from './index.ts';
-import { cn } from '@/lib/utils';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
-import { SIDEBAR_WIDTH_MOBILE, useSidebar } from './utils';
+import type { SidebarProps } from "./index.ts";
+import { cn } from "@/lib/utils";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { SIDEBAR_WIDTH_MOBILE, useSidebar } from "./utils";
 
 defineOptions({
   inheritAttrs: false,
 });
 
 const props = withDefaults(defineProps<SidebarProps>(), {
-  side: 'left',
-  variant: 'sidebar',
-  collapsible: 'offcanvas',
+  side: "left",
+  variant: "sidebar",
+  collapsible: "offcanvas",
 });
 
 const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
@@ -21,14 +21,22 @@ const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
   <div
     v-if="collapsible === 'none'"
     :class="
-      cn('flex h-full w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground', props.class)
+      cn(
+        'flex h-full w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground',
+        props.class,
+      )
     "
     v-bind="$attrs"
   >
     <slot />
   </div>
 
-  <Sheet v-else-if="isMobile" :open="openMobile" v-bind="$attrs" @update:open="setOpenMobile">
+  <Sheet
+    v-else-if="isMobile"
+    :open="openMobile"
+    v-bind="$attrs"
+    @update:open="setOpenMobile"
+  >
     <SheetContent
       data-sidebar="sidebar"
       data-mobile="true"

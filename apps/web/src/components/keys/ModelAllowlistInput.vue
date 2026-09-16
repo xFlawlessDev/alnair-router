@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch } from "vue";
 
 import {
   Combobox,
@@ -10,16 +10,16 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxSeparator,
-} from '@/components/ui/combobox';
+} from "@/components/ui/combobox";
 import {
   TagsInput,
   TagsInputInput,
   TagsInputItem,
   TagsInputItemDelete,
   TagsInputItemText,
-} from '@/components/ui/tags-input';
-import { buildSuggestions, type Suggestion } from '@/lib/suggestions';
-import type { Alias, ComboWithEntries } from '@/types/api';
+} from "@/components/ui/tags-input";
+import { buildSuggestions, type Suggestion } from "@/lib/suggestions";
+import type { Alias, ComboWithEntries } from "@/types/api";
 
 const props = withDefaults(
   defineProps<{
@@ -28,9 +28,9 @@ const props = withDefaults(
     combos: ComboWithEntries[];
     hint?: string;
   }>(),
-  { hint: '' },
+  { hint: "" },
 );
-const emit = defineEmits<{ 'update:modelValue': [string[]] }>();
+const emit = defineEmits<{ "update:modelValue": [string[]] }>();
 
 /**
  * Reka's combobox drives the search; clearing the pick after each selection
@@ -39,11 +39,16 @@ const emit = defineEmits<{ 'update:modelValue': [string[]] }>();
 const picked = ref<Suggestion | null>(null);
 
 const suggestions = computed(() =>
-  buildSuggestions({ aliases: props.aliases, combos: props.combos, taken: props.modelValue }),
+  buildSuggestions({
+    aliases: props.aliases,
+    combos: props.combos,
+    taken: props.modelValue,
+  }),
 );
 
 const hasSuggestions = computed(
-  () => suggestions.value.aliases.length > 0 || suggestions.value.combos.length > 0,
+  () =>
+    suggestions.value.aliases.length > 0 || suggestions.value.combos.length > 0,
 );
 
 watch(picked, (suggestion) => {
@@ -55,14 +60,14 @@ watch(picked, (suggestion) => {
 function add(value: string): void {
   const trimmed = value.trim();
   if (!trimmed || props.modelValue.includes(trimmed)) return;
-  emit('update:modelValue', [...props.modelValue, trimmed]);
+  emit("update:modelValue", [...props.modelValue, trimmed]);
 }
 
 /** TagsInput may carry numbers, model patterns are always strings. */
 function updateTags(values: unknown): void {
   if (!Array.isArray(values)) return;
   emit(
-    'update:modelValue',
+    "update:modelValue",
     values.map((value) => String(value)),
   );
 }
@@ -70,7 +75,11 @@ function updateTags(values: unknown): void {
 
 <template>
   <div class="grid gap-2">
-    <TagsInput class="min-h-10" :model-value="modelValue" @update:model-value="updateTags">
+    <TagsInput
+      class="min-h-10"
+      :model-value="modelValue"
+      @update:model-value="updateTags"
+    >
       <TagsInputItem v-for="model in modelValue" :key="model" :value="model">
         <TagsInputItemText />
         <TagsInputItemDelete />
@@ -81,7 +90,12 @@ function updateTags(values: unknown): void {
       />
     </TagsInput>
 
-    <Combobox v-if="hasSuggestions" v-model="picked" by="id" reset-search-term-on-select>
+    <Combobox
+      v-if="hasSuggestions"
+      v-model="picked"
+      by="id"
+      reset-search-term-on-select
+    >
       <ComboboxAnchor>
         <ComboboxInput
           placeholder="Search aliases and combos to add…"
@@ -92,7 +106,9 @@ function updateTags(values: unknown): void {
         <ComboboxEmpty>No alias or combo matches</ComboboxEmpty>
 
         <ComboboxGroup v-if="suggestions.aliases.length">
-          <div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">Aliases</div>
+          <div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            Aliases
+          </div>
           <ComboboxItem
             v-for="item in suggestions.aliases"
             :key="item.id"
@@ -100,14 +116,20 @@ function updateTags(values: unknown): void {
             class="text-xs"
           >
             <span class="truncate font-mono">{{ item.pattern }}</span>
-            <span v-if="item.detail" class="truncate text-muted-foreground">{{ item.detail }}</span>
+            <span v-if="item.detail" class="truncate text-muted-foreground">{{
+              item.detail
+            }}</span>
           </ComboboxItem>
         </ComboboxGroup>
 
-        <ComboboxSeparator v-if="suggestions.aliases.length && suggestions.combos.length" />
+        <ComboboxSeparator
+          v-if="suggestions.aliases.length && suggestions.combos.length"
+        />
 
         <ComboboxGroup v-if="suggestions.combos.length">
-          <div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">Combos</div>
+          <div class="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            Combos
+          </div>
           <ComboboxItem
             v-for="item in suggestions.combos"
             :key="item.id"
@@ -115,7 +137,9 @@ function updateTags(values: unknown): void {
             class="text-xs"
           >
             <span class="truncate font-mono">{{ item.pattern }}</span>
-            <span v-if="item.detail" class="truncate text-muted-foreground">{{ item.detail }}</span>
+            <span v-if="item.detail" class="truncate text-muted-foreground">{{
+              item.detail
+            }}</span>
           </ComboboxItem>
         </ComboboxGroup>
       </ComboboxList>

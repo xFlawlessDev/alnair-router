@@ -1,9 +1,9 @@
 <script lang="ts" setup>
-import type { CalendarRootEmits, CalendarRootProps } from 'reka-ui';
-import type { HTMLAttributes } from 'vue';
-import { reactiveOmit } from '@vueuse/core';
-import { CalendarRoot, useForwardPropsEmits } from 'reka-ui';
-import { cn } from '@/lib/utils';
+import type { CalendarRootEmits, CalendarRootProps } from "reka-ui";
+import type { HTMLAttributes } from "vue";
+import { reactiveOmit } from "@vueuse/core";
+import { CalendarRoot, useForwardPropsEmits } from "reka-ui";
+import { cn } from "@/lib/utils";
 import {
   CalendarCell,
   CalendarCellTrigger,
@@ -16,19 +16,25 @@ import {
   CalendarHeading,
   CalendarNextButton,
   CalendarPrevButton,
-} from '.';
+} from ".";
 
-const props = defineProps<CalendarRootProps & { class?: HTMLAttributes['class'] }>();
+const props = defineProps<
+  CalendarRootProps & { class?: HTMLAttributes["class"] }
+>();
 
 const emits = defineEmits<CalendarRootEmits>();
 
-const delegatedProps = reactiveOmit(props, 'class');
+const delegatedProps = reactiveOmit(props, "class");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>
 
 <template>
-  <CalendarRoot v-slot="{ grid, weekDays }" :class="cn('p-3', props.class)" v-bind="forwarded">
+  <CalendarRoot
+    v-slot="{ grid, weekDays }"
+    :class="cn('p-3', props.class)"
+    v-bind="forwarded"
+  >
     <CalendarHeader>
       <CalendarPrevButton />
       <CalendarHeading />
@@ -50,7 +56,11 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
             :key="`weekDate-${index}`"
             class="mt-2 w-full"
           >
-            <CalendarCell v-for="weekDate in weekDates" :key="weekDate.toString()" :date="weekDate">
+            <CalendarCell
+              v-for="weekDate in weekDates"
+              :key="weekDate.toString()"
+              :date="weekDate"
+            >
               <CalendarCellTrigger :day="weekDate" :month="month.value" />
             </CalendarCell>
           </CalendarGridRow>

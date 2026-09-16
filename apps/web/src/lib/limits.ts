@@ -1,21 +1,21 @@
-import type { BudgetMode } from '@/types/api';
+import type { BudgetMode } from "@/types/api";
 
 /** The budget windows, in display order. */
 export interface BudgetCap {
   field:
-    | 'daily_budget_usd'
-    | 'weekly_budget_usd'
-    | 'monthly_budget_usd'
-    | 'lifetime_budget_usd';
+    | "daily_budget_usd"
+    | "weekly_budget_usd"
+    | "monthly_budget_usd"
+    | "lifetime_budget_usd";
   label: string;
   suffix: string;
 }
 
 export const BUDGET_CAPS: BudgetCap[] = [
-  { field: 'daily_budget_usd', label: 'Daily', suffix: 'day' },
-  { field: 'weekly_budget_usd', label: 'Weekly', suffix: 'wk' },
-  { field: 'monthly_budget_usd', label: 'Monthly', suffix: 'mo' },
-  { field: 'lifetime_budget_usd', label: 'Lifetime', suffix: 'total' },
+  { field: "daily_budget_usd", label: "Daily", suffix: "day" },
+  { field: "weekly_budget_usd", label: "Weekly", suffix: "wk" },
+  { field: "monthly_budget_usd", label: "Monthly", suffix: "mo" },
+  { field: "lifetime_budget_usd", label: "Lifetime", suffix: "total" },
 ];
 
 export interface BudgetCaps {
@@ -27,16 +27,20 @@ export interface BudgetCaps {
 
 /** Token caps per window, mirroring the USD budgets. */
 export interface TokenCap {
-  field: 'daily_token_limit' | 'weekly_token_limit' | 'monthly_token_limit' | 'lifetime_token_limit';
+  field:
+    | "daily_token_limit"
+    | "weekly_token_limit"
+    | "monthly_token_limit"
+    | "lifetime_token_limit";
   label: string;
   suffix: string;
 }
 
 export const TOKEN_CAPS: TokenCap[] = [
-  { field: 'daily_token_limit', label: 'Daily', suffix: 'day' },
-  { field: 'weekly_token_limit', label: 'Weekly', suffix: 'wk' },
-  { field: 'monthly_token_limit', label: 'Monthly', suffix: 'mo' },
-  { field: 'lifetime_token_limit', label: 'Lifetime', suffix: 'total' },
+  { field: "daily_token_limit", label: "Daily", suffix: "day" },
+  { field: "weekly_token_limit", label: "Weekly", suffix: "wk" },
+  { field: "monthly_token_limit", label: "Monthly", suffix: "mo" },
+  { field: "lifetime_token_limit", label: "Lifetime", suffix: "total" },
 ];
 
 export interface TokenCaps {
@@ -47,7 +51,9 @@ export interface TokenCaps {
 }
 
 /** Token caps that are set, with their amount, in display order. */
-export function configuredTokenCaps(caps: TokenCaps): { cap: TokenCap; amount: number }[] {
+export function configuredTokenCaps(
+  caps: TokenCaps,
+): { cap: TokenCap; amount: number }[] {
   return TOKEN_CAPS.flatMap((cap) => {
     const amount = caps[cap.field];
     return amount && amount > 0 ? [{ cap, amount }] : [];
@@ -55,7 +61,9 @@ export function configuredTokenCaps(caps: TokenCaps): { cap: TokenCap; amount: n
 }
 
 /** Caps that are set, with their amount, in display order. */
-export function configuredCaps(caps: BudgetCaps): { cap: BudgetCap; amount: number }[] {
+export function configuredCaps(
+  caps: BudgetCaps,
+): { cap: BudgetCap; amount: number }[] {
   return BUDGET_CAPS.flatMap((cap) => {
     const amount = caps[cap.field];
     return amount && amount > 0 ? [{ cap, amount }] : [];
@@ -63,12 +71,17 @@ export function configuredCaps(caps: BudgetCaps): { cap: BudgetCap; amount: numb
 }
 
 /** Key caps win per window; the plan fills what the key leaves empty. */
-export function effectiveCaps(key: BudgetCaps, plan: BudgetCaps | null | undefined): BudgetCaps {
+export function effectiveCaps(
+  key: BudgetCaps,
+  plan: BudgetCaps | null | undefined,
+): BudgetCaps {
   return {
     daily_budget_usd: key.daily_budget_usd ?? plan?.daily_budget_usd ?? null,
     weekly_budget_usd: key.weekly_budget_usd ?? plan?.weekly_budget_usd ?? null,
-    monthly_budget_usd: key.monthly_budget_usd ?? plan?.monthly_budget_usd ?? null,
-    lifetime_budget_usd: key.lifetime_budget_usd ?? plan?.lifetime_budget_usd ?? null,
+    monthly_budget_usd:
+      key.monthly_budget_usd ?? plan?.monthly_budget_usd ?? null,
+    lifetime_budget_usd:
+      key.lifetime_budget_usd ?? plan?.lifetime_budget_usd ?? null,
   };
 }
 
@@ -79,9 +92,12 @@ export function effectiveTokenCaps(
 ): TokenCaps {
   return {
     daily_token_limit: key.daily_token_limit ?? plan?.daily_token_limit ?? null,
-    weekly_token_limit: key.weekly_token_limit ?? plan?.weekly_token_limit ?? null,
-    monthly_token_limit: key.monthly_token_limit ?? plan?.monthly_token_limit ?? null,
-    lifetime_token_limit: key.lifetime_token_limit ?? plan?.lifetime_token_limit ?? null,
+    weekly_token_limit:
+      key.weekly_token_limit ?? plan?.weekly_token_limit ?? null,
+    monthly_token_limit:
+      key.monthly_token_limit ?? plan?.monthly_token_limit ?? null,
+    lifetime_token_limit:
+      key.lifetime_token_limit ?? plan?.lifetime_token_limit ?? null,
   };
 }
 
@@ -101,14 +117,14 @@ export function parsePositiveInt(value: string): number | null {
 
 /** Converts an RFC 3339 timestamp into a `datetime-local` input value. */
 export function toLocalDateTime(value: string | null | undefined): string {
-  if (!value) return '';
+  if (!value) return "";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (part: number): string => String(part).padStart(2, '0');
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part: number): string => String(part).padStart(2, "0");
   return [
     `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
     `${pad(date.getHours())}:${pad(date.getMinutes())}`,
-  ].join('T');
+  ].join("T");
 }
 
 /** Converts a `datetime-local` value into an RFC 3339 UTC string. */
@@ -126,7 +142,7 @@ export function isExpired(value: string | null | undefined): boolean {
 }
 
 export function budgetModeLabel(mode: BudgetMode): string {
-  if (mode === 'block') return 'Blocked when exhausted';
-  if (mode === 'warn') return 'Warn only';
-  return 'Off';
+  if (mode === "block") return "Blocked when exhausted";
+  if (mode === "warn") return "Warn only";
+  return "Off";
 }

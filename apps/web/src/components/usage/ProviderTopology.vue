@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Handle, Position, VueFlow, type Edge, type Node } from '@vue-flow/core';
-import { Background } from '@vue-flow/background';
-import { Controls } from '@vue-flow/controls';
+import { computed } from "vue";
+import {
+  Handle,
+  Position,
+  VueFlow,
+  type Edge,
+  type Node,
+} from "@vue-flow/core";
+import { Background } from "@vue-flow/background";
+import { Controls } from "@vue-flow/controls";
 
-import '@vue-flow/core/dist/style.css';
-import '@vue-flow/core/dist/theme-default.css';
-import '@vue-flow/controls/dist/style.css';
+import "@vue-flow/core/dist/style.css";
+import "@vue-flow/core/dist/theme-default.css";
+import "@vue-flow/controls/dist/style.css";
 
-import Logo from '@/components/Logo.vue';
-import { formatLatency, formatNumber } from '@/lib/format';
-import { buildTopology, type TopologyNodeData } from '@/lib/topology';
-import type { ConnectionActivity } from '@/types/api';
+import Logo from "@/components/Logo.vue";
+import { formatLatency, formatNumber } from "@/lib/format";
+import { buildTopology, type TopologyNodeData } from "@/lib/topology";
+import type { ConnectionActivity } from "@/types/api";
 
 const props = defineProps<{ connections: ConnectionActivity[] }>();
 
@@ -22,7 +28,9 @@ const nodes = computed(
 const edges = computed(() => topology.value.edges as unknown as Edge[]);
 
 function averageLatency(connection: ConnectionActivity): number {
-  return connection.requests ? connection.total_latency_ms / connection.requests : 0;
+  return connection.requests
+    ? connection.total_latency_ms / connection.requests
+    : 0;
 }
 </script>
 
@@ -68,7 +76,11 @@ function averageLatency(connection: ConnectionActivity): number {
               />
               <span
                 class="relative inline-flex size-2 rounded-full"
-                :class="data.connection.in_flight ? 'bg-emerald-500' : 'bg-muted-foreground/40'"
+                :class="
+                  data.connection.in_flight
+                    ? 'bg-emerald-500'
+                    : 'bg-muted-foreground/40'
+                "
               />
             </span>
           </div>

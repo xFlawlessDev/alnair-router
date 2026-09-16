@@ -1,32 +1,39 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Pause, Play, RefreshCw, ScrollText } from '@lucide/vue';
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { RouterLink } from 'vue-router';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Pause,
+  Play,
+  RefreshCw,
+  ScrollText,
+} from "@lucide/vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 
-import EmptyState from '@/components/EmptyState.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import UsageSummaryCards from '@/components/UsageSummaryCards.vue';
-import ProviderTopology from '@/components/usage/ProviderTopology.vue';
+import EmptyState from "@/components/EmptyState.vue";
+import PageHeader from "@/components/PageHeader.vue";
+import UsageSummaryCards from "@/components/UsageSummaryCards.vue";
+import ProviderTopology from "@/components/usage/ProviderTopology.vue";
 import UsageBreakdownPopover, {
   type BreakdownRow,
-} from '@/components/usage/UsageBreakdownPopover.vue';
-import UsageFilterBar from '@/components/usage/UsageFilterBar.vue';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+} from "@/components/usage/UsageBreakdownPopover.vue";
+import UsageFilterBar from "@/components/usage/UsageFilterBar.vue";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+} from "@/components/ui/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -34,15 +41,15 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { ApiError, api } from '@/lib/api';
+} from "@/components/ui/table";
+import { ApiError, api } from "@/lib/api";
 import {
   formatCost,
   formatDateTime,
   formatLatency,
   formatNumber,
-} from '@/lib/format';
-import { USAGE_RANGES, rangeToSince } from '@/lib/ranges';
+} from "@/lib/format";
+import { USAGE_RANGES, rangeToSince } from "@/lib/ranges";
 import type {
   ActivitySnapshot,
   ApiKey,
@@ -50,10 +57,10 @@ import type {
   UsageFilter,
   UsageRecord,
   UsageSummary,
-} from '@/types/api';
+} from "@/types/api";
 
 /** Sentinel because Select values cannot be empty strings. */
-const ALL = '__all__';
+const ALL = "__all__";
 
 const limits = [50, 100, 200, 500];
 
@@ -63,11 +70,11 @@ const keys = ref<ApiKey[]>([]);
 const facets = ref<UsageFacets | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
-const range = ref('all');
+const range = ref("all");
 const limit = ref(100);
 const offset = ref(0);
 const apiKeyId = ref(ALL);
-const model = ref('');
+const model = ref("");
 const provider = ref(ALL);
 const connection = ref(ALL);
 let modelTimer: number | undefined;
@@ -80,51 +87,56 @@ let activityTimer: number | undefined;
 let tableTimer: number | undefined;
 
 const nodes = computed(() => activity.value?.connections ?? []);
-const activeNodes = computed(() => nodes.value.filter((node) => node.in_flight > 0));
+const activeNodes = computed(() =>
+  nodes.value.filter((node) => node.in_flight > 0),
+);
 
 /** Token rows: cached and reasoning are subsets, the hints say so. */
 function tokenRows(record: UsageRecord): BreakdownRow[] {
   return [
-    { label: 'Prompt', value: record.prompt_tokens },
+    { label: "Prompt", value: record.prompt_tokens },
     {
-      label: 'Cached read',
+      label: "Cached read",
       value: record.cached_tokens,
-      hint: 'Included in prompt tokens; billed at the cache-read rate.',
+      hint: "Included in prompt tokens; billed at the cache-read rate.",
     },
-    { label: 'Completion', value: record.completion_tokens },
+    { label: "Completion", value: record.completion_tokens },
     {
-      label: 'Reasoning',
+      label: "Reasoning",
       value: record.reasoning_tokens,
-      hint: 'Included in completion tokens; billed at the reasoning rate.',
+      hint: "Included in completion tokens; billed at the reasoning rate.",
     },
-  ].filter((row) => row.value > 0 || row.label === 'Prompt' || row.label === 'Completion');
+  ].filter(
+    (row) =>
+      row.value > 0 || row.label === "Prompt" || row.label === "Completion",
+  );
 }
 
 /** Cost rows: input, output and the reasoning premium that make up the total. */
 function costRows(record: UsageRecord): BreakdownRow[] {
   const rows: BreakdownRow[] = [
-    { label: 'Input', value: record.cost_input_usd, format: 'cost' },
+    { label: "Input", value: record.cost_input_usd, format: "cost" },
     {
-      label: 'Output',
+      label: "Output",
       value: record.cost_output_usd,
-      format: 'cost',
-      hint: 'Completion tokens at the output rate.',
+      format: "cost",
+      hint: "Completion tokens at the output rate.",
     },
     {
-      label: 'Reasoning premium',
+      label: "Reasoning premium",
       value: record.cost_reasoning_usd,
-      format: 'cost',
-      hint: 'Extra rate charged for reasoning tokens.',
+      format: "cost",
+      hint: "Extra rate charged for reasoning tokens.",
     },
   ];
   const known = rows.reduce((sum, row) => sum + row.value, 0);
   if (known <= 0 && record.cost_usd > 0) {
     return [
       {
-        label: 'Recorded total',
+        label: "Recorded total",
         value: record.cost_usd,
-        format: 'cost',
-        hint: 'This row predates the cost breakdown.',
+        format: "cost",
+        hint: "This row predates the cost breakdown.",
       },
     ];
   }
@@ -133,7 +145,7 @@ function costRows(record: UsageRecord): BreakdownRow[] {
 const updatedLabel = computed(() =>
   updatedAt.value
     ? updatedAt.value.toLocaleTimeString(undefined, { hour12: false })
-    : '—',
+    : "—",
 );
 
 async function refreshActivity(): Promise<void> {
@@ -193,7 +205,8 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
     if (!silent) facets.value = await api.usageFacets();
   } catch (caught) {
     if (!silent) {
-      error.value = caught instanceof ApiError ? caught.message : 'Failed to load usage';
+      error.value =
+        caught instanceof ApiError ? caught.message : "Failed to load usage";
     }
   } finally {
     // Always clear the initial spinner: the first load is silent (polling).
@@ -204,7 +217,10 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
 /** Fetches the filter pickers once, then starts the live refresh loop. */
 async function init(): Promise<void> {
   try {
-    const [keyList, facetList] = await Promise.all([api.listKeys(), api.usageFacets()]);
+    const [keyList, facetList] = await Promise.all([
+      api.listKeys(),
+      api.usageFacets(),
+    ]);
     keys.value = keyList;
     facets.value = facetList;
   } catch {
@@ -244,7 +260,7 @@ function onModelFilter(value: string): void {
 
 function clearFilters(): void {
   apiKeyId.value = ALL;
-  model.value = '';
+  model.value = "";
   provider.value = ALL;
   connection.value = ALL;
   applyFilters();
@@ -285,12 +301,12 @@ onUnmounted(() => {
               :class="live ? 'bg-emerald-500' : 'bg-muted-foreground/40'"
             />
           </span>
-          {{ live ? `Live · ${updatedLabel}` : 'Paused' }}
+          {{ live ? `Live · ${updatedLabel}` : "Paused" }}
         </span>
         <Button variant="outline" size="sm" @click="live = !live">
           <Play v-if="!live" />
           <Pause v-else />
-          {{ live ? 'Pause' : 'Resume' }}
+          {{ live ? "Pause" : "Resume" }}
         </Button>
         <Button variant="outline" :disabled="loading" @click="load()">
           <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
@@ -299,11 +315,14 @@ onUnmounted(() => {
     </PageHeader>
 
     <Card>
-      <CardHeader class="flex-row flex-wrap items-center justify-between gap-3 pb-3">
+      <CardHeader
+        class="flex-row flex-wrap items-center justify-between gap-3 pb-3"
+      >
         <div>
           <CardTitle class="text-base">Live activity</CardTitle>
           <CardDescription>
-            Providers around the router; the animated edge marks the route currently in use.
+            Providers around the router; the animated edge marks the route
+            currently in use.
           </CardDescription>
         </div>
         <Badge v-if="activeNodes.length" variant="secondary">
@@ -329,7 +348,9 @@ onUnmounted(() => {
 
         <p class="text-xs text-muted-foreground">
           Edges animate only on providers handling a live request.
-          <RouterLink to="/logs" class="underline underline-offset-4">Open console</RouterLink>
+          <RouterLink to="/logs" class="underline underline-offset-4"
+            >Open console</RouterLink
+          >
         </p>
       </CardContent>
     </Card>
@@ -356,7 +377,11 @@ onUnmounted(() => {
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem v-for="item in USAGE_RANGES" :key="item.value" :value="item.value">
+          <SelectItem
+            v-for="item in USAGE_RANGES"
+            :key="item.value"
+            :value="item.value"
+          >
             {{ item.label }}
           </SelectItem>
         </SelectContent>
@@ -372,10 +397,17 @@ onUnmounted(() => {
         </SelectContent>
       </Select>
       <span class="text-xs text-muted-foreground">
-        Showing rows {{ records.length ? offset + 1 : 0 }}–{{ offset + records.length }}
+        Showing rows {{ records.length ? offset + 1 : 0 }}–{{
+          offset + records.length
+        }}
       </span>
       <div class="ml-auto flex items-center gap-1">
-        <Button variant="outline" size="sm" :disabled="loading || offset === 0" @click="previousPage">
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="loading || offset === 0"
+          @click="previousPage"
+        >
           <ChevronLeft /> Previous
         </Button>
         <Button
@@ -390,10 +422,14 @@ onUnmounted(() => {
     </div>
 
     <Card v-if="error">
-      <CardContent class="p-6 text-sm text-destructive">{{ error }}</CardContent>
+      <CardContent class="p-6 text-sm text-destructive">{{
+        error
+      }}</CardContent>
     </Card>
 
-    <p v-else-if="loading" class="text-sm text-muted-foreground">Loading usage…</p>
+    <p v-else-if="loading" class="text-sm text-muted-foreground">
+      Loading usage…
+    </p>
 
     <EmptyState
       v-else-if="!records.length"
@@ -426,20 +462,40 @@ onUnmounted(() => {
               <code class="text-xs">{{ record.requested_model }}</code>
             </TableCell>
             <TableCell>
-              <div v-if="record.connection_name || record.resolved_provider || record.resolved_model" class="flex flex-col gap-1">
-                <code v-if="record.connection_name" class="text-xs">{{ record.connection_name }}</code>
-                <Badge v-if="record.resolved_provider" variant="outline" class="w-fit text-xs">
+              <div
+                v-if="
+                  record.connection_name ||
+                  record.resolved_provider ||
+                  record.resolved_model
+                "
+                class="flex flex-col gap-1"
+              >
+                <code v-if="record.connection_name" class="text-xs">{{
+                  record.connection_name
+                }}</code>
+                <Badge
+                  v-if="record.resolved_provider"
+                  variant="outline"
+                  class="w-fit text-xs"
+                >
                   {{ record.resolved_provider }}
                 </Badge>
-                <code v-if="record.resolved_model" class="text-xs text-muted-foreground">
+                <code
+                  v-if="record.resolved_model"
+                  class="text-xs text-muted-foreground"
+                >
                   {{ record.resolved_model }}
                 </code>
               </div>
               <span v-else class="text-muted-foreground">—</span>
             </TableCell>
-            <TableCell class="text-muted-foreground">{{ record.attempt }}</TableCell>
+            <TableCell class="text-muted-foreground">{{
+              record.attempt
+            }}</TableCell>
             <TableCell>
-              <Badge :variant="record.status === 'ok' ? 'default' : 'destructive'">
+              <Badge
+                :variant="record.status === 'ok' ? 'default' : 'destructive'"
+              >
                 {{ record.status }}
               </Badge>
             </TableCell>
@@ -449,9 +505,14 @@ onUnmounted(() => {
                 :total="record.prompt_tokens + record.completion_tokens"
                 :rows="tokenRows(record)"
               >
-                {{ formatNumber(record.prompt_tokens) }} / {{ formatNumber(record.completion_tokens) }}
-                <span v-if="record.cached_tokens"> · {{ formatNumber(record.cached_tokens) }} cached</span>
-                <span v-if="record.reasoning_tokens"> · {{ formatNumber(record.reasoning_tokens) }} reasoning</span>
+                {{ formatNumber(record.prompt_tokens) }} /
+                {{ formatNumber(record.completion_tokens) }}
+                <span v-if="record.cached_tokens">
+                  · {{ formatNumber(record.cached_tokens) }} cached</span
+                >
+                <span v-if="record.reasoning_tokens">
+                  · {{ formatNumber(record.reasoning_tokens) }} reasoning</span
+                >
               </UsageBreakdownPopover>
             </TableCell>
             <TableCell class="text-xs">
@@ -464,7 +525,9 @@ onUnmounted(() => {
                 {{ formatCost(record.cost_usd) }}
               </UsageBreakdownPopover>
             </TableCell>
-            <TableCell class="text-xs">{{ formatLatency(record.latency_ms) }}</TableCell>
+            <TableCell class="text-xs">{{
+              formatLatency(record.latency_ms)
+            }}</TableCell>
           </TableRow>
         </TableBody>
       </Table>

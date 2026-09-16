@@ -1,9 +1,9 @@
 <script lang="ts" setup>
-import type { RangeCalendarRootEmits, RangeCalendarRootProps } from 'reka-ui';
-import type { HTMLAttributes } from 'vue';
-import { reactiveOmit } from '@vueuse/core';
-import { RangeCalendarRoot, useForwardPropsEmits } from 'reka-ui';
-import { cn } from '@/lib/utils';
+import type { RangeCalendarRootEmits, RangeCalendarRootProps } from "reka-ui";
+import type { HTMLAttributes } from "vue";
+import { reactiveOmit } from "@vueuse/core";
+import { RangeCalendarRoot, useForwardPropsEmits } from "reka-ui";
+import { cn } from "@/lib/utils";
 import {
   RangeCalendarCell,
   RangeCalendarCellTrigger,
@@ -16,19 +16,25 @@ import {
   RangeCalendarHeading,
   RangeCalendarNextButton,
   RangeCalendarPrevButton,
-} from '.';
+} from ".";
 
-const props = defineProps<RangeCalendarRootProps & { class?: HTMLAttributes['class'] }>();
+const props = defineProps<
+  RangeCalendarRootProps & { class?: HTMLAttributes["class"] }
+>();
 
 const emits = defineEmits<RangeCalendarRootEmits>();
 
-const delegatedProps = reactiveOmit(props, 'class');
+const delegatedProps = reactiveOmit(props, "class");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>
 
 <template>
-  <RangeCalendarRoot v-slot="{ grid, weekDays }" :class="cn('p-3', props.class)" v-bind="forwarded">
+  <RangeCalendarRoot
+    v-slot="{ grid, weekDays }"
+    :class="cn('p-3', props.class)"
+    v-bind="forwarded"
+  >
     <RangeCalendarHeader>
       <RangeCalendarPrevButton />
       <RangeCalendarHeading />

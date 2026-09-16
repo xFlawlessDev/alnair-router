@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { VisAxis, VisStackedBar, VisXYContainer } from '@unovis/vue';
-import { computed, ref } from 'vue';
+import { VisAxis, VisStackedBar, VisXYContainer } from "@unovis/vue";
+import { computed, ref } from "vue";
 
-import { ChartCrosshair } from '@/components/ui/chart';
-import UsageTrendTooltip from '@/components/usage/UsageTrendTooltip.vue';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatCompact, formatCost, formatNumber } from '@/lib/format';
-import type { UsageBucket, UsageBucketSize } from '@/types/api';
+import { ChartCrosshair } from "@/components/ui/chart";
+import UsageTrendTooltip from "@/components/usage/UsageTrendTooltip.vue";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { formatCompact, formatCost, formatNumber } from "@/lib/format";
+import type { UsageBucket, UsageBucketSize } from "@/types/api";
 
 const props = defineProps<{
   points: UsageBucket[];
@@ -15,12 +21,12 @@ const props = defineProps<{
   until: string | null;
 }>();
 
-type Metric = 'requests' | 'tokens' | 'cost';
+type Metric = "requests" | "tokens" | "cost";
 
 const METRICS: { value: Metric; label: string }[] = [
-  { value: 'requests', label: 'Requests' },
-  { value: 'tokens', label: 'Tokens' },
-  { value: 'cost', label: 'Cost' },
+  { value: "requests", label: "Requests" },
+  { value: "tokens", label: "Tokens" },
+  { value: "cost", label: "Cost" },
 ];
 
 /** Models past this many are folded into one "Other" series. */
@@ -29,14 +35,14 @@ const MAX_SERIES = 6;
 const MAX_FILLED_BUCKETS = 400;
 
 const PALETTE = [
-  'oklch(0.62 0.17 255)',
-  'oklch(0.68 0.15 150)',
-  'oklch(0.74 0.15 75)',
-  'oklch(0.62 0.19 25)',
-  'oklch(0.64 0.18 310)',
-  'oklch(0.7 0.12 200)',
+  "oklch(0.62 0.17 255)",
+  "oklch(0.68 0.15 150)",
+  "oklch(0.74 0.15 75)",
+  "oklch(0.62 0.19 25)",
+  "oklch(0.64 0.18 310)",
+  "oklch(0.7 0.12 200)",
 ];
-const OTHER_COLOR = 'oklch(0.7 0.02 250)';
+const OTHER_COLOR = "oklch(0.7 0.02 250)";
 
 interface SeriesDef {
   label: string;
@@ -51,10 +57,12 @@ interface TrendPoint {
   [display: string]: number | string | Record<string, number>;
 }
 
-const metric = ref<Metric>('tokens');
+const metric = ref<Metric>("tokens");
 
 /** Width of one bucket in milliseconds, so bars stay uniform across gaps. */
-const bucketSpanMs = computed(() => (props.bucket === 'hour' ? 3_600_000 : 86_400_000));
+const bucketSpanMs = computed(() =>
+  props.bucket === "hour" ? 3_600_000 : 86_400_000,
+);
 
 function floorToBucket(at: number): number {
   return Math.floor(at / bucketSpanMs.value) * bucketSpanMs.value;
@@ -62,9 +70,9 @@ function floorToBucket(at: number): number {
 
 function metricValue(point: UsageBucket): number {
   switch (metric.value) {
-    case 'cost':
+    case "cost":
       return point.cost_usd;
-    case 'tokens':
+    case "tokens":
       return point.prompt_tokens + point.completion_tokens;
     default:
       return point.requests;
@@ -73,9 +81,9 @@ function metricValue(point: UsageBucket): number {
 
 function formatMetric(value: number): string {
   switch (metric.value) {
-    case 'cost':
+    case "cost":
       return formatCost(value);
-    case 'tokens':
+    case "tokens":
       return formatCompact(value);
     default:
       return formatNumber(value);
@@ -86,15 +94,20 @@ function formatMetric(value: number): string {
 const seriesDefs = computed<SeriesDef[]>(() => {
   const totals = new Map<string, number>();
   for (const point of props.points) {
-    totals.set(point.model, (totals.get(point.model) ?? 0) + metricValue(point));
+    totals.set(
+      point.model,
+      (totals.get(point.model) ?? 0) + metricValue(point),
+    );
   }
 
   const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-  const defs: SeriesDef[] = ranked.slice(0, MAX_SERIES).map(([model], index) => ({
-    label: model,
-    color: PALETTE[index % PALETTE.length],
-    models: new Set([model]),
-  }));
+  const defs: SeriesDef[] = ranked
+    .slice(0, MAX_SERIES)
+    .map(([model], index) => ({
+      label: model,
+      color: PALETTE[index % PALETTE.length],
+      models: new Set([model]),
+    }));
 
   const rest = ranked.slice(MAX_SERIES);
   if (rest.length) {
@@ -108,7 +121,11 @@ const seriesDefs = computed<SeriesDef[]>(() => {
   return defs;
 });
 
-function buildPoint(at: number, rows: UsageBucket[], defs: SeriesDef[]): TrendPoint {
+function buildPoint(
+  at: number,
+  rows: UsageBucket[],
+  defs: SeriesDef[],
+): TrendPoint {
   const totals: Record<string, number> = {};
   for (const def of defs) totals[def.label] = 0;
 
@@ -144,7 +161,9 @@ const series = computed<TrendPoint[]>(() => {
   }
 
   const buckets = [...byBucket.keys()].sort((a, b) => a - b);
-  const start = props.since ? floorToBucket(new Date(props.since).getTime()) : buckets[0];
+  const start = props.since
+    ? floorToBucket(new Date(props.since).getTime())
+    : buckets[0];
   const end = props.until
     ? floorToBucket(new Date(props.until).getTime())
     : props.since
@@ -165,13 +184,18 @@ const series = computed<TrendPoint[]>(() => {
 
 function pointLabel(at: number): string {
   const date = new Date(at);
-  return props.bucket === 'hour'
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
-    : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
+  return props.bucket === "hour"
+    ? new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(date)
+    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
 }
 
 const yAccessors = computed(() =>
-  seriesDefs.value.map((def) => (point: TrendPoint) => point.values[def.label] ?? 0),
+  seriesDefs.value.map(
+    (def) => (point: TrendPoint) => point.values[def.label] ?? 0,
+  ),
 );
 
 const colorFor = (_point: TrendPoint, index?: number): string =>
@@ -179,7 +203,7 @@ const colorFor = (_point: TrendPoint, index?: number): string =>
 
 const tooltipItems = computed(() => [
   ...seriesDefs.value.map((def) => ({ name: def.label, color: def.color })),
-  { name: 'Total', color: 'var(--muted-foreground)' },
+  { name: "Total", color: "var(--muted-foreground)" },
 ]);
 
 /** A lone bucket needs a padded domain, or the bar spans the whole plot. */
@@ -191,14 +215,20 @@ const xDomain = computed<[number, number] | undefined>(() => {
 
 function formatTick(tick: number | Date): string {
   const date = new Date(tick);
-  return props.bucket === 'hour'
-    ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date)
-    : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+  return props.bucket === "hour"
+    ? new Intl.DateTimeFormat(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(date)
+    : new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+      }).format(date);
 }
 
 function formatValueTick(tick: number | Date): string {
   const value = Number(tick);
-  return metric.value === 'cost' ? formatCost(value) : formatCompact(value);
+  return metric.value === "cost" ? formatCost(value) : formatCompact(value);
 }
 </script>
 
@@ -209,7 +239,8 @@ function formatValueTick(tick: number | Date): string {
         <div class="space-y-1.5">
           <CardTitle class="text-base">Usage over time</CardTitle>
           <CardDescription>
-            {{ bucket === 'hour' ? 'Hourly' : 'Daily' }} buckets, stacked by model.
+            {{ bucket === "hour" ? "Hourly" : "Daily" }} buckets, stacked by
+            model.
           </CardDescription>
         </div>
         <div class="flex gap-1 rounded-lg border p-1">
@@ -275,13 +306,19 @@ function formatValueTick(tick: number | Date): string {
         No usage in this window.
       </p>
 
-      <div v-if="seriesDefs.length" class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      <div
+        v-if="seriesDefs.length"
+        class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5"
+      >
         <span
           v-for="def in seriesDefs"
           :key="def.label"
           class="flex max-w-[14rem] min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
         >
-          <span class="size-2.5 shrink-0 rounded-sm" :style="{ backgroundColor: def.color }" />
+          <span
+            class="size-2.5 shrink-0 rounded-sm"
+            :style="{ backgroundColor: def.color }"
+          />
           <span class="truncate" :title="def.label">{{ def.label }}</span>
         </span>
       </div>

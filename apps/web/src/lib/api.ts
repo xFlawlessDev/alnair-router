@@ -1,6 +1,6 @@
-import { getAdminToken } from '@/lib/adminToken';
-import { getClientKey } from '@/lib/clientKey';
-import { getAccessToken, getRefreshToken, setSession } from '@/lib/session';
+import { getAdminToken } from "@/lib/adminToken";
+import { getClientKey } from "@/lib/clientKey";
+import { getAccessToken, getRefreshToken, setSession } from "@/lib/session";
 import type {
   ActivitySnapshot,
   Alias,
@@ -42,7 +42,7 @@ import type {
   UsageFilter,
   UsageSummary,
   VersionResponse,
-} from '@/types/api';
+} from "@/types/api";
 
 /** An error response from the router, or a transport failure (status 0). */
 export class ApiError extends Error {
@@ -51,7 +51,7 @@ export class ApiError extends Error {
 
   constructor(message: string, status: number, type?: string) {
     super(message);
-    this.name = 'ApiError';
+    this.name = "ApiError";
     this.status = status;
     this.type = type;
   }
@@ -65,10 +65,13 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-export function buildUrl(path: string, query?: Record<string, QueryValue>): string {
+export function buildUrl(
+  path: string,
+  query?: Record<string, QueryValue>,
+): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query ?? {})) {
-    if (value === undefined || value === null || value === '') continue;
+    if (value === undefined || value === null || value === "") continue;
     params.set(key, String(value));
   }
   const search = params.toString();
@@ -76,19 +79,19 @@ export function buildUrl(path: string, query?: Record<string, QueryValue>): stri
 }
 
 function errorMessage(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== 'object') return undefined;
+  if (!payload || typeof payload !== "object") return undefined;
   const error = (payload as Record<string, unknown>).error;
-  if (!error || typeof error !== 'object') return undefined;
+  if (!error || typeof error !== "object") return undefined;
   const message = (error as Record<string, unknown>).message;
-  return typeof message === 'string' ? message : undefined;
+  return typeof message === "string" ? message : undefined;
 }
 
 function errorType(payload: unknown): string | undefined {
-  if (!payload || typeof payload !== 'object') return undefined;
+  if (!payload || typeof payload !== "object") return undefined;
   const error = (payload as Record<string, unknown>).error;
-  if (!error || typeof error !== 'object') return undefined;
+  if (!error || typeof error !== "object") return undefined;
   const type = (error as Record<string, unknown>).type;
-  return typeof type === 'string' ? type : undefined;
+  return typeof type === "string" ? type : undefined;
 }
 
 /** Bearer for admin calls: the password session first, then a legacy token. */
@@ -96,25 +99,30 @@ function authHeader(): string {
   const access = getAccessToken();
   if (access) return `Bearer ${access}`;
   const token = getAdminToken();
-  return token ? `Bearer ${token}` : '';
+  return token ? `Bearer ${token}` : "";
 }
 
-async function send(method: string, path: string, options: RequestOptions): Promise<Response> {
-  const headers: Record<string, string> = { accept: 'application/json' };
+async function send(
+  method: string,
+  path: string,
+  options: RequestOptions,
+): Promise<Response> {
+  const headers: Record<string, string> = { accept: "application/json" };
   const authorization = authHeader();
   if (authorization) headers.authorization = authorization;
 
   const init: RequestInit = { method, headers, signal: options.signal };
   if (options.body !== undefined) {
-    headers['content-type'] = 'application/json';
+    headers["content-type"] = "application/json";
     init.body = JSON.stringify(options.body);
   }
 
   try {
     return await fetch(buildUrl(path, options.query), init);
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    throw new ApiError('Cannot reach the router. Is it running?', 0);
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+    throw new ApiError("Cannot reach the router. Is it running?", 0);
   }
 }
 
@@ -127,9 +135,12 @@ async function refreshSession(): Promise<boolean> {
 
   refreshing ??= (async () => {
     try {
-      const response = await fetch('/api/auth/refresh', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
+      const response = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
         body: JSON.stringify({ refresh_token: refreshToken }),
       });
       if (!response.ok) {
@@ -148,11 +159,19 @@ async function refreshSession(): Promise<boolean> {
   return refreshing;
 }
 
-async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  options: RequestOptions = {},
+): Promise<T> {
   let response = await send(method, path, options);
 
   // An expired access token is refreshed once, then the call is replayed.
-  if (response.status === 401 && !path.startsWith('/api/auth/') && getRefreshToken()) {
+  if (
+    response.status === 401 &&
+    !path.startsWith("/api/auth/") &&
+    getRefreshToken()
+  ) {
     if (await refreshSession()) {
       response = await send(method, path, options);
     }
@@ -181,7 +200,7 @@ async function request<T>(method: string, path: string, options: RequestOptions 
   // A 200 that is not JSON usually means an older router answered through the
   // SPA fallback (or a proxy returned an error page); fail loudly instead of
   // handing callers an `undefined` payload.
-  if (!parsed && text.trim() !== '') {
+  if (!parsed && text.trim() !== "") {
     throw new ApiError(
       `Unexpected non-JSON response from ${path}. Is the router up to date?`,
       response.status,
@@ -206,8 +225,9 @@ async function rawRequest(
   try {
     response = await fetch(path, { ...init, headers });
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    throw new ApiError('Cannot reach the router. Is it running?', 0);
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+    throw new ApiError("Cannot reach the router. Is it running?", 0);
   }
 
   if (!response.ok) {
@@ -229,76 +249,102 @@ async function rawRequest(
 }
 
 export const api = {
-  health: () => request<HealthResponse>('GET', '/api/health'),
-  version: () => request<VersionResponse>('GET', '/api/version'),
-  initState: () => request<InitState>('GET', '/api/init'),
+  health: () => request<HealthResponse>("GET", "/api/health"),
+  version: () => request<VersionResponse>("GET", "/api/version"),
+  initState: () => request<InitState>("GET", "/api/init"),
 
-  authStatus: () => request<AuthStatus>('GET', '/api/auth/status'),
+  authStatus: () => request<AuthStatus>("GET", "/api/auth/status"),
   login: (password: string) =>
-    request<AuthSession>('POST', '/api/auth/login', { body: { password } }),
+    request<AuthSession>("POST", "/api/auth/login", { body: { password } }),
   setup: (setupCode: string, password: string) =>
-    request<AuthSession>('POST', '/api/auth/setup', {
+    request<AuthSession>("POST", "/api/auth/setup", {
       body: { setup_code: setupCode, password },
     }),
-  logout: () => request<{ signed_out: boolean }>('POST', '/api/auth/logout'),
+  logout: () => request<{ signed_out: boolean }>("POST", "/api/auth/logout"),
   changePassword: (currentPassword: string, newPassword: string) =>
-    request<AuthSession>('PATCH', '/api/auth/password', {
+    request<AuthSession>("PATCH", "/api/auth/password", {
       body: { current_password: currentPassword, new_password: newPassword },
     }),
 
-  listConnections: () => request<Connection[]>('GET', '/api/connections'),
-  listProviders: () => request<ProviderPresetResponse>('GET', '/api/providers'),
+  listConnections: () => request<Connection[]>("GET", "/api/connections"),
+  listProviders: () => request<ProviderPresetResponse>("GET", "/api/providers"),
   createConnection: (body: ConnectionInput) =>
-    request<Connection>('POST', '/api/connections', { body }),
+    request<Connection>("POST", "/api/connections", { body }),
   updateConnection: (id: ID, body: Partial<ConnectionInput>) =>
-    request<Connection>('PATCH', `/api/connections/${id}`, { body }),
-  deleteConnection: (id: ID) => request<void>('DELETE', `/api/connections/${id}`),
+    request<Connection>("PATCH", `/api/connections/${id}`, { body }),
+  deleteConnection: (id: ID) =>
+    request<void>("DELETE", `/api/connections/${id}`),
   listUpstreamModels: (id: ID) =>
-    request<UpstreamModelsResponse>('GET', `/api/connections/${id}/models`),
+    request<UpstreamModelsResponse>("GET", `/api/connections/${id}/models`),
   testConnection: (id: ID) =>
-    request<ConnectionTestResult>('POST', `/api/connections/${id}/test`),
+    request<ConnectionTestResult>("POST", `/api/connections/${id}/test`),
   listConnectionAccounts: (id: ID) =>
-    request<ConnectionAccount[]>('GET', `/api/connections/${id}/accounts`),
+    request<ConnectionAccount[]>("GET", `/api/connections/${id}/accounts`),
   createConnectionAccount: (id: ID, body: ConnectionAccountInput) =>
-    request<ConnectionAccount>('POST', `/api/connections/${id}/accounts`, { body }),
-  updateConnectionAccount: (id: ID, accountId: ID, body: Partial<ConnectionAccountInput>) =>
-    request<ConnectionAccount>('PATCH', `/api/connections/${id}/accounts/${accountId}`, { body }),
+    request<ConnectionAccount>("POST", `/api/connections/${id}/accounts`, {
+      body,
+    }),
+  updateConnectionAccount: (
+    id: ID,
+    accountId: ID,
+    body: Partial<ConnectionAccountInput>,
+  ) =>
+    request<ConnectionAccount>(
+      "PATCH",
+      `/api/connections/${id}/accounts/${accountId}`,
+      { body },
+    ),
   deleteConnectionAccount: (id: ID, accountId: ID) =>
-    request<void>('DELETE', `/api/connections/${id}/accounts/${accountId}`),
+    request<void>("DELETE", `/api/connections/${id}/accounts/${accountId}`),
 
-  listAliases: () => request<Alias[]>('GET', '/api/aliases'),
-  createAlias: (body: AliasInput) => request<Alias>('POST', '/api/aliases', { body }),
+  listAliases: () => request<Alias[]>("GET", "/api/aliases"),
+  createAlias: (body: AliasInput) =>
+    request<Alias>("POST", "/api/aliases", { body }),
   updateAlias: (id: ID, body: Partial<AliasInput>) =>
-    request<Alias>('PATCH', `/api/aliases/${id}`, { body }),
-  deleteAlias: (id: ID) => request<void>('DELETE', `/api/aliases/${id}`),
-  testAlias: (id: ID) => request<AliasTestResult>('POST', `/api/aliases/${id}/test`),
+    request<Alias>("PATCH", `/api/aliases/${id}`, { body }),
+  deleteAlias: (id: ID) => request<void>("DELETE", `/api/aliases/${id}`),
+  testAlias: (id: ID) =>
+    request<AliasTestResult>("POST", `/api/aliases/${id}/test`),
   testAliasChat: (id: ID, body: AliasChatTestInput) =>
-    request<AliasChatTestResult>('POST', `/api/aliases/${id}/test-chat`, { body }),
+    request<AliasChatTestResult>("POST", `/api/aliases/${id}/test-chat`, {
+      body,
+    }),
 
-  listCombos: () => request<ComboWithEntries[]>('GET', '/api/combos'),
-  createCombo: (body: { name: string; description?: string | null; enabled?: boolean; entries?: string[] }) =>
-    request<ComboWithEntries>('POST', '/api/combos', { body }),
+  listCombos: () => request<ComboWithEntries[]>("GET", "/api/combos"),
+  createCombo: (body: {
+    name: string;
+    description?: string | null;
+    enabled?: boolean;
+    entries?: string[];
+  }) => request<ComboWithEntries>("POST", "/api/combos", { body }),
   updateCombo: (
     id: ID,
-    body: { name?: string; description?: string | null; enabled?: boolean; entries?: string[] },
-  ) => request<ComboWithEntries>('PATCH', `/api/combos/${id}`, { body }),
-  deleteCombo: (id: ID) => request<void>('DELETE', `/api/combos/${id}`),
+    body: {
+      name?: string;
+      description?: string | null;
+      enabled?: boolean;
+      entries?: string[];
+    },
+  ) => request<ComboWithEntries>("PATCH", `/api/combos/${id}`, { body }),
+  deleteCombo: (id: ID) => request<void>("DELETE", `/api/combos/${id}`),
 
-  listKeys: () => request<ApiKey[]>('GET', '/api/keys'),
-  createKey: (body: ApiKeyInput) => request<CreatedApiKey>('POST', '/api/keys', { body }),
+  listKeys: () => request<ApiKey[]>("GET", "/api/keys"),
+  createKey: (body: ApiKeyInput) =>
+    request<CreatedApiKey>("POST", "/api/keys", { body }),
   updateKey: (id: ID, body: Partial<ApiKeyInput>) =>
-    request<ApiKey>('PATCH', `/api/keys/${id}`, { body }),
-  deleteKey: (id: ID) => request<void>('DELETE', `/api/keys/${id}`),
-  usageByKey: () => request<KeySpend[]>('GET', '/api/usage/keys'),
+    request<ApiKey>("PATCH", `/api/keys/${id}`, { body }),
+  deleteKey: (id: ID) => request<void>("DELETE", `/api/keys/${id}`),
+  usageByKey: () => request<KeySpend[]>("GET", "/api/usage/keys"),
 
-  listPlans: () => request<KeyPlan[]>('GET', '/api/plans'),
-  createPlan: (body: KeyPlanInput) => request<KeyPlan>('POST', '/api/plans', { body }),
+  listPlans: () => request<KeyPlan[]>("GET", "/api/plans"),
+  createPlan: (body: KeyPlanInput) =>
+    request<KeyPlan>("POST", "/api/plans", { body }),
   updatePlan: (id: ID, body: Partial<KeyPlanInput>) =>
-    request<KeyPlan>('PATCH', `/api/plans/${id}`, { body }),
-  deletePlan: (id: ID) => request<void>('DELETE', `/api/plans/${id}`),
+    request<KeyPlan>("PATCH", `/api/plans/${id}`, { body }),
+  deletePlan: (id: ID) => request<void>("DELETE", `/api/plans/${id}`),
 
   listUsage: (limit: number, offset: number, filter: UsageFilter = {}) =>
-    request<UsageRecord[]>('GET', '/api/usage', {
+    request<UsageRecord[]>("GET", "/api/usage", {
       query: {
         limit,
         offset,
@@ -310,7 +356,7 @@ export const api = {
       },
     }),
   usageSummary: (filter: UsageFilter = {}) =>
-    request<UsageSummary>('GET', '/api/usage/summary', {
+    request<UsageSummary>("GET", "/api/usage/summary", {
       query: {
         since: filter.since,
         api_key_id: filter.api_key_id,
@@ -319,36 +365,41 @@ export const api = {
         connection: filter.connection,
       },
     }),
-  usageFacets: () => request<UsageFacets>('GET', '/api/usage/facets'),
+  usageFacets: () => request<UsageFacets>("GET", "/api/usage/facets"),
 
-  listPricing: () => request<ModelPrice[]>('GET', '/api/pricing'),
-  modelCatalog: () => request<ModelCatalogResponse>('GET', '/api/models'),
+  listPricing: () => request<ModelPrice[]>("GET", "/api/pricing"),
+  modelCatalog: () => request<ModelCatalogResponse>("GET", "/api/models"),
   upsertPricing: (prices: ModelPriceInput[]) =>
-    request<{ updated: number }>('PUT', '/api/pricing', { body: { prices } }),
+    request<{ updated: number }>("PUT", "/api/pricing", { body: { prices } }),
   deletePricing: (model?: string) =>
-    request<{ deleted: number }>('DELETE', '/api/pricing', { query: { model } }),
-  pricingSyncStatus: () => request<PricingSyncStatus | null>('GET', '/api/pricing/sync'),
-  syncPricing: () => request<PricingSyncStatus>('POST', '/api/pricing/sync'),
+    request<{ deleted: number }>("DELETE", "/api/pricing", {
+      query: { model },
+    }),
+  pricingSyncStatus: () =>
+    request<PricingSyncStatus | null>("GET", "/api/pricing/sync"),
+  syncPricing: () => request<PricingSyncStatus>("POST", "/api/pricing/sync"),
   matchPricing: (model: string) =>
-    request<PriceMatch>('GET', '/api/pricing/match', { query: { model } }),
+    request<PriceMatch>("GET", "/api/pricing/match", { query: { model } }),
   activity: (events = 100) =>
-    request<ActivitySnapshot>('GET', '/api/activity', { query: { limit: events } }),
+    request<ActivitySnapshot>("GET", "/api/activity", {
+      query: { limit: events },
+    }),
 
-  settings: () => request<SettingsResponse>('GET', '/api/settings'),
+  settings: () => request<SettingsResponse>("GET", "/api/settings"),
   updateSettings: (body: SettingsPatch) =>
-    request<SettingsResponse>('PATCH', '/api/settings', { body }),
-  resetSettings: () => request<SettingsResponse>('DELETE', '/api/settings'),
+    request<SettingsResponse>("PATCH", "/api/settings", { body }),
+  resetSettings: () => request<SettingsResponse>("DELETE", "/api/settings"),
 
   downloadBackup: async (): Promise<Blob> => {
-    const response = await rawRequest('/api/backup', {
-      headers: { accept: 'application/octet-stream' },
+    const response = await rawRequest("/api/backup", {
+      headers: { accept: "application/octet-stream" },
     });
     return response.blob();
   },
   restoreBackup: async (file: File): Promise<RestoreSummary> => {
-    const response = await rawRequest('/api/restore', {
-      method: 'POST',
-      headers: { 'content-type': 'application/octet-stream' },
+    const response = await rawRequest("/api/restore", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
       body: file,
     });
     return (await response.json()) as RestoreSummary;
@@ -356,18 +407,18 @@ export const api = {
 
   myUsage: async (
     since?: string | null,
-    bucket?: 'hour' | 'day',
+    bucket?: "hour" | "day",
     until?: string | null,
   ): Promise<MyUsageResponse> => {
     const response = await rawRequest(
-      buildUrl('/api/public/usage', { since, until, bucket }),
+      buildUrl("/api/public/usage", { since, until, bucket }),
       {},
       getClientKey(),
     );
     return (await response.json()) as MyUsageResponse;
   },
   myModels: async (): Promise<PublicCatalogResponse> => {
-    const response = await rawRequest('/api/public/models', {}, getClientKey());
+    const response = await rawRequest("/api/public/models", {}, getClientKey());
     return (await response.json()) as PublicCatalogResponse;
   },
 };

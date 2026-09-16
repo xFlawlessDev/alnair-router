@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from "vue";
 
-import { providerIcon, providerInitials, providerTypeIcon } from '@/lib/providerIcons';
-import type { ProviderType } from '@/types/api';
+import {
+  providerIcon,
+  providerInitials,
+  providerTypeIcon,
+} from "@/lib/providerIcons";
+import type { ProviderType } from "@/types/api";
 
 const props = defineProps<{
   /** Provider preset id. Connections added by hand have none. */
@@ -14,7 +18,9 @@ const props = defineProps<{
   title?: string;
 }>();
 
-const glyph = computed(() => providerIcon(props.id) ?? providerTypeIcon(props.type));
+const glyph = computed(
+  () => providerIcon(props.id) ?? providerTypeIcon(props.type),
+);
 const initials = computed(() => providerInitials(props.label));
 </script>
 

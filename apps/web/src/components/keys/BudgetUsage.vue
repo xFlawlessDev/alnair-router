@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from "vue";
 
-import { Progress } from '@/components/ui/progress';
-import { formatCompact, formatCost } from '@/lib/format';
+import { Progress } from "@/components/ui/progress";
+import { formatCompact, formatCost } from "@/lib/format";
 import {
   configuredCaps,
   configuredTokenCaps,
@@ -10,8 +10,8 @@ import {
   type BudgetCaps,
   type TokenCap,
   type TokenCaps,
-} from '@/lib/limits';
-import type { KeySpend } from '@/types/api';
+} from "@/lib/limits";
+import type { KeySpend } from "@/types/api";
 
 const props = defineProps<{
   spend: KeySpend | null;
@@ -24,21 +24,21 @@ const configuredTokens = computed(() => configuredTokenCaps(props.tokenCaps));
 const lifetimeUsd = computed(() => props.spend?.lifetime_usd ?? 0);
 const lifetimeTokens = computed(() => props.spend?.lifetime_tokens ?? 0);
 
-function spentFor(field: BudgetCap['field']): number {
+function spentFor(field: BudgetCap["field"]): number {
   const spend = props.spend;
   if (!spend) return 0;
-  if (field === 'daily_budget_usd') return spend.daily_usd;
-  if (field === 'weekly_budget_usd') return spend.weekly_usd;
-  if (field === 'monthly_budget_usd') return spend.monthly_usd;
+  if (field === "daily_budget_usd") return spend.daily_usd;
+  if (field === "weekly_budget_usd") return spend.weekly_usd;
+  if (field === "monthly_budget_usd") return spend.monthly_usd;
   return spend.lifetime_usd;
 }
 
-function tokensSpentFor(field: TokenCap['field']): number {
+function tokensSpentFor(field: TokenCap["field"]): number {
   const spend = props.spend;
   if (!spend) return 0;
-  if (field === 'daily_token_limit') return spend.daily_tokens;
-  if (field === 'weekly_token_limit') return spend.weekly_tokens;
-  if (field === 'monthly_token_limit') return spend.monthly_tokens;
+  if (field === "daily_token_limit") return spend.daily_tokens;
+  if (field === "weekly_token_limit") return spend.weekly_tokens;
+  if (field === "monthly_token_limit") return spend.monthly_tokens;
   return spend.lifetime_tokens;
 }
 
@@ -54,19 +54,29 @@ function percent(amount: number, spent: number): number {
 /** Progress bars turn amber near the cap and destructive once exhausted. */
 function barClass(amount: number, spent: number): string {
   const used = spent / amount;
-  if (used >= 1) return '[&>div]:bg-destructive';
-  if (used >= 0.75) return '[&>div]:bg-amber-500';
-  return '';
+  if (used >= 1) return "[&>div]:bg-destructive";
+  if (used >= 0.75) return "[&>div]:bg-amber-500";
+  return "";
 }
 </script>
 
 <template>
   <div class="grid min-w-40 gap-2">
     <template v-if="configured.length || configuredTokens.length">
-      <div v-for="{ cap, amount } in configured" :key="cap.field" class="grid gap-1">
+      <div
+        v-for="{ cap, amount } in configured"
+        :key="cap.field"
+        class="grid gap-1"
+      >
         <div class="flex items-baseline justify-between gap-2 text-xs">
           <span class="capitalize text-muted-foreground">{{ cap.suffix }}</span>
-          <span :class="spentFor(cap.field) >= amount ? 'font-medium text-destructive' : ''">
+          <span
+            :class="
+              spentFor(cap.field) >= amount
+                ? 'font-medium text-destructive'
+                : ''
+            "
+          >
             {{ formatCost(spentFor(cap.field)) }} / {{ formatCost(amount) }}
           </span>
         </div>
@@ -83,11 +93,18 @@ function barClass(amount: number, spent: number): string {
         class="grid gap-1"
       >
         <div class="flex items-baseline justify-between gap-2 text-xs">
-          <span class="capitalize text-muted-foreground">{{ cap.suffix }} tok</span>
-          <span
-            :class="tokensSpentFor(cap.field) >= amount ? 'font-medium text-destructive' : ''"
+          <span class="capitalize text-muted-foreground"
+            >{{ cap.suffix }} tok</span
           >
-            {{ formatCompact(tokensSpentFor(cap.field)) }} / {{ formatCompact(amount) }}
+          <span
+            :class="
+              tokensSpentFor(cap.field) >= amount
+                ? 'font-medium text-destructive'
+                : ''
+            "
+          >
+            {{ formatCompact(tokensSpentFor(cap.field)) }} /
+            {{ formatCompact(amount) }}
           </span>
         </div>
         <Progress
@@ -100,10 +117,12 @@ function barClass(amount: number, spent: number): string {
     </template>
     <p class="text-xs text-muted-foreground">
       <template v-if="configured.length || configuredTokens.length">
-        {{ formatCost(lifetimeUsd) }} · {{ formatCompact(lifetimeTokens) }} tok total
+        {{ formatCost(lifetimeUsd) }} · {{ formatCompact(lifetimeTokens) }} tok
+        total
       </template>
       <template v-else-if="spend">
-        {{ formatCost(lifetimeUsd) }} · {{ formatCompact(lifetimeTokens) }} tok spent · uncapped
+        {{ formatCost(lifetimeUsd) }} · {{ formatCompact(lifetimeTokens) }} tok
+        spent · uncapped
       </template>
       <template v-else>No usage yet</template>
     </p>

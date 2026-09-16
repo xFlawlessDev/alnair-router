@@ -1,6 +1,6 @@
-import { StorageSerializers, useStorage } from '@vueuse/core';
+import { StorageSerializers, useStorage } from "@vueuse/core";
 
-import type { AuthSession } from '@/types/api';
+import type { AuthSession } from "@/types/api";
 
 /**
  * The rotating access/refresh pair behind the dashboard password.
@@ -11,7 +11,7 @@ import type { AuthSession } from '@/types/api';
  * vueuse infer its `any` serializer, which stores `String(value)` and would
  * persist the session as `"[object Object]"`.
  */
-const STORAGE_KEY = 'alnair-router.session';
+const STORAGE_KEY = "alnair-router.session";
 
 const session = useStorage<AuthSession | null>(STORAGE_KEY, null, undefined, {
   serializer: StorageSerializers.object,
@@ -22,11 +22,11 @@ export function getSession(): AuthSession | null {
 }
 
 export function getAccessToken(): string {
-  return session.value?.access_token ?? '';
+  return session.value?.access_token ?? "";
 }
 
 export function getRefreshToken(): string {
-  return session.value?.refresh_token ?? '';
+  return session.value?.refresh_token ?? "";
 }
 
 export function setSession(value: AuthSession | null): void {

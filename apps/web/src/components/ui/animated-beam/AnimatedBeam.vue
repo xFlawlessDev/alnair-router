@@ -92,10 +92,26 @@ function updatePath() {
     const svgHeight = containerRect.height;
     svgDimensions.value = { width: svgWidth, height: svgHeight };
 
-    const startX = rectA.left - containerRect.left + rectA.width / 2 + (props.startXOffset ?? 0);
-    const startY = rectA.top - containerRect.top + rectA.height / 2 + (props.startYOffset ?? 0);
-    const endX = rectB.left - containerRect.left + rectB.width / 2 + (props.endXOffset ?? 0);
-    const endY = rectB.top - containerRect.top + rectB.height / 2 + (props.endYOffset ?? 0);
+    const startX =
+      rectA.left -
+      containerRect.left +
+      rectA.width / 2 +
+      (props.startXOffset ?? 0);
+    const startY =
+      rectA.top -
+      containerRect.top +
+      rectA.height / 2 +
+      (props.startYOffset ?? 0);
+    const endX =
+      rectB.left -
+      containerRect.left +
+      rectB.width / 2 +
+      (props.endXOffset ?? 0);
+    const endY =
+      rectB.top -
+      containerRect.top +
+      rectB.height / 2 +
+      (props.endYOffset ?? 0);
 
     // Check if the light beam is in a vertical direction (the distance in the y-direction is greater than the distance in the x-direction).
     isVertical.value = Math.abs(endY - startY) > Math.abs(endX - startX);
@@ -122,7 +138,12 @@ onBeforeUnmount(() => {
     :height="svgDimensions.height"
     xmlns="http://www.w3.org/2000/svg"
     :viewBox="`0 0 ${svgDimensions.width} ${svgDimensions.height}`"
-    :class="cn(`pointer-events-none absolute top-0 left-0 transform-gpu stroke-2`, props.class)"
+    :class="
+      cn(
+        `pointer-events-none absolute top-0 left-0 transform-gpu stroke-2`,
+        props.class,
+      )
+    "
   >
     <path
       :d="pathD"
@@ -147,20 +168,10 @@ onBeforeUnmount(() => {
         y1="0%"
         y2="0%"
       >
-        <stop
-          :stop-color="gradientStartColor"
-          stop-opacity="0"
-        />
+        <stop :stop-color="gradientStartColor" stop-opacity="0" />
         <stop :stop-color="gradientStartColor" />
-        <stop
-          offset="32.5%"
-          :stop-color="gradientStopColor"
-        />
-        <stop
-          offset="100%"
-          :stop-color="gradientStopColor"
-          stop-opacity="0"
-        />
+        <stop offset="32.5%" :stop-color="gradientStopColor" />
+        <stop offset="100%" :stop-color="gradientStopColor" stop-opacity="0" />
         <animate
           v-if="!isVertical"
           attributeName="x1"
