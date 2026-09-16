@@ -1155,6 +1155,141 @@ async fn spend_by_key_splits_windows_and_skips_null_keys() {
 }
 
 #[tokio::test]
+async fn spend_for_key_returns_zeroed_row_for_unused_key() {
+    let db = db().await;
+    let usage = UsageRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone());
+
+    let key = keys
+        .create(CreateApiKey {
+            name: "fresh".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("key");
+
+    let now = chrono::Utc::now();
+    let spend = usage
+        .spend_for_key(
+            &key.key.id,
+            BudgetWindow::Daily.start(now),
+            BudgetWindow::Weekly.start(now),
+            BudgetWindow::Monthly.start(now),
+        )
+        .await
+        .expect("spend");
+
+    assert_eq!(spend.api_key_id, key.key.id);
+    assert!((spend.daily_usd).abs() < 1e-9);
+    assert!((spend.weekly_usd).abs() < 1e-9);
+    assert!((spend.monthly_usd).abs() < 1e-9);
+    assert!((spend.lifetime_usd).abs() < 1e-9);
+    assert_eq!(spend.daily_tokens, 0);
+    assert_eq!(spend.weekly_tokens, 0);
+    assert_eq!(spend.monthly_tokens, 0);
+    assert_eq!(spend.lifetime_tokens, 0);
+}
+
+#[tokio::test]
+async fn spend_for_key_splits_windows_for_one_key() {
+    let db = db().await;
+    let usage = UsageRepository::new(db.pool.clone());
+    let keys = ApiKeyRepository::new(db.pool.clone());
+
+    let key = keys
+        .create(CreateApiKey {
+            name: "metered".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: None,
+            expires_at: None,
+        })
+        .await
+        .expect("key");
+
+    // Recent row counts toward all windows.
+    usage
+        .record(NewUsageRecord {
+            api_key_id: Some(key.key.id.clone()),
+            requested_model: "m".to_string(),
+            resolved_provider: None,
+            resolved_model: None,
+            connection_name: None,
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            cached_tokens: 0,
+            reasoning_tokens: 0,
+            cost_usd: 1.0,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
+            latency_ms: 10,
+        })
+        .await
+        .expect("record");
+
+    // Old row counts toward lifetime only.
+    let old = chrono::Utc::now() - chrono::Duration::days(40);
+    sqlx::query(
+        "INSERT INTO usage_records (id, created_at, api_key_id, requested_model, status, cost_usd,
+         prompt_tokens, completion_tokens)
+         VALUES (?, ?, ?, 'old', 'ok', 3.0, 4, 6)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(old)
+    .bind(&key.key.id)
+    .execute(&db.pool)
+    .await
+    .expect("insert old row");
+
+    let now = chrono::Utc::now();
+    let spend = usage
+        .spend_for_key(
+            &key.key.id,
+            BudgetWindow::Daily.start(now),
+            BudgetWindow::Weekly.start(now),
+            BudgetWindow::Monthly.start(now),
+        )
+        .await
+        .expect("spend");
+
+    assert_eq!(spend.api_key_id, key.key.id);
+    assert!((spend.daily_usd - 1.0).abs() < 1e-9);
+    assert!((spend.weekly_usd - 1.0).abs() < 1e-9);
+    assert!((spend.monthly_usd - 1.0).abs() < 1e-9);
+    assert!((spend.lifetime_usd - 4.0).abs() < 1e-9);
+    assert_eq!(spend.daily_tokens, 15);
+    assert_eq!(spend.weekly_tokens, 15);
+    assert_eq!(spend.monthly_tokens, 15);
+    assert_eq!(spend.lifetime_tokens, 15 + 10);
+}
+
+#[tokio::test]
 async fn pricing_overrides_shadow_synced_rows() {
     let db = db().await;
     let repo = PricingRepository::new(db.pool.clone());

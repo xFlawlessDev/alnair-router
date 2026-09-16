@@ -3,6 +3,7 @@ import { Boxes, Copy, Eye, EyeOff, KeyRound, LogOut, RefreshCw } from '@lucide/v
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue';
 import { toast } from 'vue-sonner';
 import UsageSummaryCards from '@/components/UsageSummaryCards.vue';
+import BudgetCard from '@/components/usage/BudgetCard.vue';
 import UsageBreakdownPopover, {
   type BreakdownRow,
 } from '@/components/usage/UsageBreakdownPopover.vue';
@@ -354,6 +355,12 @@ onUnmounted(() => {
 
       <template v-else>
         <UsageSummaryCards :summary="usage?.summary ?? null" :models="usage?.models ?? []" />
+
+        <BudgetCard
+          v-if="usage"
+          :spend="usage.spend"
+          :budget="usage.budget"
+        />
 
         <UsageTrendChart
           v-if="usage"

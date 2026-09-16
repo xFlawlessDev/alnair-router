@@ -10,8 +10,10 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
+use chrono::{Datelike, Utc};
+
 use crate::db::repos::api_keys::ApiKey;
-use crate::db::repos::usage::{Bucket, ModelUsage, UsageBucket, UsageFilter, UsageSummary};
+use crate::db::repos::usage::{Bucket, KeySpend, ModelUsage, UsageBucket, UsageFilter, UsageSummary};
 use crate::error::{Error, Result};
 use crate::handlers::catalog::CatalogEntry;
 use crate::middleware;
@@ -39,6 +41,19 @@ pub struct KeyView {
     pub prefix: String,
 }
 
+/// Budget caps for a key, resolved from key + plan. Null means uncapped.
+#[derive(Debug, Serialize)]
+pub struct PublicBudgetCaps {
+    pub daily_budget_usd: Option<f64>,
+    pub weekly_budget_usd: Option<f64>,
+    pub monthly_budget_usd: Option<f64>,
+    pub lifetime_budget_usd: Option<f64>,
+    pub daily_token_limit: Option<i64>,
+    pub weekly_token_limit: Option<i64>,
+    pub monthly_token_limit: Option<i64>,
+    pub lifetime_token_limit: Option<i64>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MyUsage {
     pub key: KeyView,
@@ -48,6 +63,8 @@ pub struct MyUsage {
     pub summary: UsageSummary,
     pub models: Vec<ModelUsage>,
     pub timeseries: Vec<UsageBucket>,
+    pub spend: KeySpend,
+    pub budget: PublicBudgetCaps,
 }
 
 /// `GET /api/public/usage` — the caller's own rollup, keyed by bearer key.
@@ -64,11 +81,28 @@ pub async fn usage(
 
     let bucket = Bucket::parse(query.bucket.as_deref())?;
     let key = authorize(&state, &headers).await?;
-    let mut filter = UsageFilter::new(Some(key.id), None, None, None, query.since);
+    let mut filter = UsageFilter::new(Some(key.id.clone()), None, None, None, query.since);
     filter.until = query.until;
     let summary = state.usage().summary(&filter).await?;
     let models = state.usage().models(&filter).await?;
     let timeseries = state.usage().timeseries(&filter, bucket).await?;
+
+    // Resolve spend and budget caps (key + plan).
+    let now = Utc::now();
+    let daily_since = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let weekly_since = (now - chrono::Duration::days(7)).date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let monthly_since = now.with_day(1).unwrap().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+
+    let spend = state
+        .usage()
+        .spend_for_key(&key.id, daily_since, weekly_since, monthly_since)
+        .await?;
+
+    let plan = match &key.plan_id {
+        Some(plan_id) => state.key_plans().get(plan_id).await?,
+        None => None,
+    };
+    let policy = KeyPolicy::resolve(&key, plan.as_ref());
 
     Ok(Json(MyUsage {
         key: KeyView {
@@ -81,6 +115,17 @@ pub async fn usage(
         summary,
         models,
         timeseries,
+        spend,
+        budget: PublicBudgetCaps {
+            daily_budget_usd: policy.budgets.daily,
+            weekly_budget_usd: policy.budgets.weekly,
+            monthly_budget_usd: policy.budgets.monthly,
+            lifetime_budget_usd: policy.budgets.lifetime,
+            daily_token_limit: policy.token_limits.daily,
+            weekly_token_limit: policy.token_limits.weekly,
+            monthly_token_limit: policy.token_limits.monthly,
+            lifetime_token_limit: policy.token_limits.lifetime,
+        },
     }))
 }
 

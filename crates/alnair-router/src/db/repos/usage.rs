@@ -474,9 +474,9 @@ impl UsageRepository {
     ) -> Result<Vec<KeySpend>> {
         let rows = sqlx::query_as::<_, KeySpend>(
             "SELECT api_key_id,
-                    COALESCE(SUM(CASE WHEN created_at >= ?1 THEN cost_usd ELSE 0 END), 0.0) AS daily_usd,
-                    COALESCE(SUM(CASE WHEN created_at >= ?2 THEN cost_usd ELSE 0 END), 0.0) AS weekly_usd,
-                    COALESCE(SUM(CASE WHEN created_at >= ?3 THEN cost_usd ELSE 0 END), 0.0) AS monthly_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?1 THEN cost_usd ELSE 0.0 END), 0.0) AS daily_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?2 THEN cost_usd ELSE 0.0 END), 0.0) AS weekly_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?3 THEN cost_usd ELSE 0.0 END), 0.0) AS monthly_usd,
                     COALESCE(SUM(cost_usd), 0.0) AS lifetime_usd,
                     COALESCE(SUM(CASE WHEN created_at >= ?1 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS daily_tokens,
                     COALESCE(SUM(CASE WHEN created_at >= ?2 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS weekly_tokens,
@@ -492,6 +492,37 @@ impl UsageRepository {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
+    }
+
+    /// Spend and tokens for one key, split by the budget windows. Returns a
+    /// zeroed `KeySpend` when the key has no usage rows.
+    pub async fn spend_for_key(
+        &self,
+        api_key_id: &str,
+        daily_since: DateTime<Utc>,
+        weekly_since: DateTime<Utc>,
+        monthly_since: DateTime<Utc>,
+    ) -> Result<KeySpend> {
+        let row = sqlx::query_as::<_, KeySpend>(
+            "SELECT ?1 AS api_key_id,
+                    COALESCE(SUM(CASE WHEN created_at >= ?2 THEN cost_usd ELSE 0.0 END), 0.0) AS daily_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?3 THEN cost_usd ELSE 0.0 END), 0.0) AS weekly_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?4 THEN cost_usd ELSE 0.0 END), 0.0) AS monthly_usd,
+                    COALESCE(SUM(cost_usd), 0.0) AS lifetime_usd,
+                    COALESCE(SUM(CASE WHEN created_at >= ?2 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS daily_tokens,
+                    COALESCE(SUM(CASE WHEN created_at >= ?3 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS weekly_tokens,
+                    COALESCE(SUM(CASE WHEN created_at >= ?4 THEN prompt_tokens + completion_tokens ELSE 0 END), 0) AS monthly_tokens,
+                    COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS lifetime_tokens
+             FROM usage_records
+             WHERE api_key_id = ?1",
+        )
+        .bind(api_key_id)
+        .bind(daily_since)
+        .bind(weekly_since)
+        .bind(monthly_since)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
     }
 }
 

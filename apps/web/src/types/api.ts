@@ -624,6 +624,18 @@ export interface UsageBucket {
   cost_usd: number;
 }
 
+/** Budget caps for a key, resolved from key + plan. Null means uncapped. */
+export interface PublicBudgetCaps {
+  daily_budget_usd: number | null;
+  weekly_budget_usd: number | null;
+  monthly_budget_usd: number | null;
+  lifetime_budget_usd: number | null;
+  daily_token_limit: number | null;
+  weekly_token_limit: number | null;
+  monthly_token_limit: number | null;
+  lifetime_token_limit: number | null;
+}
+
 /** `GET /api/public/usage` response for the connected client key. */
 export interface MyUsageResponse {
   key: { name: string; prefix: string };
@@ -633,6 +645,8 @@ export interface MyUsageResponse {
   summary: UsageSummary;
   models: PublicModelUsage[];
   timeseries: UsageBucket[];
+  spend: KeySpend;
+  budget: PublicBudgetCaps;
 }
 
 /** One catalog row the connected key may call. */
