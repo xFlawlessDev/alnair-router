@@ -311,7 +311,9 @@ onUnmounted(() => {
     </div>
 
     <template v-else>
-      <div class="flex flex-wrap items-center justify-between gap-3">
+      <div
+        class="sticky top-0 z-10 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:-mx-6 sm:px-6"
+      >
         <div class="flex items-center gap-2">
           <Badge variant="secondary">{{ usage?.key.name ?? 'Connected key' }}</Badge>
           <code v-if="usage" class="text-xs text-muted-foreground">{{ usage.key.prefix }}…</code>
