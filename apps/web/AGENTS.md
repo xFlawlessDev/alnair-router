@@ -24,6 +24,7 @@ Note: `pnpm-workspace.yaml` here is pnpm's settings file (single package, no `pa
 - `src/components/Logo.vue` — brand mark rendered from the shared `assets/alnair-white.svg` at the repo root via the `@assets` alias (declared in both `vite.config.ts` and `vitest.config.ts`, with `server.fs.allow`; keep the two in sync).
 - `src/components/ui/` is the untouched shadcn-vue primitive set — preserve its API.
 - `src/router/` — route table; page titles live in route meta.
+- `public/favicon.svg` (and its `favicon.ico` raster) — tab icon: the brand mark on a near-black tile, traced from the same shared artwork as `Logo.vue`; the tile keeps it legible on light tab bars, so re-trace both files if the mark changes.
 
 ## Rules
 
