@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use chrono::{Datelike, Utc};
 
 use crate::db::repos::api_keys::ApiKey;
-use crate::db::repos::usage::{Bucket, KeySpend, ModelUsage, UsageBucket, UsageFilter, UsageSummary};
+use crate::db::repos::usage::{
+    Bucket, KeySpend, ModelUsage, UsageBucket, UsageFilter, UsageSummary,
+};
 use crate::error::{Error, Result};
 use crate::handlers::catalog::CatalogEntry;
 use crate::middleware;
@@ -90,8 +92,18 @@ pub async fn usage(
     // Resolve spend and budget caps (key + plan).
     let now = Utc::now();
     let daily_since = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let weekly_since = (now - chrono::Duration::days(7)).date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let monthly_since = now.with_day(1).unwrap().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let weekly_since = (now - chrono::Duration::days(7))
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc();
+    let monthly_since = now
+        .with_day(1)
+        .unwrap()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc();
 
     let spend = state
         .usage()

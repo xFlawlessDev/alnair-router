@@ -235,7 +235,7 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
             .map_err(|error| Error::Config(format!("cannot bind {address}: {error}")))?;
 
         tracing::info!(
-            address = %address,
+            address = %format!("http://{address}"),
             require_api_key = effective.server.require_api_key,
             admin_token = effective.server.requires_admin_token(),
             lan_access = effective.server.lan_access,
