@@ -21,6 +21,12 @@ import {
 } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   Table,
   TableBody,
   TableCell,
@@ -496,10 +502,50 @@ onUnmounted(() => {
                       </Button>
                     </div>
                   </TableCell>
-                  <TableCell>{{ formatRate(entry.price?.input_per_million_usd) }}</TableCell>
-                  <TableCell>{{ formatRate(entry.price?.output_per_million_usd) }}</TableCell>
-                  <TableCell>{{ formatRate(entry.price?.cache_read_per_million_usd) }}</TableCell>
-                  <TableCell>{{ formatRate(entry.price?.cache_write_per_million_usd) }}</TableCell>
+                  <TableCell>
+                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.input_per_million_usd">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.input_per_million_usd) }}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>Pricing varies by tier</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <template v-else>{{ formatRate(entry.price?.input_per_million_usd) }}</template>
+                  </TableCell>
+                  <TableCell>
+                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.output_per_million_usd">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.output_per_million_usd) }}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>Pricing varies by tier</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <template v-else>{{ formatRate(entry.price?.output_per_million_usd) }}</template>
+                  </TableCell>
+                  <TableCell>
+                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.cache_read_per_million_usd">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.cache_read_per_million_usd) }}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>Pricing varies by tier</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <template v-else>{{ formatRate(entry.price?.cache_read_per_million_usd) }}</template>
+                  </TableCell>
+                  <TableCell>
+                    <TooltipProvider v-if="entry.kind === 'combo' && entry.price?.cache_write_per_million_usd">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span class="cursor-help border-b border-dashed border-muted-foreground/50">{{ formatRate(entry.price?.cache_write_per_million_usd) }}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>Pricing varies by tier</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <template v-else>{{ formatRate(entry.price?.cache_write_per_million_usd) }}</template>
+                  </TableCell>
                 </TableRow>
               </TableBody>
             </Table>
