@@ -188,16 +188,36 @@ API and are surfaced in the `deployment` block.
 
 ### Provider presets
 
-`src/providers.rs` ships a built-in catalog (OpenAI, Anthropic, OpenRouter,
-Groq, DeepSeek, Gemini, Z.ai, Moonshot, xAI, Mistral, Together, Fireworks,
-Cerebras, Cohere, NVIDIA, SiliconFlow, Perplexity, Nebius, Chutes, Hyperbolic,
-plus local Ollama/LM Studio/vLLM) with the base URL, wire family and default
-headers each upstream needs. `GET /api/providers` lists it with how many
+`src/providers/` ships a built-in catalog of one-click endpoints: `mod.rs` holds
+the types and lookups, `catalog.rs` the tables, `tests.rs` the invariants. Each
+preset pins the base URL, wire family, tier and optional default headers an
+upstream needs, so a connection can be added without typing an endpoint.
+
+Presets are grouped into three tiers (`ProviderCategory`): `api_key` (paid or
+pay-as-you-go, 40 entries), `free_tier` (hosted providers with a free tier, 12)
+and `local` (Ollama/LM Studio/vLLM). `presets()` concatenates the tiers and sorts
+by `(category rank, label)`, so the JSON order already matches the dashboard's
+picker sections.
+
+`GET /api/providers` lists the catalog with `category`, `auth` and how many
 connections use each preset. Creating a connection with `provider_id` fills
 `provider_type`, `base_url` and default headers, while anything the user sent
 still wins; migration `0015_connection_provider.sql` stores the label so the
 dashboard can show a provider badge. Endpoint URLs were cross-checked against
-9Router/OmniRoute.
+9Router's provider registry and, where one exists, the vendor's own docs.
+
+Two rules keep the catalog honest:
+
+- A `base_url` is everything **before** the request path — the provider layer
+  appends `/chat/completions` (`openai-compatible`) or `/messages`
+  (`anthropic-native`). `anthropic` therefore ships `https://api.anthropic.com/v1`.
+- A `command-code` preset stores only the host (`https://api.commandcode.ai`):
+  that family builds both its Provider API path and its CLI path itself.
+- Account-specific endpoints (`azure-openai`, `cloudflare`) ship a literal
+  `<placeholder>`, and `ConnectionRepository::validate_base_url` refuses to store
+  a base URL that still contains `<`/`>` — a forgotten placeholder fails at save
+  time, not at the first request. `only_templated_presets_contain_placeholders`
+  keeps the placeholder list to exactly those two.
 
 OAuth providers (Claude Code, Codex, GitHub Copilot, …) are the next phase:
 credentials will live in a dedicated table keyed per account (many accounts per
@@ -501,6 +521,33 @@ suite should tell you.
     for the tray link. (`middleware.rs`, `handlers/settings.rs`, `config.rs`,
     `main.rs`)
 
+27. **Command Code resolves its transport once per credential.** A
+    `command-code` connection prefers the documented Provider API
+    (`/provider/v1/chat/completions`, served by the OpenAI provider) and falls
+    back to the CLI envelope (`/alpha/generate`, NDJSON) when the credential may
+    not use the API — a Go plan has none, which is exactly the case that
+    fallback exists for. Two signals switch it: the `/provider/v1/models` probe
+    answering 403/404, *and* a 403/404 on the real chat request, because the
+    models endpoint is not gated the same way on every plan. Either way the
+    decision is memoized per base URL plus credential fingerprint, so a rejected
+    request is paid once per process and the request that discovers it is
+    retried over the CLI instead of failing. The CLI path lifts system prompts
+    into `params.system`, forwards only tool calls that have a matching tool
+    result (and vice versa), renames the reserved `tool_search` tool and maps it
+    back on the way out, and pins the CLI protocol version — overridable per
+    connection through `custom_headers`. A base URL that still carries the
+    Provider API path (what the preset shipped before this family existed) is
+    normalized to its host, so switching an older connection's provider type is
+    enough to bring it over. (`providers/commandcode/`)
+
+28. **Provider types live in a CHECK constraint.** `connections.provider_type`
+    is constrained to the supported families, so a new wire family needs a
+    table rebuild (SQLite cannot alter a CHECK). With foreign keys on — the
+    application-wide setting — `DROP TABLE connections` cascades into `aliases`
+    and `connection_accounts`, so migration `0017` copies both aside and
+    restores them before it commits; `provider_type_rebuild_keeps_children`
+    runs the migration against a seeded database to keep that honest.
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -510,7 +557,8 @@ so it can be versioned, tested, and swapped independently. It was originally a
 trimmed copy of an upstream provider stack, kept in-repo so the workspace has no
 path dependency outside itself.
 
-**What was kept:** `types`, `model_config`, `provider`, and `providers/{mod,common,sse,anthropic,openai}`.
+**What was kept:** `types`, `model_config`, `provider`, and
+`providers/{mod,common,sse,anthropic,openai,commandcode}`.
 
 **What was dropped:** `normalize.rs`, `streaming.rs`, `handlers.rs`, `queue.rs`,
 `router.rs` (unused by the provider stack), and the entire Ollama provider

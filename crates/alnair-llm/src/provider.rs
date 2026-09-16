@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use crate::model_config::{LlmStreamOptions, ModelConfig};
-use crate::providers::{AnthropicNativeProvider, OpenAiProvider};
+use crate::providers::{AnthropicNativeProvider, CommandCodeProvider, OpenAiProvider};
 use crate::types::{ChatError, LlmStreamChunk, Message, ProviderType};
 
 /// A streaming LLM provider contract.
@@ -66,6 +66,10 @@ impl ProviderRegistry {
             &ProviderType::AnthropicNative,
             Arc::new(AnthropicNativeProvider::new()),
         );
+        registry.register(
+            &ProviderType::CommandCode,
+            Arc::new(CommandCodeProvider::new()),
+        );
         registry
     }
 }
@@ -74,5 +78,6 @@ pub fn provider_type_to_key(provider_type: &ProviderType) -> &'static str {
     match provider_type {
         ProviderType::OpenaiCompatible => "openai-compatible",
         ProviderType::AnthropicNative => "anthropic-native",
+        ProviderType::CommandCode => "command-code",
     }
 }

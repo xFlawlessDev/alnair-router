@@ -36,7 +36,9 @@ pub enum Error {
     #[error("no route available: {0}")]
     NoRoute(String),
 
-    #[error("unsupported provider type: {0} (supported: openai-compatible, anthropic-native)")]
+    #[error(
+        "unsupported provider type: {0} (supported: openai-compatible, anthropic-native, command-code)"
+    )]
     UnsupportedProviderType(String),
 
     #[error("all upstream attempts failed; last error: {0}")]

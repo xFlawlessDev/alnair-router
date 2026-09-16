@@ -329,13 +329,16 @@ pub fn convert_messages_to_openai_format(messages: &[Message]) -> Vec<serde_json
 
 /// Provider type for routing requests.
 ///
-/// Only OpenAI-compatible and Anthropic-native upstreams are supported.
+/// OpenAI-compatible, Anthropic-native and Command Code upstreams are
+/// supported.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderType {
     #[default]
     OpenaiCompatible,
     AnthropicNative,
+    /// Command Code: the Provider API, falling back to the CLI transport.
+    CommandCode,
 }
 
 impl ProviderType {
@@ -344,6 +347,7 @@ impl ProviderType {
         match self {
             ProviderType::OpenaiCompatible => "openai-compatible",
             ProviderType::AnthropicNative => "anthropic-native",
+            ProviderType::CommandCode => "command-code",
         }
     }
 }

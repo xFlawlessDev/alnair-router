@@ -6,6 +6,7 @@ import { toast } from 'vue-sonner';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
+import ProviderIcon from '@/components/ProviderIcon.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 import ConnectionFormDialog from '@/components/connections/ConnectionFormDialog.vue';
 import ProviderPickerDialog from '@/components/connections/ProviderPickerDialog.vue';
@@ -221,6 +222,12 @@ onMounted(load);
               <div class="flex flex-col gap-1">
                 <span class="font-medium">{{ connection.name }}</span>
                 <div class="flex flex-wrap items-center gap-1">
+                  <ProviderIcon
+                    :id="connection.provider_id"
+                    :type="connection.provider_type"
+                    :label="providerLabel(connection) || connection.provider_type"
+                    class="mr-0.5 text-muted-foreground"
+                  />
                   <Badge v-if="connection.provider_id" variant="secondary">
                     {{ providerLabel(connection) }}
                   </Badge>

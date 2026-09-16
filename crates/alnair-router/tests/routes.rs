@@ -3170,12 +3170,28 @@ async fn provider_presets_fill_connection_defaults() {
     let (status, body) = get(&app, "/api/providers").await;
     assert_eq!(status, StatusCode::OK);
     let presets = body["data"].as_array().expect("presets");
-    assert!(presets.len() >= 20, "expected a real catalog");
+    assert!(presets.len() >= 50, "expected a real catalog");
     assert!(presets.iter().any(|preset| preset["id"] == "openai"));
     assert!(
         presets.iter().all(|preset| preset["configured"] == 0),
         "nothing configured yet"
     );
+
+    // Every preset carries the tier the picker groups it under.
+    assert!(
+        presets.iter().all(|preset| preset["category"].is_string()),
+        "presets need a category"
+    );
+    let nvidia = presets
+        .iter()
+        .find(|preset| preset["id"] == "nvidia")
+        .expect("nvidia preset");
+    assert_eq!(nvidia["category"], "free_tier");
+    let lmstudio = presets
+        .iter()
+        .find(|preset| preset["id"] == "lmstudio")
+        .expect("lmstudio preset");
+    assert_eq!(lmstudio["category"], "local");
 
     // Creating from a preset fills the endpoint and wire family.
     let (status, body) = json_request(
@@ -3189,6 +3205,28 @@ async fn provider_presets_fill_connection_defaults() {
     assert_eq!(body["provider_type"], "openai-compatible");
     assert_eq!(body["base_url"], "https://api.openai.com/v1");
     assert_eq!(body["provider_id"], "openai");
+
+    // A newly added preset fills itself the same way.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({ "name": "command-code", "provider_id": "commandcode" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body}");
+    assert_eq!(body["provider_type"], "command-code");
+    assert_eq!(body["base_url"], "https://api.commandcode.ai");
+
+    // A base URL that still carries a preset placeholder is refused.
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({ "name": "azure", "provider_id": "azure-openai" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // The catalog reports the new connection.
     let (_, body) = get(&app, "/api/providers").await;

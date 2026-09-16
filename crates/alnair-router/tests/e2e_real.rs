@@ -15,6 +15,10 @@
 //! - `ALNAIR_ROUTER_E2E_ANTHROPIC_API_KEY` (required for the Anthropic test)
 //! - `ALNAIR_ROUTER_E2E_ANTHROPIC_BASE_URL` (default `https://api.anthropic.com/v1`)
 //! - `ALNAIR_ROUTER_E2E_ANTHROPIC_MODEL` (default `claude-3-5-haiku-latest`)
+//! - `ALNAIR_ROUTER_E2E_COMMANDCODE_KEY` (required for the Command Code tests;
+//!   a `user_...` CLI key, which a Go plan routes over the CLI transport)
+//! - `ALNAIR_ROUTER_E2E_COMMANDCODE_BASE_URL` (default `https://api.commandcode.ai`)
+//! - `ALNAIR_ROUTER_E2E_COMMANDCODE_MODEL` (default `deepseek/deepseek-v4-flash`)
 
 use alnair_router::config::RouterConfig;
 use alnair_router::db::Db;
@@ -210,4 +214,90 @@ async fn anthropic_messages_round_trip() {
     let text = payload["content"][0]["text"].as_str().unwrap_or_default();
     assert!(!text.trim().is_empty(), "empty completion: {body}");
     assert!(payload["usage"]["output_tokens"].as_u64().unwrap_or(0) > 0);
+}
+
+/// Command Code. A plan without Provider API access (Go) answers 403 there, so
+/// the credential is expected to fall back to the CLI transport — the stream
+/// must arrive anyway, without the `upgrade_required` rejection.
+#[tokio::test]
+#[ignore = "requires ALNAIR_ROUTER_E2E_COMMANDCODE_KEY"]
+async fn command_code_streaming_round_trip() {
+    let api_key = env_key("ALNAIR_ROUTER_E2E_COMMANDCODE_KEY");
+    let base_url = env_or(
+        "ALNAIR_ROUTER_E2E_COMMANDCODE_BASE_URL",
+        "https://api.commandcode.ai",
+    );
+    let model = env_or(
+        "ALNAIR_ROUTER_E2E_COMMANDCODE_MODEL",
+        "deepseek/deepseek-v4-flash",
+    );
+    let app = app_with_connection("command-code", &base_url, &api_key).await;
+
+    let response = raw_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        Some(serde_json::json!({
+            "model": model,
+            "stream": true,
+            "messages": [{ "role": "user", "content": "Reply with the single word: pong" }],
+            "max_tokens": 16
+        })),
+    )
+    .await;
+
+    let provider = response
+        .headers()
+        .get("x-router-provider")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    assert_eq!(provider.as_deref(), Some("command-code"));
+
+    let (status, body) = body_text(response).await;
+    assert_eq!(status, StatusCode::OK, "unexpected error body: {body}");
+    assert!(
+        !body.contains("upgrade_required"),
+        "the CLI transport must absorb the plan rejection: {body}"
+    );
+    assert!(
+        body.contains("chat.completion.chunk"),
+        "expected OpenAI SSE chunks, got: {body}"
+    );
+    assert!(body.contains("[DONE]"), "stream must terminate: {body}");
+}
+
+#[tokio::test]
+#[ignore = "requires ALNAIR_ROUTER_E2E_COMMANDCODE_KEY"]
+async fn command_code_non_streaming_round_trip() {
+    let api_key = env_key("ALNAIR_ROUTER_E2E_COMMANDCODE_KEY");
+    let base_url = env_or(
+        "ALNAIR_ROUTER_E2E_COMMANDCODE_BASE_URL",
+        "https://api.commandcode.ai",
+    );
+    let model = env_or(
+        "ALNAIR_ROUTER_E2E_COMMANDCODE_MODEL",
+        "deepseek/deepseek-v4-flash",
+    );
+    let app = app_with_connection("command-code", &base_url, &api_key).await;
+
+    let response = raw_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        Some(serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": "Reply with the single word: pong" }],
+            "max_tokens": 16
+        })),
+    )
+    .await;
+
+    let (status, body) = body_text(response).await;
+    assert_eq!(status, StatusCode::OK, "unexpected error body: {body}");
+
+    let payload: serde_json::Value = serde_json::from_str(&body).expect("json body");
+    let content = payload["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!content.trim().is_empty(), "empty completion: {body}");
 }

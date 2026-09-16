@@ -211,6 +211,7 @@ pub fn provider_type_from_str(value: &str) -> Result<ProviderType> {
     match value {
         "openai-compatible" => Ok(ProviderType::OpenaiCompatible),
         "anthropic-native" => Ok(ProviderType::AnthropicNative),
+        "command-code" => Ok(ProviderType::CommandCode),
         other => Err(Error::UnsupportedProviderType(other.to_string())),
     }
 }

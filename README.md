@@ -354,6 +354,7 @@ See `crates/alnair-router/router.example.toml` for every option.
 |---|---|
 | `openai-compatible` | Supported |
 | `anthropic-native` | Supported |
+| `command-code` | Supported — Command Code's Provider API, falling back to its CLI transport when the plan has no API access (Go) |
 | anything else (including `ollama`) | **Rejected at write time** with `400 unsupported_provider_type` |
 
 ## Architecture

@@ -57,8 +57,19 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Dashboard model catalog (`GET /api/models`): every alias and combo tier with its provider and catalog price, copyable model ids
 - [x] Self-service usage and catalog (`GET /api/public/usage`, `GET /api/public/models`, page `/me`): a client reads its own summary, per-model rollup and a stacked-by-model hour/day bar chart with crosshair tooltip, month selector and 30s auto-refresh, plus the catalog rows its key is allowed to call with rates and upstream base URLs, gated by `server.public_usage`
 - [x] Zero-config dashboard auth: password-only sign-in with Argon2, opaque rotating sessions (reuse revokes the family), first-run setup code, and a `server.lan_access` Settings toggle that re-binds the listener to the LAN without a restart
-- [x] Built-in provider presets (`/api/providers`): one-click API-key connections with preset base URLs, wire families and default headers, plus a `provider_id` badge on connections
+- [x] Built-in provider presets (`/api/providers`): 55 one-click endpoints across
+      three tiers (`api_key` / `free_tier` / `local`), each with a preset base URL,
+      wire family and default headers, grouped into picker sections and shown as a
+      `provider_id` badge on connections. Account-specific endpoints
+      (`azure-openai`, `cloudflare`) ship a `<placeholder>` that
+      `ConnectionRepository::validate_base_url` refuses to store. URLs mirror
+      9Router's registry. Fixed here: the `anthropic` preset was missing its `/v1`
+      segment, so the provider layer appended `/messages` to the bare host.
 - [x] Extra keys per connection (`/api/connections/{id}/accounts`): encrypted additional API keys rotating round-robin in the executor, with fallthrough to the next key before the next tier
+- [x] Command Code upstream (`command-code`): the Provider API with an automatic
+      fallback to the CLI transport (`/alpha/generate`) when a plan has no API
+      access, one entitlement probe per connection, and the reserve-tool / tool-pairing
+      rules the endpoint requires
 - [ ] OAuth providers (Claude Code, Codex, GitHub Copilot, …): per-account credentials table, PKCE/device flows with loopback callback, cached dual-token exchange (Copilot) and automatic token refresh
 - [x] MIT license, CI, multi-stage Dockerfile, opt-in real-provider e2e tests
 

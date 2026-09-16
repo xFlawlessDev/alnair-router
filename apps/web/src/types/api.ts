@@ -3,9 +3,13 @@ export type ID = string;
 export type AsyncState = 'idle' | 'loading' | 'success' | 'error';
 
 /** Provider families the router can dispatch to. */
-export type ProviderType = 'openai-compatible' | 'anthropic-native';
+export type ProviderType = 'openai-compatible' | 'anthropic-native' | 'command-code';
 
-export const PROVIDER_TYPES: ProviderType[] = ['openai-compatible', 'anthropic-native'];
+export const PROVIDER_TYPES: ProviderType[] = [
+  'openai-compatible',
+  'anthropic-native',
+  'command-code',
+];
 
 export interface HealthResponse {
   status: string;
@@ -80,11 +84,23 @@ export interface ConnectionInput {
   provider_id?: string | null;
 }
 
+/** Tier a provider preset belongs to; the picker groups by this. */
+export type ProviderCategory = 'api_key' | 'free_tier' | 'local';
+
+/** Picker section order; mirrors the order the API returns. */
+export const PROVIDER_CATEGORIES: { id: ProviderCategory; label: string }[] = [
+  { id: 'api_key', label: 'API key providers' },
+  { id: 'free_tier', label: 'Free tier providers' },
+  { id: 'local', label: 'Local servers' },
+];
+
 /** A built-in upstream template shown by the provider picker. */
-export interface ProviderPreset {  id: string;
+export interface ProviderPreset {
+  id: string;
   label: string;
   provider_type: ProviderType;
   base_url: string;
+  category: ProviderCategory;
   auth: 'api_key' | 'none';
   default_headers: Record<string, string>;
   api_key_url: string | null;

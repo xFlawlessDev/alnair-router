@@ -39,6 +39,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@lobehub/icons-static-svg": "1.95.0",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^26.4.1",
     "@vitejs/plugin-vue": "^6.0.8",

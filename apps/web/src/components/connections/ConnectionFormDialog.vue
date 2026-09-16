@@ -3,6 +3,7 @@ import { Plus, Trash2, X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 
+import ProviderIcon from '@/components/ProviderIcon.vue';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -253,7 +254,10 @@ async function save(): Promise<void> {
       </DialogHeader>
 
       <div v-if="!isEdit && preset" class="rounded-md border bg-muted/40 p-3 text-xs">
-        <p class="font-medium">{{ preset.label }}</p>
+        <p class="flex items-center gap-2 font-medium">
+          <ProviderIcon :id="preset.id" :label="preset.label" />
+          {{ preset.label }}
+        </p>
         <p v-if="preset.note" class="mt-1 text-muted-foreground">{{ preset.note }}</p>
         <a
           v-if="preset.api_key_url"

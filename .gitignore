@@ -5,3 +5,4 @@ npm/alnair-router-*/bin/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+.commandcode

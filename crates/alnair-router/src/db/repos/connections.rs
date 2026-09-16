@@ -10,8 +10,9 @@ use sqlx::{FromRow, SqlitePool};
 use crate::crypto::CredentialCipher;
 use crate::error::{Error, Result};
 
-/// The two upstream families supported by the router.
-pub const SUPPORTED_PROVIDER_TYPES: [&str; 2] = ["openai-compatible", "anthropic-native"];
+/// The upstream families supported by the router.
+pub const SUPPORTED_PROVIDER_TYPES: [&str; 3] =
+    ["openai-compatible", "anthropic-native", "command-code"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Connection {
@@ -222,6 +223,7 @@ impl ConnectionRepository {
         if base_url.is_empty() {
             return Err(Error::BadRequest("base_url is required".to_string()));
         }
+        validate_base_url(base_url)?;
 
         // Preset headers are defaults: whatever the user sent wins.
         let mut headers = input.custom_headers.clone();
@@ -301,6 +303,7 @@ impl ConnectionRepository {
         if base_url.is_empty() {
             return Err(Error::BadRequest("base_url is required".to_string()));
         }
+        validate_base_url(base_url)?;
         let api_key = match &input.api_key {
             Some(Some(value)) => match normalized_secret(Some(value)) {
                 Some(value) => Some(self.cipher.encrypt(&value)?),
@@ -375,6 +378,17 @@ impl ConnectionRepository {
             .await?;
         Ok(result.rows_affected() > 0)
     }
+}
+
+/// Rejects a base URL that still carries a preset placeholder (`<account-id>`,
+/// `<your-resource>`), which would fail at request time instead of at save time.
+fn validate_base_url(base_url: &str) -> Result<()> {
+    if base_url.contains('<') || base_url.contains('>') {
+        return Err(Error::BadRequest(
+            "base_url still contains a placeholder; replace it with your own value".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Trims a secret and treats blanks as absent.

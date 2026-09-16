@@ -226,6 +226,135 @@ async fn connection_update_rejects_unsupported_type() {
 }
 
 #[tokio::test]
+async fn connection_base_url_rejects_a_preset_placeholder() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let error = repo
+        .create(CreateConnection {
+            base_url: "https://<your-resource>.openai.azure.com/openai/v1".to_string(),
+            ..connection("azure", "openai-compatible")
+        })
+        .await
+        .expect_err("a placeholder must not be stored");
+    assert!(matches!(error, Error::BadRequest(_)));
+
+    // The same rule applies when the URL is changed later.
+    let created = repo
+        .create(connection("main", "openai-compatible"))
+        .await
+        .expect("create");
+    let error = repo
+        .update(
+            &created.id,
+            alnair_router::db::repos::connections::UpdateConnection {
+                base_url: Some(
+                    "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1".to_string(),
+                ),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("a placeholder must not be stored on update");
+    assert!(matches!(error, Error::BadRequest(_)));
+
+    // An untouched row keeps working.
+    let unchanged = repo
+        .update(
+            &created.id,
+            alnair_router::db::repos::connections::UpdateConnection {
+                name: Some("renamed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update");
+    assert_eq!(unchanged.base_url, "https://api.example.com/v1");
+}
+
+/// The new provider family is admitted by the CHECK constraint, and the table
+/// rebuild that widened it keeps child rows alive. `DROP TABLE connections`
+/// cascades into `aliases`/`connection_accounts` unless the migration turns
+/// foreign keys off first, which is what this pins down.
+#[tokio::test]
+async fn provider_type_rebuild_keeps_children() {
+    let db = db().await;
+
+    // Fresh databases already carry the widened constraint, so rebuild a
+    // legacy-shaped connections table to run the migration against real data.
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF;
+         DROP TABLE connections;
+         CREATE TABLE connections (
+             id                 TEXT PRIMARY KEY,
+             name               TEXT NOT NULL UNIQUE,
+             provider_type      TEXT NOT NULL CHECK (provider_type IN ('openai-compatible', 'anthropic-native')),
+             base_url           TEXT NOT NULL,
+             api_key            TEXT,
+             custom_headers     TEXT NOT NULL DEFAULT '{}',
+             enabled            INTEGER NOT NULL DEFAULT 1,
+             created_at         TEXT NOT NULL,
+             updated_at         TEXT NOT NULL,
+             connect_timeout_ms INTEGER,
+             idle_timeout_ms    INTEGER,
+             pricing_model      TEXT,
+             provider_id        TEXT
+         );
+         PRAGMA foreign_keys = ON;",
+    )
+    .execute(&db.pool)
+    .await
+    .expect("legacy schema");
+
+    let repo = connection_repo(&db);
+    let seeded = repo
+        .create(connection("legacy", "openai-compatible"))
+        .await
+        .expect("seed connection");
+
+    sqlx::query(
+        "INSERT INTO aliases (id, prefix, connection_id, model_override, enabled, sort_order, created_at, updated_at)
+         VALUES ('a1', 'leg', ?, NULL, 1, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .bind(&seeded.id)
+    .execute(&db.pool)
+    .await
+    .expect("seed alias");
+
+    sqlx::raw_sql(include_str!("../migrations/0017_command_code_provider.sql"))
+        .execute(&db.pool)
+        .await
+        .expect("rebuild migration");
+
+    let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
+        .fetch_all(&db.pool)
+        .await
+        .expect("aliases survived");
+    assert_eq!(aliases.len(), 1, "the rebuild must not cascade children");
+
+    let rebuilt = repo
+        .create(connection("go", "command-code"))
+        .await
+        .expect("command-code is admitted");
+    assert_eq!(rebuilt.provider_type, "command-code");
+
+    let error = repo
+        .create(connection("nope", "ollama"))
+        .await
+        .expect_err("unknown types are still rejected");
+    assert!(matches!(error, Error::UnsupportedProviderType(_)));
+    assert!(
+        sqlx::query("SELECT id FROM connections WHERE id = ?")
+            .bind(&seeded.id)
+            .fetch_optional(&db.pool)
+            .await
+            .expect("legacy row survived")
+            .is_some(),
+        "existing connections are carried over"
+    );
+}
+
+#[tokio::test]
 async fn connection_name_is_unique() {
     let db = db().await;
     let repo = connection_repo(&db);

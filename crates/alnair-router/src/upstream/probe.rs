@@ -49,6 +49,16 @@ struct UpstreamModelRaw {
 /// error explains the missing `/v1` instead of dumping the upstream's HTML.
 pub async fn fetch_models(connection: &Connection) -> Result<ProbeOutcome> {
     let base = connection.base_url.trim_end_matches('/');
+
+    // Command Code serves its model list under the Provider API path; a plan
+    // without API access answers 403 there and still routes through the CLI
+    // transport, so the error is reported as-is. Older connections carry that
+    // path in `base_url` already, hence the strip.
+    if connection.provider_type == "command-code" {
+        let host = base.strip_suffix("/provider/v1").unwrap_or(base);
+        return probe_url(connection, &format!("{host}/provider/v1/models")).await;
+    }
+
     let primary = format!("{base}/models");
 
     match probe_url(connection, &primary).await {
