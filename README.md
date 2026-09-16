@@ -1,25 +1,87 @@
 # alnair-router
 
-A standalone, OpenAI-compatible AI router: it resolves **prefixed model IDs** to
-upstream providers, expands named **combos** into ordered fallback chains, and
-tracks usage per attempt.
+**One OpenAI-compatible endpoint in front of every model you use.** Prefixes
+route to upstream connections, named combos expand into ordered fallback chains,
+and every attempt is metered — with an embedded dashboard, no external database,
+and a single binary.
 
-This repository is a standalone Cargo monorepo. A virtual workspace at the root
-owns the lock file and build profiles; the router crate lives in
-`crates/alnair-router/` and the provider stack in `crates/alnair-llm/`. It
-depends only on crates.io — no path dependency outside the workspace — with its
-own SQLite database and its own HTTP server.
+[![CI](https://github.com/xFlawlessDev/alnair-router/actions/workflows/ci.yml/badge.svg)](https://github.com/xFlawlessDev/alnair-router/actions/workflows/ci.yml)
+[![Release](https://github.com/xFlawlessDev/alnair-router/actions/workflows/release.yml/badge.svg)](https://github.com/xFlawlessDev/alnair-router/actions/workflows/release.yml)
+[![npm](https://img.shields.io/npm/v/@xflawlessdev/alnair-router?label=npm)](https://www.npmjs.com/package/@xflawlessdev/alnair-router)
+[![ghcr.io](https://img.shields.io/badge/ghcr.io-alnair--router-blue)](https://github.com/xFlawlessDev/alnair-router/pkgs/container/alnair-router)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](#license)
 
+- **Model references** — `glm/glm-4.6`, a bare `gpt-4o`, or a combo name.
+- **Fallback combos** — a tier that fails before emitting content moves to the next, transparently.
+- **Aliases & connections** — one prefix per upstream, with round-robin API keys per connection.
+- **Embedded dashboard** — connections, aliases, combos, catalog, keys, usage, settings, backup/restore.
+- **Key controls** — rate limits, daily/weekly/monthly/lifetime budgets, model allowlists and plans.
+- **Both wire formats** — OpenAI (`/v1/chat/completions`, `/v1/responses`) and Anthropic (`/v1/messages`).
+
+## Install
+
+The binary doubles as its own installer: `install` creates a config with a
+generated `secrets.key` and registers auto-start, so an installed router comes
+back by itself after a reboot.
+
+**Linux / macOS** — Linux x86_64 or Apple Silicon:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xFlawlessDev/alnair-router/main/install.sh | sh
 ```
-.
-├── Cargo.toml           # virtual workspace root
-├── apps/
-│   └── web/             # admin dashboard (Vue 3 + Vite)
-├── crates/
-│   ├── alnair-llm/      # provider stack (OpenAI-compatible + Anthropic-native)
-│   └── alnair-router/   # the router crate (binary + library)
-└── docs/                # HANDOVER.md, ROADMAP.md
+
+`install.sh` resolves the latest GitHub Release for your platform, verifies
+`SHA256SUMS.txt`, installs to `~/.local/bin`, and runs `install`.
+
+**Windows** — x64:
+
+```powershell
+irm https://raw.githubusercontent.com/xFlawlessDev/alnair-router/main/install.ps1 | iex
 ```
+
+`install.ps1` verifies `SHA256SUMS.txt`, installs to
+`%LOCALAPPDATA%\alnair-router\bin`, adds that to your user PATH, and runs
+`install`. From a checkout it prefers a local `target\release` (or
+`target\debug`) build.
+
+**npm** — Node 18+:
+
+```bash
+npm install -g @xflawlessdev/alnair-router
+# or run it without installing:
+npx @xflawlessdev/alnair-router
+```
+
+The wrapper ships prebuilt binaries for Linux x64 (glibc), Windows x64, and
+Apple Silicon through optional platform packages — no postinstall download,
+nothing is fetched at runtime. Alpine/musl is not covered; use the install
+script or build from source there.
+
+**Docker:**
+
+```bash
+export ALNAIR_ROUTER__SECRETS__KEY="$(openssl rand -hex 32)"
+docker compose up -d
+docker compose logs         # copy the setup code, then open /login
+```
+
+Overrides: `ALNAIR_ROUTER_REPO`, `ALNAIR_ROUTER_VERSION`,
+`ALNAIR_ROUTER_INSTALL_DIR`, and `ALNAIR_ROUTER_NO_AUTOSTART=1` on the shell
+scripts (`-Version`, `-Repo`, `-InstallDir`, `-NoAutoStart` on PowerShell).
+
+Manage it with:
+
+```bash
+alnair-router status      # auto-start state and paths
+alnair-router uninstall   # disable auto-start (config and data are kept)
+```
+
+`install`/`uninstall`/`status` work on every platform (auto-launch writes a Run
+key, LaunchAgent, or XDG autostart entry); the install scripts only place the
+binary and delegate to `install`. `uninstall` keeps config and data by design.
+To remove the app completely, `alnair-router uninstall`, delete the install dir
+(`%LOCALAPPDATA%\alnair-router` or `~/.local/bin/alnair-router`), the router home
+(`~/.alnair-router`), and its PATH entry if you added one.
 
 ## What it does
 
@@ -87,6 +149,25 @@ Now use it exactly like OpenAI:
 curl http://127.0.0.1:7878/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{ "model": "free-forever", "messages": [{ "role": "user", "content": "hi" }] }'
+```
+
+## Repository layout
+
+This repository is a standalone Cargo monorepo. A virtual workspace at the root
+owns the lock file and build profiles; the router crate lives in
+`crates/alnair-router/` and the provider stack in `crates/alnair-llm/`. It
+depends only on crates.io — no path dependency outside the workspace — with its
+own SQLite database and its own HTTP server.
+
+```
+.
+├── Cargo.toml           # virtual workspace root
+├── apps/
+│   └── web/             # admin dashboard (Vue 3 + Vite)
+├── crates/
+│   ├── alnair-llm/      # provider stack (OpenAI-compatible + Anthropic-native)
+│   └── alnair-router/   # the router crate (binary + library)
+└── docs/                # HANDOVER.md, ROADMAP.md
 ```
 
 ## Admin dashboard
@@ -269,11 +350,6 @@ and refreshes itself every 30 seconds. Disabled with
 > without one unless `server.allow_unauthenticated_admin = true` is set
 > explicitly.
 
-## Documentation
-
-- [`docs/HANDOVER.md`](docs/HANDOVER.md) — architecture, design decisions, how to run it
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is done, what is missing, what is unsafe
-
 ## Configuration
 
 Reads `$ALNAIR_ROUTER_HOME/config.toml` (default `~/.alnair-router/config.toml`),
@@ -424,63 +500,10 @@ ALNAIR_ROUTER_E2E_OPENAI_API_KEY=sk-... \
   cargo test -p alnair-router --test e2e_real -- --ignored
 ```
 
-## Install and auto-start
+## Documentation
 
-The binary doubles as its own installer: `install` creates a config with a
-generated `secrets.key` and registers auto-start, so an installed router comes
-back by itself after a reboot.
-
-**Linux / macOS:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/xFlawlessDev/alnair-router/main/install.sh | sh
-```
-
-`install.sh` resolves the latest GitHub Release for your platform (Linux x86_64
-or Apple Silicon), verifies `SHA256SUMS.txt`, installs to `~/.local/bin`, and
-runs `install`. Overrides: `ALNAIR_ROUTER_REPO`, `ALNAIR_ROUTER_VERSION`,
-`ALNAIR_ROUTER_INSTALL_DIR`, and `ALNAIR_ROUTER_NO_AUTOSTART=1`.
-
-**Windows:**
-
-```powershell
-irm https://raw.githubusercontent.com/xFlawlessDev/alnair-router/main/install.ps1 | iex
-```
-
-`install.ps1` downloads the latest release for Windows x64, verifies
-`SHA256SUMS.txt`, installs to `%LOCALAPPDATA%\alnair-router\bin`, adds that to
-your user PATH, and runs `install`. From a checkout it prefers a local
-`target\release` (or `target\debug`) build; same overrides as above
-(`-Version`, `-Repo`, `-InstallDir`, `-NoAutoStart`).
-
-**npm (Node 18+):**
-
-```bash
-npm install -g @xflawlessdev/alnair-router
-# or run it without installing:
-npx @xflawlessdev/alnair-router
-```
-
-The wrapper ships prebuilt binaries for Linux x64 (glibc), Windows x64, and
-Apple Silicon through optional platform packages — no postinstall download,
-nothing is fetched at runtime. Alpine/musl is not covered; use the install
-script or build from source there.
-
-Manage it with:
-
-```powershell
-alnair-router status      # auto-start state and paths
-alnair-router uninstall   # disable auto-start (config and data are kept)
-```
-
-`uninstall` keeps config and data by design. To remove the app completely,
-`alnair-router uninstall`, delete the install dir (`%LOCALAPPDATA%\alnair-router`
-or `~/.local/bin/alnair-router`), the router home (`~/.alnair-router`), and its
-PATH entry if you added one.
-
-`install`/`uninstall`/`status` work on every platform (auto-launch writes a Run
-key, LaunchAgent, or XDG autostart entry); the install scripts only place the
-binary and delegate to `install`.
+- [`docs/HANDOVER.md`](docs/HANDOVER.md) — architecture, design decisions, how to run it
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is done, what is missing, what is unsafe
 
 ## Releasing
 
