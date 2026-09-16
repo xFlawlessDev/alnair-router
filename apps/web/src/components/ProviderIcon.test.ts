@@ -43,13 +43,13 @@ describe("ProviderIcon", () => {
 
   it("falls back to a monogram tile for providers without a glyph", async () => {
     const { container, unmount } = mount({
-      id: "commandcode",
-      label: "Command Code",
+      id: "llm7",
+      label: "LLM7",
     });
     await nextTick();
 
     expect(container.querySelector("svg")).toBeNull();
-    expect(container.textContent?.trim()).toBe("CC");
+    expect(container.textContent?.trim()).toBe("LL");
 
     unmount();
   });
@@ -79,15 +79,16 @@ describe("ProviderIcon", () => {
     ).toBeTruthy();
     anthropic.unmount();
 
-    // Command Code has no glyph yet, so it falls through to the monogram.
     const commandCode = mount({
       id: null,
       type: "command-code",
       label: "Command Code",
     });
     await nextTick();
-    expect(commandCode.container.querySelector("svg")).toBeNull();
-    expect(commandCode.container.textContent?.trim()).toBe("CC");
+    expect(
+      commandCode.container.querySelector("svg"),
+      "command-code",
+    ).toBeTruthy();
     commandCode.unmount();
   });
 

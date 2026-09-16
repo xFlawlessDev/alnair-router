@@ -37,8 +37,7 @@ describe("providerIcons", () => {
   it("falls back to the wire family for connections without a preset", () => {
     expect(providerTypeIcon("openai-compatible")).toContain("<svg");
     expect(providerTypeIcon("anthropic-native")).toContain("<svg");
-    // No glyph for Command Code yet, so it keeps the monogram.
-    expect(providerTypeIcon("command-code")).toBeNull();
+    expect(providerTypeIcon("command-code")).toContain("<svg");
     expect(providerTypeIcon(null)).toBeNull();
     expect(providerTypeIcon(undefined)).toBeNull();
   });
