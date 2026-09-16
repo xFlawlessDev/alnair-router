@@ -1,12 +1,25 @@
 <script setup lang="ts">
-import { CircleAlert, CircleCheck, KeyRound, Plug, RefreshCw, Waypoints } from '@lucide/vue';
+import {
+  Boxes,
+  CircleAlert,
+  CircleCheck,
+  Copy,
+  KeyRound,
+  Plug,
+  RefreshCw,
+  Waypoints,
+} from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
+import { toast } from 'vue-sonner';
 
+import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import UsageSummaryCards from '@/components/UsageSummaryCards.vue';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -14,9 +27,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { ApiError, api } from '@/lib/api';
+import { formatRate } from '@/lib/format';
 import { USAGE_RANGES, rangeToSince } from '@/lib/ranges';
-import type { HealthResponse, InitState, UsageSummary, VersionResponse } from '@/types/api';
+import type {
+  HealthResponse,
+  InitState,
+  ModelCatalogEntry,
+  UsageSummary,
+  VersionResponse,
+} from '@/types/api';
+
+const baseUrl = `${window.location.origin}/v1`;
 
 const health = ref<HealthResponse | null>(null);
 const version = ref<VersionResponse | null>(null);
@@ -26,6 +56,51 @@ const range = ref('all');
 const loading = ref(true);
 const error = ref<string | null>(null);
 
+const modelEntries = ref<ModelCatalogEntry[]>([]);
+const modelSearch = ref('');
+
+const filteredModels = computed(() => {
+  const term = modelSearch.value.trim().toLowerCase();
+  if (!term) return modelEntries.value;
+  return modelEntries.value.filter((entry) =>
+    [entry.id, entry.provider, entry.provider_type, entry.upstream_model ?? ''].some((value) =>
+      value.toLowerCase().includes(term),
+    ),
+  );
+});
+
+function isOpenAlias(entry: ModelCatalogEntry): boolean {
+  return entry.kind === 'alias' && entry.upstream_model === null;
+}
+
+function copyValue(entry: ModelCatalogEntry): string {
+  return isOpenAlias(entry) ? `${entry.id}/` : entry.id;
+}
+
+async function copyId(entry: ModelCatalogEntry): Promise<void> {
+  const value = copyValue(entry);
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`Copied "${value}"`);
+  } catch {
+    toast.error('Clipboard is not available');
+  }
+}
+
+function priceTitle(entry: ModelCatalogEntry): string | undefined {
+  if (!entry.price_matched || entry.price_matched === entry.upstream_model) return undefined;
+  return `Matched catalog key: ${entry.price_matched}`;
+}
+
+async function copyBaseUrl(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(baseUrl);
+    toast.success(`Copied "${baseUrl}"`);
+  } catch {
+    toast.error('Clipboard is not available');
+  }
+}
+
 const healthy = computed(() => health.value?.status === 'ok');
 const since = computed(() => rangeToSince(range.value));
 
@@ -33,16 +108,19 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const [healthResponse, versionResponse, initResponse, summaryResponse] = await Promise.all([
-      api.health(),
-      api.version(),
-      api.initState(),
-      api.usageSummary({ since: since.value }),
-    ]);
+    const [healthResponse, versionResponse, initResponse, summaryResponse, modelsResponse] =
+      await Promise.all([
+        api.health(),
+        api.version(),
+        api.initState(),
+        api.usageSummary({ since: since.value }),
+        api.modelCatalog(),
+      ]);
     health.value = healthResponse;
     version.value = versionResponse;
     initState.value = initResponse;
     summary.value = summaryResponse;
+    modelEntries.value = modelsResponse.data;
   } catch (caught) {
     error.value = caught instanceof ApiError ? caught.message : 'Failed to load router status';
   } finally {
@@ -73,6 +151,15 @@ onMounted(load);
         </Button>
       </template>
     </PageHeader>
+
+    <button
+      class="inline-flex w-fit items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs transition-colors hover:bg-accent"
+      title="Copy base URL"
+      @click="copyBaseUrl"
+    >
+      {{ baseUrl }}
+      <Copy class="size-3 text-muted-foreground" />
+    </button>
 
     <Card v-if="error" class="border-destructive/40">
       <CardHeader>
@@ -204,6 +291,121 @@ onMounted(load);
           One row is recorded per upstream attempt, failures included. Full detail lives in
           <RouterLink to="/usage" class="underline underline-offset-4">Usage</RouterLink>.
         </p>
+      </section>
+
+      <section class="flex flex-col gap-4">
+        <h2 class="text-lg font-semibold tracking-tight">Models</h2>
+
+        <EmptyState
+          v-if="!modelEntries.length"
+          title="No models yet"
+          description="The catalog lists enabled aliases and combos. Create a connection, then map aliases or chain combos to see them here."
+        >
+          <template #icon><Boxes class="size-5" /></template>
+          <template #action>
+            <Button as-child>
+              <RouterLink to="/aliases">Set up aliases</RouterLink>
+            </Button>
+          </template>
+        </EmptyState>
+
+        <template v-else>
+          <div class="flex flex-wrap items-center gap-3">
+            <Input
+              v-model="modelSearch"
+              placeholder="Filter by model, provider or upstream…"
+              class="sm:max-w-sm"
+              aria-label="Filter the model catalog"
+            />
+            <Badge variant="outline">{{ filteredModels.length }} of {{ modelEntries.length }}</Badge>
+          </div>
+
+          <p v-if="!filteredModels.length" class="text-sm text-muted-foreground">
+            Nothing matches "{{ modelSearch.trim() }}".
+          </p>
+
+          <Card v-else>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>Upstream model</TableHead>
+                  <TableHead>Input ($/1M)</TableHead>
+                  <TableHead>Output ($/1M)</TableHead>
+                  <TableHead>Cache read ($/1M)</TableHead>
+                  <TableHead>Cache write ($/1M)</TableHead>
+                  <TableHead>Source</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow
+                  v-for="entry in filteredModels"
+                  :key="`${entry.kind}:${entry.id}:${entry.tier ?? 0}:${entry.upstream_model ?? ''}`"
+                >
+                  <TableCell>
+                    <div class="flex items-center gap-2">
+                      <code
+                        class="inline-block max-w-[14rem] truncate rounded bg-muted px-1.5 py-0.5 align-middle text-xs"
+                        :title="copyValue(entry)"
+                      >
+                        {{ isOpenAlias(entry) ? `${entry.id}/…` : entry.id }}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="size-6"
+                        :aria-label="`Copy ${copyValue(entry)}`"
+                        :title="`Copy ${copyValue(entry)}`"
+                        @click="copyId(entry)"
+                      >
+                        <Copy class="size-3.5" />
+                      </Button>
+                      <Badge variant="outline">{{ entry.kind }}</Badge>
+                      <Badge v-if="entry.tier" variant="secondary">#{{ entry.tier }}</Badge>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <p class="font-medium">{{ entry.provider }}</p>
+                    <p class="text-xs text-muted-foreground">{{ entry.provider_type }}</p>
+                  </TableCell>
+                  <TableCell>
+                    <code
+                      v-if="entry.upstream_model"
+                      class="inline-block max-w-[14rem] truncate align-middle text-xs"
+                      :title="entry.upstream_model"
+                    >
+                      {{ entry.upstream_model }}
+                    </code>
+                    <span v-else class="text-xs text-muted-foreground">any model</span>
+                  </TableCell>
+                  <TableCell :title="priceTitle(entry)">
+                    {{ formatRate(entry.price?.input_per_million_usd) }}
+                  </TableCell>
+                  <TableCell :title="priceTitle(entry)">
+                    {{ formatRate(entry.price?.output_per_million_usd) }}
+                  </TableCell>
+                  <TableCell :title="priceTitle(entry)">
+                    {{ formatRate(entry.price?.cache_read_per_million_usd) }}
+                  </TableCell>
+                  <TableCell :title="priceTitle(entry)">
+                    {{ formatRate(entry.price?.cache_write_per_million_usd) }}
+                  </TableCell>
+                  <TableCell>
+                    <Badge v-if="entry.price_source" variant="outline">{{ entry.price_source }}</Badge>
+                    <span v-else class="text-xs text-muted-foreground">—</span>
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </Card>
+
+          <p class="text-xs text-muted-foreground">
+            Prices are USD per million tokens from the pricing catalog — set overrides on the
+            <RouterLink to="/pricing" class="underline underline-offset-4">Pricing</RouterLink> page.
+            Aliases without a pinned model copy as a prefix; append <code>/model</code> to call one.
+          </p>
+        </template>
       </section>
     </template>
   </div>
