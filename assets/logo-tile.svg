@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000" role="img" aria-label="alnair-router logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f2937"/>
+      <stop offset="1" stop-color="#0b1120"/>
+    </linearGradient>
+    <style>
+      .mark { fill: #fff; }
+    </style>
+  </defs>
+  <rect width="1000" height="1000" rx="220" ry="220" fill="url(#bg)"/>
+  <g transform="translate(169,196) scale(0.62)">
+    <path class="mark" d="M82.85,905.68l282.23-62,305.34-67.48-50.44-112.24-67.33-150.79,78.33,100.97,229.24,310.14-856.72-.11c26.04-7.41,51.76-12.14,79.34-18.48Z"/>
+    <g>
+      <polygon class="mark" points="130.28 765.6 193.39 650.71 420.99 235.7 509.51 75.73 324.98 700.13 606.64 749.65 130.28 765.6"/>
+      <path class="mark" d="M879.44,797.83l-335.33-352.92-161.83,215.99c59.26-139.33,120.4-273.77,183.08-413.28,109.41,167.8,216.31,333.73,322.58,501.83l108.13,169.87c.55,2.15.84,2.87-1,1.28l-115.63-122.76Z"/>
+    </g>
+  </g>
+</svg>
