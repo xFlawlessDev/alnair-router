@@ -2,12 +2,14 @@
 import {
   BookOpen,
   CircleDollarSign,
+  FlaskConical,
   KeyRound,
   Layers,
   LayoutDashboard,
   Plug,
   ScrollText,
   Settings,
+  Sparkles,
   Tags,
   Terminal,
 } from "@lucide/vue";
@@ -38,6 +40,8 @@ interface NavItem {
 const monitorItems: NavItem[] = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
   { label: "Usage", to: "/usage", icon: ScrollText },
+  { label: "Token Saving", to: "/token-saver", icon: Sparkles },
+  { label: "Playground", to: "/token-saver/playground", icon: FlaskConical },
   { label: "Console", to: "/logs", icon: Terminal },
 ];
 

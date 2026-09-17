@@ -399,6 +399,99 @@ export interface UsageSummary {
   cost_output_usd: number;
   cost_reasoning_usd: number;
   avg_latency_ms: number;
+  /** Token-saver rollup for the same window. */
+  savings: SavingsSummary;
+}
+
+/**
+ * What the token-saving pipeline saved over a window.
+ *
+ * RTK and Headroom figures are measured; the directive figures are estimates
+ * derived from the completion, so the UI must label them as such rather than
+ * presenting all five as measurements.
+ */
+export interface SavingsSummary {
+  /** Requests where at least one saver contributed. */
+  requests: number;
+  saved_rtk_tokens: number;
+  saved_headroom_tokens: number;
+  saved_terse_tokens: number;
+  saved_caveman_tokens: number;
+  saved_ponytail_tokens: number;
+  saved_cost_usd: number;
+}
+
+/** `POST /api/token-saver/headroom/test` result. */
+export interface HeadroomTestResult {
+  ok: boolean;
+  /** Operator-readable outcome, including why a probe failed. */
+  message: string;
+  latency_ms: number;
+  version?: string;
+}
+
+/** A message in the shape the router forwards upstream. */
+export interface PlaygroundMessage {
+  role: string;
+  content: string;
+  tool_call_id?: string;
+}
+
+/** Final saving figures for a single run, without the window aggregate. */
+export interface SavingsTotals {
+  saved_rtk_tokens: number;
+  saved_headroom_tokens: number;
+  saved_terse_tokens: number;
+  saved_caveman_tokens: number;
+  saved_ponytail_tokens: number;
+  saved_cost_usd: number;
+}
+
+/** One pipeline step, as reported by the playground. */
+export interface PlaygroundStep {
+  /** Stable id: `rtk`, `headroom`, `terse`, `caveman` or `ponytail`. */
+  saver: string;
+  label: string;
+  /** `input` shrinks the prompt; `output` asks for a shorter answer. */
+  side: "input" | "output";
+  /** False when the step declined; the token counts are then unchanged. */
+  applied: boolean;
+  tokens_before: number;
+  tokens_after: number;
+  /**
+   * Signed, measured from the rewritten prompt: negative for a saving, positive
+   * for a directive, which adds the instruction text it injects.
+   */
+  delta: number;
+  detail: string;
+}
+
+/** `POST /api/token-saver/playground` body. */
+export interface PlaygroundRequest {
+  messages: PlaygroundMessage[];
+  model?: string;
+  /** Enables the output-side estimate; omitted means no guess is made. */
+  assumed_completion_tokens?: number;
+  /** Per-run settings; omitted runs the live configuration. */
+  overrides?: Partial<TokenSaverSettings>;
+}
+
+/** `POST /api/token-saver/playground` result. */
+export interface PlaygroundResult {
+  model: string;
+  /** False when every saver is off, so nothing would change. */
+  active: boolean;
+  tokens_before: number;
+  tokens_after: number;
+  prompt_tokens_saved: number;
+  steps: PlaygroundStep[];
+  /** Messages exactly as submitted. */
+  before: PlaygroundMessage[];
+  /** Messages exactly as they would be sent upstream. */
+  after: PlaygroundMessage[];
+  notes: string[];
+  /** Null when no completion length was supplied, so nothing could be priced. */
+  totals: SavingsTotals | null;
 }
 
 /** One stored model price (USD per million tokens). */
@@ -562,6 +655,19 @@ export interface PricingSettings {
   source_url: string;
 }
 
+export interface TokenSaverSettings {
+  slimmer_enabled: boolean;
+  slimmer_level: "minimal" | "aggressive" | string;
+  headroom_enabled: boolean;
+  headroom_url: string;
+  headroom_timeout_ms: number;
+  terse_enabled: boolean;
+  caveman_enabled: boolean;
+  caveman_level: string;
+  ponytail_enabled: boolean;
+  ponytail_level: "lite" | "full" | "ultra" | string;
+}
+
 /** Values that only change by editing `config.toml` and restarting. */
 export interface DeploymentInfo {
   host: string;
@@ -580,6 +686,7 @@ export interface SettingsResponse {
   limits: LimitsSettings;
   rate_limit: RateLimitSettings;
   pricing: PricingSettings;
+  token_saver: TokenSaverSettings;
   /** Dotted keys the dashboard has customized, e.g. `server.require_api_key`. */
   overrides: string[];
   deployment: DeploymentInfo;
@@ -718,4 +825,14 @@ export interface SettingsPatch {
   pricing_sync_enabled?: boolean;
   pricing_sync_interval_secs?: number;
   pricing_source_url?: string;
+  slimmer_enabled?: boolean;
+  slimmer_level?: string;
+  headroom_enabled?: boolean;
+  headroom_url?: string;
+  headroom_timeout_ms?: number;
+  terse_enabled?: boolean;
+  caveman_enabled?: boolean;
+  caveman_level?: string;
+  ponytail_enabled?: boolean;
+  ponytail_level?: string;
 }

@@ -12,6 +12,8 @@ import OverviewPage from "@/pages/OverviewPage.vue";
 import PricingPage from "@/pages/PricingPage.vue";
 import PublicUsagePage from "@/pages/PublicUsagePage.vue";
 import SettingsPage from "@/pages/SettingsPage.vue";
+import TokenSaverPage from "@/pages/TokenSaverPage.vue";
+import TokenSaverPlaygroundPage from "@/pages/TokenSaverPlaygroundPage.vue";
 import UsagePage from "@/pages/UsagePage.vue";
 
 import { loadAuthStatus } from "@/lib/authState";
@@ -63,6 +65,18 @@ export const router = createRouter({
       name: "pricing",
       component: PricingPage,
       meta: { title: "Pricing" },
+    },
+    {
+      path: "/token-saver",
+      name: "token-saver",
+      component: TokenSaverPage,
+      meta: { title: "Token Saving" },
+    },
+    {
+      path: "/token-saver/playground",
+      name: "token-saver-playground",
+      component: TokenSaverPlaygroundPage,
+      meta: { title: "Token saver playground" },
     },
     {
       path: "/settings",

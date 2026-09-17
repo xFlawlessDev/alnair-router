@@ -19,6 +19,7 @@ import type {
   ConnectionInput,
   ConnectionTestResult,
   CreatedApiKey,
+  HeadroomTestResult,
   HealthResponse,
   ID,
   InitState,
@@ -30,6 +31,8 @@ import type {
   ModelPriceInput,
   ModelUsage,
   MyUsageResponse,
+  PlaygroundRequest,
+  PlaygroundResult,
   PriceMatch,
   ProviderPresetResponse,
   PublicCatalogResponse,
@@ -431,6 +434,12 @@ export const api = {
   updateSettings: (body: SettingsPatch) =>
     request<SettingsResponse>("PATCH", "/api/settings", { body }),
   resetSettings: () => request<SettingsResponse>("DELETE", "/api/settings"),
+  testHeadroom: (url?: string) =>
+    request<HeadroomTestResult>("POST", "/api/token-saver/headroom/test", {
+      body: { url },
+    }),
+  runPlayground: (body: PlaygroundRequest) =>
+    request<PlaygroundResult>("POST", "/api/token-saver/playground", { body }),
 
   downloadBackup: async (): Promise<Blob> => {
     const response = await rawRequest("/api/backup", {

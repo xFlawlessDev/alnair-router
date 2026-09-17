@@ -74,6 +74,15 @@ const summary = (overrides: Partial<UsageSummary> = {}): UsageSummary => ({
   cost_output_usd: 0,
   cost_reasoning_usd: 0,
   avg_latency_ms: 0,
+  savings: {
+    requests: 0,
+    saved_rtk_tokens: 0,
+    saved_headroom_tokens: 0,
+    saved_terse_tokens: 0,
+    saved_caveman_tokens: 0,
+    saved_ponytail_tokens: 0,
+    saved_cost_usd: 0,
+  },
   ...overrides,
 });
 
