@@ -108,10 +108,11 @@ fn serve_command(tray: Option<bool>) -> Result<()> {
     let config = config::load()?;
 
     if tray_enabled(tray, &config) {
-        run_with_tray(config)
-    } else {
-        run_without_tray(config)
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        return run_with_tray(config);
     }
+
+    run_without_tray(config)
 }
 
 /// True when the tray should run: the flag wins over `server.tray`.
