@@ -284,8 +284,12 @@ async function importSelected(): Promise<void> {
           </p>
         </template>
 
-        <p v-else-if="!result.enumerable" class="rounded-md border p-4 text-sm text-muted-foreground">
-          This provider does not publish a model list. Add aliases manually with their model id.
+        <p
+          v-else-if="!result.enumerable"
+          class="rounded-md border p-4 text-sm text-muted-foreground"
+        >
+          This provider does not publish a model list. Add aliases manually with
+          their model id.
         </p>
         <p v-else class="rounded-md border p-4 text-sm text-muted-foreground">
           This upstream returned no models.

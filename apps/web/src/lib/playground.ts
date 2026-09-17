@@ -96,5 +96,8 @@ export function buildModelSuggestions(entries: ModelCatalogEntry[]): {
   const byPattern = (left: Suggestion, right: Suggestion) =>
     left.pattern.localeCompare(right.pattern);
 
-  return { aliases: aliases.sort(byPattern), combos: comboRows.sort(byPattern) };
+  return {
+    aliases: aliases.sort(byPattern),
+    combos: comboRows.sort(byPattern),
+  };
 }

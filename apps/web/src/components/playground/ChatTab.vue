@@ -87,12 +87,15 @@ onMounted(async () => {
   try {
     const response = await api.modelCatalog();
     catalog.value = response.data;
-    if (!model.value && catalog.value.length) model.value = catalog.value[0]!.id;
+    if (!model.value && catalog.value.length)
+      model.value = catalog.value[0]!.id;
   } catch (caught) {
     // An empty catalog is not fatal: the field is free text, so a reference
     // can still be typed by hand.
     error.value =
-      caught instanceof ApiError ? caught.message : "Could not load the catalog";
+      caught instanceof ApiError
+        ? caught.message
+        : "Could not load the catalog";
   }
 });
 
@@ -245,7 +248,8 @@ function clear(): void {
 
             <ComboboxList class="w-[var(--reka-combobox-trigger-width)]">
               <ComboboxEmpty
-                >No alias or combo matches — free text is kept as-is</ComboboxEmpty
+                >No alias or combo matches — free text is kept
+                as-is</ComboboxEmpty
               >
 
               <ComboboxGroup v-if="suggestions.aliases.length">
@@ -270,9 +274,7 @@ function clear(): void {
               </ComboboxGroup>
 
               <ComboboxSeparator
-                v-if="
-                  suggestions.aliases.length && suggestions.combos.length
-                "
+                v-if="suggestions.aliases.length && suggestions.combos.length"
               />
 
               <ComboboxGroup v-if="suggestions.combos.length">

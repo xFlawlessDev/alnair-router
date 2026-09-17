@@ -4,10 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import TokenSaverTab from "./TokenSaverTab.vue";
 import { api } from "@/lib/api";
 import { buildToggles, toggleSaver } from "@/lib/playground";
-import type {
-  PlaygroundResult,
-  TokenSaverSettings,
-} from "@/types/api";
+import type { PlaygroundResult, TokenSaverSettings } from "@/types/api";
 
 vi.mock("vue-router", () => ({
   RouterLink: { template: "<a><slot /></a>" },

@@ -428,7 +428,9 @@ defineExpose({ run });
           <CardContent>
             <p class="text-2xl font-semibold tabular-nums">
               {{
-                promptReduction === null ? "—" : `${promptReduction.toFixed(1)}%`
+                promptReduction === null
+                  ? "—"
+                  : `${promptReduction.toFixed(1)}%`
               }}
             </p>
             <p class="pt-1 text-xs text-muted-foreground">

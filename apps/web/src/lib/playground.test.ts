@@ -47,20 +47,28 @@ describe("buildToggles", () => {
 
 describe("toggleSaver", () => {
   it("flips one switch into the overrides without touching the rest", () => {
-    expect(toggleSaver({}, { slimmer_enabled: true }, "slimmer_enabled")).toEqual(
-      { slimmer_enabled: false },
-    );
+    expect(
+      toggleSaver({}, { slimmer_enabled: true }, "slimmer_enabled"),
+    ).toEqual({ slimmer_enabled: false });
   });
 
   it("clears caveman when terse is switched on", () => {
     expect(
-      toggleSaver({ caveman_enabled: true }, { terse_enabled: false }, "terse_enabled"),
+      toggleSaver(
+        { caveman_enabled: true },
+        { terse_enabled: false },
+        "terse_enabled",
+      ),
     ).toEqual({ terse_enabled: true, caveman_enabled: false });
   });
 
   it("clears terse when caveman is switched on", () => {
     expect(
-      toggleSaver({ terse_enabled: true }, { caveman_enabled: false }, "caveman_enabled"),
+      toggleSaver(
+        { terse_enabled: true },
+        { caveman_enabled: false },
+        "caveman_enabled",
+      ),
     ).toEqual({ caveman_enabled: true, terse_enabled: false });
   });
 
@@ -91,7 +99,10 @@ describe("buildModelSuggestions", () => {
       entry("kr", "alias", { provider: "krouter", upstream_model: null }),
     ]);
 
-    expect(suggestions.aliases.map((item) => item.pattern)).toEqual(["kr", "oa"]);
+    expect(suggestions.aliases.map((item) => item.pattern)).toEqual([
+      "kr",
+      "oa",
+    ]);
     expect(suggestions.aliases[1]?.detail).toBe("gpt-4o-mini");
     // An alias that pins nothing falls back to the connection name.
     expect(suggestions.aliases[0]?.detail).toBe("krouter");
