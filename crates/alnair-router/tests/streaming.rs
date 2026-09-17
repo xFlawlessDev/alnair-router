@@ -442,3 +442,167 @@ async fn anthropic_streaming_reports_max_tokens_and_usage() {
         "unexpected body: {body}"
     );
 }
+
+/// Extracts the `event:` names of an SSE body, in order.
+fn sse_event_names(body: &str) -> Vec<String> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix("event: "))
+        .map(str::to_string)
+        .collect()
+}
+
+#[tokio::test]
+async fn responses_streaming_emits_the_documented_event_order() {
+    let app = app().await;
+    let base_url = spawn_sse_upstream(REASONING_STREAM).await;
+    let model = route_model_to(&app, &base_url).await;
+
+    let (status, body, content_type) = post_stream(
+        &app,
+        "/v1/responses",
+        serde_json::json!({
+            "model": model,
+            "stream": true,
+            "input": "think"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(content_type.as_deref(), Some("text/event-stream"));
+
+    let events = sse_event_names(&body);
+
+    // The stream is bookended by the created/completed pair.
+    assert_eq!(events.first().map(String::as_str), Some("response.created"));
+    assert_eq!(
+        events.last().map(String::as_str),
+        Some("response.completed")
+    );
+
+    // Reasoning and text arrive as deltas on the documented item types.
+    let payloads = sse_payloads(&body);
+    let reasoning = payloads
+        .iter()
+        .find(|payload| payload["type"] == "response.reasoning_summary_text.delta")
+        .unwrap_or_else(|| panic!("reasoning should stream: {body}"));
+    assert_eq!(reasoning["delta"], "weighing options");
+
+    let text = payloads
+        .iter()
+        .find(|payload| payload["type"] == "response.output_text.delta")
+        .unwrap_or_else(|| panic!("text should stream: {body}"));
+    assert_eq!(text["delta"], "here you go");
+
+    // Every event carries a sequence number, and they are strictly increasing.
+    let sequences: Vec<u64> = payloads
+        .iter()
+        .filter_map(|payload| payload["sequence_number"].as_u64())
+        .collect();
+    assert_eq!(sequences.len(), payloads.len(), "all events are numbered");
+    assert!(
+        sequences.windows(2).all(|pair| pair[0] < pair[1]),
+        "sequence numbers must increase: {sequences:?}"
+    );
+
+    // The final response reports usage and the assembled text.
+    let completed = payloads
+        .iter()
+        .find(|payload| payload["type"] == "response.completed")
+        .expect("a completed event should close the stream");
+    assert_eq!(completed["response"]["status"], "completed");
+    assert_eq!(completed["response"]["usage"]["input_tokens"], 7);
+    assert_eq!(completed["response"]["usage"]["output_tokens"], 2);
+    // Both items are reported in the terminal response, in arrival order.
+    assert_eq!(completed["response"]["output"][0]["type"], "reasoning");
+    assert_eq!(
+        completed["response"]["output"][0]["summary"][0]["text"], "weighing options",
+        "the reasoning item should be in the final output: {body}"
+    );
+    assert_eq!(completed["response"]["output"][1]["type"], "message");
+    assert_eq!(
+        completed["response"]["output"][1]["content"][0]["text"], "here you go",
+        "the text item should be in the final output: {body}"
+    );
+}
+
+#[tokio::test]
+async fn responses_streaming_reports_tool_calls_as_output_items() {
+    let app = app().await;
+    let base_url = spawn_sse_upstream(TOOL_CALL_STREAM).await;
+    let model = route_model_to(&app, &base_url).await;
+
+    let (status, body, _) = post_stream(
+        &app,
+        "/v1/responses",
+        serde_json::json!({
+            "model": model,
+            "stream": true,
+            "input": "read a file",
+            "tools": [{
+                "type": "function",
+                "name": "read_file",
+                "parameters": { "type": "object", "properties": {} }
+            }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    let payloads = sse_payloads(&body);
+
+    let added = payloads
+        .iter()
+        .find(|payload| {
+            payload["type"] == "response.output_item.added"
+                && payload["item"]["type"] == "function_call"
+        })
+        .unwrap_or_else(|| panic!("a function_call item should be opened: {body}"));
+    assert_eq!(added["item"]["call_id"], "call_1");
+    assert_eq!(added["item"]["name"], "read_file");
+
+    let arguments_done = payloads
+        .iter()
+        .find(|payload| payload["type"] == "response.function_call_arguments.done")
+        .unwrap_or_else(|| panic!("arguments should be completed: {body}"));
+    assert_eq!(arguments_done["arguments"], r#"{"path":"/tmp"}"#);
+
+    // The call is reported in the terminal response so agents can act on it.
+    let completed = payloads
+        .iter()
+        .find(|payload| payload["type"] == "response.completed")
+        .expect("a completed event should close the stream");
+    let call = completed["response"]["output"]
+        .as_array()
+        .expect("output array")
+        .iter()
+        .find(|item| item["type"] == "function_call")
+        .unwrap_or_else(|| panic!("the tool call should be in the final output: {body}"));
+    assert_eq!(call["name"], "read_file");
+    assert_eq!(call["arguments"], r#"{"path":"/tmp"}"#);
+}
+
+#[tokio::test]
+async fn responses_non_streaming_returns_a_json_response_object() {
+    let app = app().await;
+    let base_url = spawn_sse_upstream(REASONING_STREAM).await;
+    let model = route_model_to(&app, &base_url).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/responses",
+        serde_json::json!({
+            "model": model,
+            "input": "think"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["object"], "response");
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["output"][0]["content"][0]["text"], "here you go");
+    assert_eq!(body["usage"]["input_tokens"], 7);
+    assert_eq!(body["usage"]["total_tokens"], 9);
+}

@@ -33,10 +33,10 @@ Working today, verified by the test suite and a live smoke test:
 
 - [x] Prefixed alias resolution, combo expansion (cycle detection, depth cap 8), tier numbering
 - [x] Ordered fallback with first-chunk peek — never switches mid-stream after bytes are emitted
-- [x] OpenAI-compatible: `/v1/chat/completions` (SSE + JSON), `/v1/responses`, `/v1/models`, `/v1/models/info`
+- [x] OpenAI-compatible: `/v1/chat/completions` (SSE + JSON), `/v1/responses` (SSE `response.*` events + JSON, with `tools`/`tool_choice`), `/v1/models`, `/v1/models/{id}`, `/v1/models/info`
 - [x] Anthropic-native: `/v1/messages` (correct event ordering), `/v1/messages/count_tokens`
 - [x] CodeBuddy Intl (`codebuddy-intl`): stream-only `/v2/chat/completions` adapter with CodeBuddy message and reasoning transforms
-- [x] Thin proxying: embeddings, images, audio (speech + transcription), video (incl. async jobs), search
+- [x] Thin proxying: embeddings, images (generations + edits + variations), audio (speech + transcriptions + translations), video (incl. async jobs), moderations, search. Every proxied endpoint resolves the request's `model` reference against the catalog, enforces the key's model allowlist, and records a usage row.
 - [x] `/v1/web/fetch` with a complete SSRF guard: scheme allowlist, DNS resolution + validation, pinned connections, per-hop redirect checks
 - [x] Admin CRUD + usage stats, bearer auth on `/v1/*`, optional admin-token auth on `/api/*`
 - [x] Usage filtering by API key, model (substring), provider type and connection (snapshotted per row), shared by the table, summary and per-model rollup, with `/api/usage/facets` suggestions

@@ -279,14 +279,22 @@ proxy is reachable from the network. In Docker, publish the port explicitly
 | Endpoint | Notes |
 |---|---|
 | `POST /v1/chat/completions` | Core. Streaming (SSE) and non-streaming. |
-| `POST /v1/responses` | OpenAI Responses shape. |
+| `POST /v1/responses` | OpenAI Responses shape. Streaming (SSE `response.*` events) and non-streaming; accepts `tools`/`tool_choice` (`auto` or `none`). |
 | `GET /v1/models` | Lists configured aliases and combos. |
+| `GET /v1/models/{id}` | One model object; 404 for an unknown alias or combo. |
 | `GET /v1/models/info` | Per-reference metadata, including resolved combo tiers. |
 | `POST /v1/embeddings` | Proxied to the resolved connection. |
-| `POST /v1/images/generations` | Proxied. |
-| `POST /v1/audio/speech`, `/v1/audio/transcriptions` | Proxied (multipart pass-through). |
-| `POST /v1/videos/generations`, `GET /v1/videos/{id}` | Proxied, including async job polling. |
-| `POST /v1/search`, `POST /v1/web/fetch` | Proxied / server-side fetch (SSRF-guarded; see caveat below). |
+| `POST /v1/images/generations`, `/v1/images/edits`, `/v1/images/variations` | Proxied; edits and variations are multipart pass-through. |
+| `POST /v1/moderations` | Proxied. |
+| `POST /v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/audio/translations` | Proxied (multipart pass-through for transcriptions/translations). |
+| `POST /v1/videos/generations`, `GET /v1/videos/{id}` | Proxied, including async job polling. The polling URL takes `?model=` to name the connection. |
+| `POST /v1/search`, `POST /v1/web/fetch` | Proxied / server-side fetch (SSRF-guarded; see caveat below). `search` takes an optional `model` to pick the connection. |
+
+Every proxied endpoint accepts a `model` reference (alias, `alias/model`, combo
+name, or bare model name). The connection's real model id is written into the
+upstream request in its place; `/v1/search`, whose upstream takes no model,
+has the field removed instead. Calls are recorded in usage like chat requests,
+so a proxied request still shows up against its key and connection.
 
 **Anthropic-compatible:**
 

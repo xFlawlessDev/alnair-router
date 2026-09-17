@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::State;
 use serde::Serialize;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -129,5 +129,43 @@ pub async fn models_info(State(state): State<AppState>) -> Result<Json<ModelInfo
     Ok(Json(ModelInfoList {
         object: "list",
         data,
+    }))
+}
+
+/// `GET /v1/models/{id}` — one model object, as the OpenAI SDKs expect.
+///
+/// Ids are matched the same way the router resolves them: an alias prefix or a
+/// combo name. A connection name is deliberately not addressable, so the reply
+/// stays consistent with what a completion request would accept.
+pub async fn retrieve_model(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<ModelObject>> {
+    let catalog = state.catalog_snapshot().await?.catalog;
+    let created = chrono::Utc::now().timestamp();
+
+    let alias = catalog
+        .aliases
+        .iter()
+        .find(|a| a.is_enabled() && a.prefix == id);
+    let combo = catalog
+        .combos
+        .iter()
+        .find(|c| c.is_enabled() && c.name == id);
+
+    let router_kind = match (&alias, &combo) {
+        (Some(_), _) => "alias",
+        (None, Some(_)) => "combo",
+        (None, None) => {
+            return Err(Error::NotFound(format!("no alias or combo named '{id}'")));
+        }
+    };
+
+    Ok(Json(ModelObject {
+        id,
+        object: "model",
+        created,
+        owned_by: "alnair-router".to_string(),
+        router_kind: Some(router_kind),
     }))
 }

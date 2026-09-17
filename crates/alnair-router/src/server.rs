@@ -158,15 +158,26 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/responses", post(handlers::responses::responses))
         .route("/v1/models", get(handlers::models::list_models))
         .route("/v1/models/info", get(handlers::models::models_info))
+        .route("/v1/models/{id}", get(handlers::models::retrieve_model))
         .route("/v1/embeddings", post(handlers::media::embeddings))
         .route(
             "/v1/images/generations",
             post(handlers::media::image_generations),
         )
+        .route("/v1/images/edits", post(handlers::media::image_edits))
+        .route(
+            "/v1/images/variations",
+            post(handlers::media::image_variations),
+        )
+        .route("/v1/moderations", post(handlers::media::moderations))
         .route("/v1/audio/speech", post(handlers::media::audio_speech))
         .route(
             "/v1/audio/transcriptions",
             post(handlers::media::audio_transcriptions),
+        )
+        .route(
+            "/v1/audio/translations",
+            post(handlers::media::audio_translations),
         )
         .route(
             "/v1/videos/generations",

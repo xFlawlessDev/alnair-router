@@ -4270,3 +4270,386 @@ async fn list_keys_never_exposes_stored_secrets() {
     assert!(listed.get("key_hash").is_none());
     assert_ne!(listed["prefix"], secret);
 }
+
+/// Serves `body` on any media path the proxy forwards to, echoing back the raw
+/// request bytes so a test can assert what actually reached the upstream.
+async fn spawn_media_upstream(body: &'static str) -> String {
+    let router = axum::Router::new()
+        .route(
+            "/v1/{*rest}",
+            axum::routing::post(move |request: Request<Body>| async move {
+                let bytes = request
+                    .into_body()
+                    .collect()
+                    .await
+                    .map(|collected| collected.to_bytes())
+                    .unwrap_or_default();
+                axum::Json(serde_json::json!({
+                    "body": body,
+                    "echo": String::from_utf8_lossy(&bytes),
+                }))
+            })
+            .get(move || async move { axum::Json(serde_json::json!({ "body": body })) }),
+        )
+        .route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({ "object": "list", "data": [] }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}/v1")
+}
+
+/// Creates a connection plus an alias pointing at it, and returns the prefix.
+async fn route_media_to(app: &axum::Router, base_url: &str, prefix: &str, model: &str) -> String {
+    let (status, connection) = json_request(
+        app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": format!("media-{}", uuid_like()),
+            "provider_type": "openai-compatible",
+            "base_url": base_url,
+            "api_key": "sk-media"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {connection}");
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    let (status, alias) = json_request(
+        app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": prefix,
+            "connection_id": connection_id,
+            "model_override": model
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {alias}");
+
+    prefix.to_string()
+}
+
+/// Creates an API key whose allowlist admits only `pattern`.
+async fn mint_restricted_key(db: &Db, pattern: &str) -> String {
+    ApiKeyRepository::new(db.pool.clone(), test_cipher())
+        .create(CreateApiKey {
+            name: "restricted-media".to_string(),
+            enabled: true,
+            rate_limit_per_minute: None,
+            daily_budget_usd: None,
+            weekly_budget_usd: None,
+            monthly_budget_usd: None,
+            lifetime_budget_usd: None,
+            daily_token_limit: None,
+            weekly_token_limit: None,
+            monthly_token_limit: None,
+            lifetime_token_limit: None,
+            budget_mode: None,
+            plan_id: None,
+            allowed_models: Some(vec![pattern.to_string()]),
+            expires_at: None,
+        })
+        .await
+        .expect("mint key")
+        .secret
+}
+
+/// The regression: a key restricted to one model could reach any connection
+/// through the proxied endpoints, which skipped the allowlist entirely.
+#[tokio::test]
+async fn proxied_endpoints_enforce_the_model_allowlist() {
+    let mut config = RouterConfig::default();
+    config.server.require_api_key = true;
+    let (app, db) = app_with_config(config).await;
+    let base_url = spawn_media_upstream("{}").await;
+    route_media_to(&app, &base_url, "openai", "whisper-1").await;
+    let secret = mint_restricted_key(&db, "openai/*").await;
+    let secret = secret.as_str();
+
+    // Allowed: the reference matches the allowlist.
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/embeddings",
+        serde_json::json!({ "model": "openai/text-embedding-3-small", "input": "hi" }),
+        Some(secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+
+    // Denied: an unrelated reference must not slip through.
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/embeddings",
+        serde_json::json!({ "model": "anthropic/embed", "input": "hi" }),
+        Some(secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "unexpected body: {body}");
+
+    // Denied: search carries no model field, so `?model=`/body decides.
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/v1/search",
+        serde_json::json!({ "query": "hi", "model": "anthropic/search" }),
+        Some(secret),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "unexpected body: {body}");
+
+    // Denied: the polling URL names the connection with `?model=`.
+    let (status, body) =
+        get_with_auth(&app, "/v1/videos/job-1?model=anthropic/video", Some(secret)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "unexpected body: {body}");
+}
+
+#[tokio::test]
+async fn audio_transcription_reads_the_model_form_field() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_media_upstream("{}").await;
+    route_media_to(&app, &base_url, "openai", "whisper-1").await;
+
+    let boundary = "----alnair-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nopenai/whisper-1\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.mp3\"\r\nContent-Type: audio/mpeg\r\n\r\ndata\r\n--{boundary}--\r\n"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/audio/transcriptions")
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = body_json(response).await;
+    let echo = payload["echo"].as_str().unwrap_or_default();
+    assert!(
+        echo.contains("whisper-1"),
+        "the multipart payload should reach the upstream: {payload}"
+    );
+    assert!(
+        echo.contains("filename=\"a.mp3\""),
+        "the file part should survive the proxy: {payload}"
+    );
+}
+
+#[tokio::test]
+async fn proxied_calls_record_usage_against_the_resolved_connection() {
+    let (app, db) = app_with_config(RouterConfig::default()).await;
+    let base_url = spawn_media_upstream("{}").await;
+    route_media_to(&app, &base_url, "openai", "dall-e-3").await;
+
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/v1/images/generations",
+        serde_json::json!({ "model": "openai/dall-e-3", "prompt": "a cat" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let usage = UsageRepository::new(db.pool.clone())
+        .list(
+            10,
+            0,
+            &alnair_router::db::repos::usage::UsageFilter::new(None, None, None, None, None),
+            alnair_router::db::repos::usage::Sort::default(),
+        )
+        .await
+        .expect("usage rows");
+
+    assert_eq!(usage.len(), 1, "one proxied call should record one row");
+    let row = &usage[0];
+    assert_eq!(row.requested_model, "openai/dall-e-3");
+    assert_eq!(row.resolved_model.as_deref(), Some("dall-e-3"));
+    assert_eq!(row.status, "ok");
+    assert_eq!(row.attempt, 1);
+}
+
+#[tokio::test]
+async fn proxied_failures_are_recorded_as_errors() {
+    let (app, db) = app_with_config(RouterConfig::default()).await;
+    // Nothing listens on this port, so the upstream call fails outright.
+    route_media_to(&app, "http://127.0.0.1:1/v1", "dead", "embed").await;
+
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/v1/embeddings",
+        serde_json::json!({ "model": "dead/embed", "input": "hi" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+
+    let usage = UsageRepository::new(db.pool.clone())
+        .list(
+            10,
+            0,
+            &alnair_router::db::repos::usage::UsageFilter::new(None, None, None, None, None),
+            alnair_router::db::repos::usage::Sort::default(),
+        )
+        .await
+        .expect("usage rows");
+
+    assert_eq!(usage.len(), 1, "a failed proxy should still be attributed");
+    assert_eq!(usage[0].status, "error");
+}
+
+/// The router strips its own prefix from a multipart `model` field, so the
+/// upstream never sees `alias/model`.
+#[tokio::test]
+async fn transcription_rewrites_the_model_field_for_the_upstream() {
+    use alnair_router::db::repos::usage::{Sort, UsageFilter, UsageRepository};
+
+    let (app, db) = app_with_config(RouterConfig::default()).await;
+    let base_url = spawn_media_upstream("{}").await;
+    route_media_to(&app, &base_url, "openai", "whisper-1").await;
+
+    let boundary = "----alnair-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nopenai/whisper-1\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.mp3\"\r\nContent-Type: audio/mpeg\r\n\r\n\u{0}\u{1}\u{7f}\r\n--{boundary}--\r\n"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/audio/transcriptions")
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload = body_json(response).await;
+    let echo = payload["echo"].as_str().unwrap_or_default();
+
+    assert!(
+        echo.contains("whisper-1"),
+        "the upstream should see the bare model id: {payload}"
+    );
+    assert!(
+        !echo.contains("openai/whisper-1"),
+        "the router prefix must not reach the upstream: {payload}"
+    );
+    // The file part's bytes survive the in-place edit.
+    assert!(
+        echo.contains("\u{0}\u{1}\u{7f}"),
+        "the file part must be untouched: {payload}"
+    );
+
+    // The usage row keeps the reference the caller asked for.
+    let usage = UsageRepository::new(db.pool.clone())
+        .list(
+            10,
+            0,
+            &UsageFilter::new(None, None, None, None, None),
+            Sort::default(),
+        )
+        .await
+        .expect("usage rows");
+    assert_eq!(usage.len(), 1, "one transcription request, one row");
+    assert_eq!(usage[0].requested_model, "openai/whisper-1");
+}
+
+#[tokio::test]
+async fn newly_added_proxy_endpoints_are_routed() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_media_upstream("{}").await;
+    let prefix = route_media_to(&app, &base_url, "openai", "whisper-1").await;
+
+    // JSON endpoints accept a model reference and reach the upstream.
+    for (path, body) in [
+        (
+            "/v1/moderations",
+            serde_json::json!({ "model": format!("{prefix}/omni-moderation-latest"), "input": "hi" }),
+        ),
+        (
+            "/v1/embeddings",
+            serde_json::json!({ "model": format!("{prefix}/whisper-1"), "input": "hi" }),
+        ),
+    ] {
+        let (status, payload) = json_request(&app, "POST", path, body).await;
+        assert_eq!(status, StatusCode::OK, "{path} should be routed: {payload}");
+    }
+
+    // Multipart endpoints forward the body.
+    for path in [
+        "/v1/audio/translations",
+        "/v1/images/edits",
+        "/v1/images/variations",
+    ] {
+        let boundary = "----alnair-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{prefix}/whisper-1\r\n--{boundary}--\r\n"
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .expect("request");
+
+        assert_eq!(response.status(), StatusCode::OK, "{path} should be routed");
+    }
+}
+
+#[tokio::test]
+async fn retrieve_model_returns_one_model_object() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_media_upstream("{}").await;
+    route_media_to(&app, &base_url, "openai", "whisper-1").await;
+
+    let (status, body) = get(&app, "/v1/models/openai").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["id"], "openai");
+    assert_eq!(body["object"], "model");
+    assert_eq!(body["router_kind"], "alias");
+
+    // An unknown reference is a 404, matching the resolve failure a completion
+    // request would produce.
+    let (status, body) = get(&app, "/v1/models/not-a-thing").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["type"], "not_found_error");
+}

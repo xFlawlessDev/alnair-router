@@ -136,7 +136,11 @@ crates/alnair-router/
 │   │   ├── chat_backend.rs  # ← THE SEAM. Only file that may touch alnair_llm
 │   │   ├── executor.rs      # fallback walk, permits, timeouts, first-chunk peek
 │   │   ├── probe.rs         # admin model listing / connection tests
-│   │   └── media.rs         # HTTP proxying for non-chat endpoints
+│   │   └── media/          # HTTP proxying for non-chat endpoints
+│   │       ├── mod.rs      # the handlers
+│   │       ├── proxy.rs    # resolution, forwarding, usage attribution
+│   │       ├── multipart.rs # byte-level form-field helpers
+│   │       └── fetch.rs    # /v1/web/fetch and its SSRF guard
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
 │   ├── token_saver/         # deterministic pipeline: slimmer, headroom, directives
 │   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, public, web, token_saver
@@ -364,7 +368,7 @@ suite should tell you.
 8. **`/v1/web/fetch` is SSRF-guarded end to end.** Every URL — initial and each
    redirect hop — must be http(s), pass `is_private_ip`, and for hostnames all
    resolved addresses must be public; the client then connects only to those
-   pinned addresses and follows no redirects itself. (`handlers/media.rs`)
+   pinned addresses and follows no redirects itself. (`handlers/media/fetch.rs`)
 
 9. **Retry is a pinned contract.** The executor makes one attempt per tier; the
    provider retries `router.max_retries_per_tier` times (default 2) with 500 ms
@@ -603,7 +607,7 @@ suite should tell you.
 
 31. **The token saver is one function, and the playground runs that same
     function.** `token_saver::apply` is called once by each inbound chat handler
-    (`chat.rs`, `messages.rs`, `responses.rs`) after the model reference is read
+    (`chat.rs`, `messages.rs`, `responses/`) after the model reference is read
     but before `Executor::stream` resolves targets — so the rewrite happens once
     per request and every provider gets identical savings, rather than each
     attempt re-compressing the same messages. Order is fixed: slimmer (RTK) →
