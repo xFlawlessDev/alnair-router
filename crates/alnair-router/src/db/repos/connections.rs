@@ -11,8 +11,12 @@ use crate::crypto::CredentialCipher;
 use crate::error::{Error, Result};
 
 /// The upstream families supported by the router.
-pub const SUPPORTED_PROVIDER_TYPES: [&str; 3] =
-    ["openai-compatible", "anthropic-native", "command-code"];
+pub const SUPPORTED_PROVIDER_TYPES: [&str; 4] = [
+    "openai-compatible",
+    "anthropic-native",
+    "command-code",
+    "codebuddy-intl",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Connection {

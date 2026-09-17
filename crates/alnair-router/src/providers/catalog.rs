@@ -101,6 +101,16 @@ pub(super) fn api_key_presets() -> Vec<ProviderPreset> {
             Some("OpenAI-compatibility endpoint."),
         ),
         api_key(
+            "codebuddy-intl",
+            "CodeBuddy Intl",
+            "codebuddy-intl",
+            "https://www.codebuddy.ai/v2",
+            "https://www.codebuddy.ai/",
+            Some(
+                "Stream-only OpenAI-compatible API; the router injects the CodeBuddy Code system prompt.",
+            ),
+        ),
+        api_key(
             "commandcode",
             "Command Code",
             "command-code",

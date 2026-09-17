@@ -39,6 +39,10 @@ fn find_is_case_insensitive() {
         find("opencode-free").expect("opencode-free").auth,
         ProviderAuth::None
     );
+    let codebuddy = find("CODEBUDDY-INTL").expect("codebuddy-intl");
+    assert_eq!(codebuddy.provider_type, "codebuddy-intl");
+    assert_eq!(codebuddy.base_url, "https://www.codebuddy.ai/v2");
+    assert_eq!(codebuddy.auth, ProviderAuth::ApiKey);
     assert!(find("nope").is_none());
 }
 

@@ -37,7 +37,7 @@ pub enum Error {
     NoRoute(String),
 
     #[error(
-        "unsupported provider type: {0} (supported: openai-compatible, anthropic-native, command-code)"
+        "unsupported provider type: {0} (supported: openai-compatible, anthropic-native, command-code, codebuddy-intl)"
     )]
     UnsupportedProviderType(String),
 

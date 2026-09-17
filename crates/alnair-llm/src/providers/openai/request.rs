@@ -137,6 +137,9 @@ pub(super) async fn send_openai_request(
     request_body: &serde_json::Value,
 ) -> Result<reqwest::Response, ChatError> {
     let mut request = client.post(endpoint).json(request_body);
+    if request_body.get("stream").and_then(|value| value.as_bool()) == Some(true) {
+        request = request.header(reqwest::header::ACCEPT, "text/event-stream");
+    }
     if let Some(key) = api_key {
         request = request.bearer_auth(key);
     }

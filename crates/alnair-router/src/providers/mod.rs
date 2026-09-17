@@ -58,7 +58,8 @@ impl ProviderCategory {
 pub struct ProviderPreset {
     pub id: &'static str,
     pub label: &'static str,
-    /// Wire family: `openai-compatible` or `anthropic-native`.
+    /// Wire family, such as `openai-compatible`, `anthropic-native`,
+    /// `command-code` or `codebuddy-intl`.
     pub provider_type: &'static str,
     /// Upstream root, without the request path the provider layer appends.
     pub base_url: &'static str,

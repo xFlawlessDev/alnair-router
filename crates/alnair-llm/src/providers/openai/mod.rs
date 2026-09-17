@@ -30,6 +30,18 @@ impl OpenAiProvider {
         tools: Option<Vec<serde_json::Value>>,
         use_streaming: bool,
     ) -> BoxStream<'a, Result<LlmStreamChunk, ChatError>> {
+        self.stream_with_transform(config, messages, options, tools, use_streaming, |_| {})
+    }
+
+    pub(crate) fn stream_with_transform<'a>(
+        &'a self,
+        config: &'a ModelConfig,
+        messages: Vec<Message>,
+        options: &'a LlmStreamOptions,
+        tools: Option<Vec<serde_json::Value>>,
+        use_streaming: bool,
+        transform: fn(&mut serde_json::Value),
+    ) -> BoxStream<'a, Result<LlmStreamChunk, ChatError>> {
         let base_url = config.base_url.clone();
         let model = config.model_id.clone();
         let api_key = config.api_key.clone();
@@ -69,6 +81,8 @@ impl OpenAiProvider {
             {
                 request_body["tools"] = serde_json::json!(tools);
             }
+
+            transform(&mut request_body);
 
             let mut response = match send_openai_request_with_retry(
                 &self.client,

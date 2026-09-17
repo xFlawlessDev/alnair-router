@@ -441,6 +441,7 @@ See `crates/alnair-router/router.example.toml` for every option.
 | `openai-compatible` | Supported |
 | `anthropic-native` | Supported |
 | `command-code` | Supported — Command Code's Provider API, falling back to its CLI transport when the plan has no API access (Go) |
+| `codebuddy-intl` | Supported — CodeBuddy Intl stream-only API at `https://www.codebuddy.ai/v2`; the router transforms messages and always streams upstream |
 | anything else (including `ollama`) | **Rejected at write time** with `400 unsupported_provider_type` |
 
 ## Architecture
@@ -465,7 +466,7 @@ crates/alnair-router/src/
 
 The workspace builds with **no path dependency on anything outside this
 repository** — `Cargo.lock` resolves entirely from crates.io. The provider stack
-(OpenAI-compatible + Anthropic-native) lives in `crates/alnair-llm`, with the
+(OpenAI-compatible, Anthropic-native, Command Code and CodeBuddy Intl) lives in `crates/alnair-llm`, with the
 Ollama provider and the RAG/queue/handler layers removed.
 
 Every coupling point to that crate is funnelled through the single module

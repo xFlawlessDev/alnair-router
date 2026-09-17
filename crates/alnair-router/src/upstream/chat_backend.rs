@@ -259,6 +259,7 @@ pub fn provider_type_from_str(value: &str) -> Result<ProviderType> {
         "openai-compatible" => Ok(ProviderType::OpenaiCompatible),
         "anthropic-native" => Ok(ProviderType::AnthropicNative),
         "command-code" => Ok(ProviderType::CommandCode),
+        "codebuddy-intl" => Ok(ProviderType::CodeBuddyIntl),
         other => Err(Error::UnsupportedProviderType(other.to_string())),
     }
 }
@@ -280,6 +281,8 @@ fn model_config(
     custom_headers: BTreeMap<String, String>,
     price: Option<Price>,
 ) -> ModelConfig {
+    let supports_thinking = matches!(provider_type, ProviderType::CodeBuddyIntl);
+
     ModelConfig {
         provider_type,
         base_url: base_url.to_string(),
@@ -287,9 +290,9 @@ fn model_config(
         api_key: api_key.map(str::to_string),
         custom_headers,
         supports_vision: false,
-        // Capability gates are opt-in: the router does not assume a model
-        // supports thinking or prompt caching unless configured.
-        supports_thinking: false,
+        // Capability gates are opt-in: only providers with a known wire shape
+        // enable thinking; CodeBuddy expects OpenAI reasoning parameters.
+        supports_thinking,
         supports_cache_control: false,
         context_window: 0,
         cost_rates: price.map(cost_rates),
@@ -461,6 +464,14 @@ pub fn into_stream(chunks: ChunkStream) -> impl Stream<Item = Result<StreamChunk
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codebuddy_intl_provider_type_is_dispatchable() {
+        assert_eq!(
+            provider_type_from_str("codebuddy-intl").expect("provider type"),
+            ProviderType::CodeBuddyIntl
+        );
+    }
 
     #[test]
     fn retry_policy_maps_into_provider_options() {

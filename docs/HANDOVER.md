@@ -18,7 +18,7 @@ Three ideas carry the whole design:
 |---|---|
 | **Alias** | A prefix like `glm` mapping to a configured connection. `glm/glm-4.6` → that connection, model `glm-4.6`. |
 | **Combo** | A named, ordered fallback chain. `free-forever` → try entry 1, then 2, then 3. |
-| **Connection** | An upstream endpoint: `openai-compatible` or `anthropic-native`, with a base URL and key. |
+| **Connection** | An upstream endpoint: `openai-compatible`, `anthropic-native`, `command-code` or `codebuddy-intl`, with a base URL and key. |
 
 The tiered-combo design is modelled on
 [9router](https://github.com/decolua/9router) (MIT).

@@ -4,12 +4,13 @@ export type AsyncState = "idle" | "loading" | "success" | "error";
 
 /** Provider families the router can dispatch to. */
 export type ProviderType =
-  "openai-compatible" | "anthropic-native" | "command-code";
+  "openai-compatible" | "anthropic-native" | "command-code" | "codebuddy-intl";
 
 export const PROVIDER_TYPES: ProviderType[] = [
   "openai-compatible",
   "anthropic-native",
   "command-code",
+  "codebuddy-intl",
 ];
 
 export interface HealthResponse {

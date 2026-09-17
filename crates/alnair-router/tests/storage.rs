@@ -108,6 +108,19 @@ async fn connection_create_and_read_back() {
 }
 
 #[tokio::test]
+async fn connection_accepts_codebuddy_intl_provider_type() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let created = repo
+        .create(connection("codebuddy", "codebuddy-intl"))
+        .await
+        .expect("codebuddy-intl must be accepted");
+
+    assert_eq!(created.provider_type, "codebuddy-intl");
+}
+
+#[tokio::test]
 async fn connection_rejects_ollama_provider_type() {
     let db = db().await;
     let repo = connection_repo(&db);
