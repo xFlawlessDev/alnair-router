@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::repos::usage::NewUsageRecord;
 use crate::error::Result;
+use crate::handlers::shared::tier_price;
 use crate::middleware::AuthenticatedKey;
 use crate::protocol::openai::OpenAiMessage;
 use crate::state::AppState;
@@ -94,6 +95,8 @@ pub async fn responses(
         messages.push(chat_backend::message_text("system", instructions.clone()));
     }
     messages.extend(convert_input(request.input)?);
+    let (messages, saver_savings) =
+        crate::token_saver::apply(&state.token_saver_settings(), messages, &request.model).await;
 
     let options = chat_backend::GenerationOptions {
         temperature: request.temperature,
@@ -115,6 +118,8 @@ pub async fn responses(
     let attempt_count = executed.attempts.len();
     let completion = chat_backend::collect(executed.stream).await?;
     let usage = completion.usage.unwrap_or_default();
+    let savings_totals =
+        saver_savings.finalize(usage.completion_tokens, tier_price(&state, &target).await);
 
     state.metrics.record_request(latency_ms);
     state.metrics.record_usage(
@@ -123,6 +128,7 @@ pub async fn responses(
         usage.cached_tokens,
         usage.cost_usd,
     );
+    state.metrics.record_token_totals(savings_totals);
     state.telemetry.record_usage(
         &target.connection_id,
         usage.prompt_tokens,
@@ -131,24 +137,28 @@ pub async fn responses(
 
     state
         .usage()
-        .record(NewUsageRecord {
-            api_key_id,
-            requested_model: request.model.clone(),
-            resolved_provider: Some(target.provider_type.clone()),
-            resolved_model: Some(target.model.clone()),
-            connection_name: Some(target.connection_name.clone()),
-            attempt: attempt_count,
-            status: "ok".to_string(),
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            cached_tokens: usage.cached_tokens,
-            reasoning_tokens: usage.reasoning_tokens,
-            cost_usd: usage.cost_usd,
-            cost_input_usd: usage.cost_input_usd,
-            cost_output_usd: usage.cost_output_usd,
-            cost_reasoning_usd: usage.cost_reasoning_usd,
-            latency_ms,
-        })
+        .record(
+            NewUsageRecord {
+                api_key_id,
+                requested_model: request.model.clone(),
+                resolved_provider: Some(target.provider_type.clone()),
+                resolved_model: Some(target.model.clone()),
+                connection_name: Some(target.connection_name.clone()),
+                attempt: attempt_count,
+                status: "ok".to_string(),
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                cached_tokens: usage.cached_tokens,
+                reasoning_tokens: usage.reasoning_tokens,
+                cost_usd: usage.cost_usd,
+                cost_input_usd: usage.cost_input_usd,
+                cost_output_usd: usage.cost_output_usd,
+                cost_reasoning_usd: usage.cost_reasoning_usd,
+                latency_ms,
+                ..Default::default()
+            }
+            .with_savings(savings_totals),
+        )
         .await?;
 
     let mut output = Vec::new();

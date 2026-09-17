@@ -31,10 +31,26 @@ pub struct UsageRecord {
     /// Reasoning premium over the output rate.
     pub cost_reasoning_usd: f64,
     pub latency_ms: i64,
+    /// Prompt tokens removed by RTK/Slimmer before dispatch; measured.
+    pub saved_rtk_tokens: i64,
+    /// Prompt tokens removed by the Headroom proxy; measured.
+    pub saved_headroom_tokens: i64,
+    /// Completion tokens avoided by the terse directive; estimated.
+    pub saved_terse_tokens: i64,
+    /// Completion tokens avoided by the caveman directive; estimated.
+    pub saved_caveman_tokens: i64,
+    /// Completion tokens avoided by the ponytail directive; estimated.
+    pub saved_ponytail_tokens: i64,
+    /// Money saved by every saver combined, at the serving tier's rate.
+    pub saved_cost_usd: f64,
 }
 
 /// A single attempt to record. Status is `ok` or `error`.
-#[derive(Debug, Clone, Deserialize)]
+///
+/// `Default` zeroes every figure, so a caller only spells out the columns it
+/// actually has — a failed attempt needs no token counts, and a request with no
+/// saver enabled needs no savings.
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct NewUsageRecord {
     pub api_key_id: Option<String>,
     pub requested_model: String,
@@ -52,6 +68,28 @@ pub struct NewUsageRecord {
     pub cost_output_usd: f64,
     pub cost_reasoning_usd: f64,
     pub latency_ms: u64,
+    /// What the token-saving pipeline saved on this request. RTK and Headroom
+    /// are measured; the directive columns are estimates derived from the
+    /// completion.
+    pub saved_rtk_tokens: u64,
+    pub saved_headroom_tokens: u64,
+    pub saved_terse_tokens: u64,
+    pub saved_caveman_tokens: u64,
+    pub saved_ponytail_tokens: u64,
+    pub saved_cost_usd: f64,
+}
+
+impl NewUsageRecord {
+    /// Attaches the token-saving figures finalized for this request.
+    pub fn with_savings(mut self, totals: crate::token_saver::SavingsTotals) -> Self {
+        self.saved_rtk_tokens = totals.saved_rtk_tokens;
+        self.saved_headroom_tokens = totals.saved_headroom_tokens;
+        self.saved_terse_tokens = totals.saved_terse_tokens;
+        self.saved_caveman_tokens = totals.saved_caveman_tokens;
+        self.saved_ponytail_tokens = totals.saved_ponytail_tokens;
+        self.saved_cost_usd = totals.saved_cost_usd;
+        self
+    }
 }
 
 /// Aggregate rollup over a time window.
@@ -72,6 +110,96 @@ pub struct UsageSummary {
     /// Reasoning premium over the output rate.
     pub cost_reasoning_usd: f64,
     pub avg_latency_ms: f64,
+}
+
+impl UsageSummary {
+    /// Token-saver figures for the same filtered window, kept as a nested block
+    /// so existing consumers of the cost fields are untouched.
+    pub fn savings(&self, totals: SaverSummary) -> UsageSummaryWithSavings {
+        UsageSummaryWithSavings {
+            requests: self.requests,
+            ok_requests: self.ok_requests,
+            error_requests: self.error_requests,
+            prompt_tokens: self.prompt_tokens,
+            completion_tokens: self.completion_tokens,
+            cached_tokens: self.cached_tokens,
+            reasoning_tokens: self.reasoning_tokens,
+            cost_usd: self.cost_usd,
+            cost_input_usd: self.cost_input_usd,
+            cost_output_usd: self.cost_output_usd,
+            cost_reasoning_usd: self.cost_reasoning_usd,
+            avg_latency_ms: self.avg_latency_ms,
+            savings: totals,
+        }
+    }
+}
+
+/// A [`UsageSummary`] with the token-saver block attached.
+///
+/// Flattened rather than nested so the wire shape keeps every existing field at
+/// the top level and adds one `savings` object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSummaryWithSavings {
+    pub requests: i64,
+    pub ok_requests: i64,
+    pub error_requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cost_usd: f64,
+    pub cost_input_usd: f64,
+    pub cost_output_usd: f64,
+    pub cost_reasoning_usd: f64,
+    pub avg_latency_ms: f64,
+    pub savings: SaverSummary,
+}
+
+/// Token-saver rollup over a filtered set.
+///
+/// The input columns are measured; the directive columns are estimates, and
+/// [`Self::saved_tokens`] keeps them labelled as such rather than blending the
+/// two into one figure the dashboard would present as fact.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromRow)]
+pub struct SaverSummary {
+    /// Requests where at least one saver contributed.
+    pub requests: i64,
+    pub saved_rtk_tokens: i64,
+    pub saved_headroom_tokens: i64,
+    pub saved_terse_tokens: i64,
+    pub saved_caveman_tokens: i64,
+    pub saved_ponytail_tokens: i64,
+    pub saved_cost_usd: f64,
+}
+
+impl SaverSummary {
+    /// Prompt tokens removed before dispatch; measured.
+    pub fn measured_tokens(&self) -> i64 {
+        self.saved_rtk_tokens + self.saved_headroom_tokens
+    }
+
+    /// Completion tokens the directives are expected to have avoided; estimated.
+    pub fn estimated_tokens(&self) -> i64 {
+        self.saved_terse_tokens + self.saved_caveman_tokens + self.saved_ponytail_tokens
+    }
+
+    pub fn saved_tokens(&self) -> i64 {
+        self.measured_tokens() + self.estimated_tokens()
+    }
+
+    /// Savers that contributed, largest first.
+    pub fn contributions(&self) -> Vec<(&'static str, i64)> {
+        let mut entries = vec![
+            ("rtk", self.saved_rtk_tokens),
+            ("headroom", self.saved_headroom_tokens),
+            ("terse", self.saved_terse_tokens),
+            ("caveman", self.saved_caveman_tokens),
+            ("ponytail", self.saved_ponytail_tokens),
+        ];
+        entries.retain(|(_, tokens)| *tokens > 0);
+        entries.sort_by_key(|(_, tokens)| std::cmp::Reverse(*tokens));
+        entries
+    }
 }
 
 /// Spend for one API key, split by budget window.
@@ -317,8 +445,9 @@ impl UsageRepository {
                 (id, created_at, api_key_id, requested_model, resolved_provider, resolved_model,
                  connection_name, attempt, status, prompt_tokens, completion_tokens, cached_tokens,
                  reasoning_tokens, cost_usd, cost_input_usd, cost_output_usd, cost_reasoning_usd,
-                 latency_ms)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 latency_ms, saved_rtk_tokens, saved_headroom_tokens, saved_terse_tokens,
+                 saved_caveman_tokens, saved_ponytail_tokens, saved_cost_usd)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(Utc::now())
@@ -338,6 +467,12 @@ impl UsageRepository {
         .bind(entry.cost_output_usd)
         .bind(entry.cost_reasoning_usd)
         .bind(entry.latency_ms as i64)
+        .bind(entry.saved_rtk_tokens as i64)
+        .bind(entry.saved_headroom_tokens as i64)
+        .bind(entry.saved_terse_tokens as i64)
+        .bind(entry.saved_caveman_tokens as i64)
+        .bind(entry.saved_ponytail_tokens as i64)
+        .bind(entry.saved_cost_usd)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -393,6 +528,38 @@ impl UsageRepository {
                 COALESCE(SUM(cost_output_usd), 0.0) AS cost_output_usd,
                 COALESCE(SUM(cost_reasoning_usd), 0.0) AS cost_reasoning_usd,
                 COALESCE(AVG(latency_ms), 0.0) AS avg_latency_ms
+             FROM usage_records
+             WHERE (?1 IS NULL OR api_key_id = ?1)
+               AND (?2 IS NULL OR lower(requested_model) LIKE ?2)
+               AND (?3 IS NULL OR resolved_provider = ?3)
+               AND (?4 IS NULL OR connection_name = ?4)
+               AND (?5 IS NULL OR created_at >= ?5)
+               AND (?6 IS NULL OR created_at <= ?6)",
+        )
+        .bind(&filter.api_key_id)
+        .bind(filter.model_pattern())
+        .bind(&filter.provider)
+        .bind(&filter.connection)
+        .bind(filter.since)
+        .bind(filter.until)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Token-saver rollup over the filtered set.
+    pub async fn savings(&self, filter: &UsageFilter) -> Result<SaverSummary> {
+        let row = sqlx::query_as::<_, SaverSummary>(
+            "SELECT
+                COALESCE(SUM(CASE WHEN saved_rtk_tokens + saved_headroom_tokens
+                     + saved_terse_tokens + saved_caveman_tokens + saved_ponytail_tokens > 0
+                     THEN 1 ELSE 0 END), 0) AS requests,
+                COALESCE(SUM(saved_rtk_tokens), 0) AS saved_rtk_tokens,
+                COALESCE(SUM(saved_headroom_tokens), 0) AS saved_headroom_tokens,
+                COALESCE(SUM(saved_terse_tokens), 0) AS saved_terse_tokens,
+                COALESCE(SUM(saved_caveman_tokens), 0) AS saved_caveman_tokens,
+                COALESCE(SUM(saved_ponytail_tokens), 0) AS saved_ponytail_tokens,
+                COALESCE(SUM(saved_cost_usd), 0.0) AS saved_cost_usd
              FROM usage_records
              WHERE (?1 IS NULL OR api_key_id = ?1)
                AND (?2 IS NULL OR lower(requested_model) LIKE ?2)
@@ -626,22 +793,15 @@ mod tests {
 
     fn record(model: &str, cost: f64) -> NewUsageRecord {
         NewUsageRecord {
-            api_key_id: None,
             requested_model: model.to_string(),
-            resolved_provider: None,
-            resolved_model: None,
-            connection_name: None,
             attempt: 1,
             status: "ok".to_string(),
             prompt_tokens: 2,
             completion_tokens: 3,
-            cached_tokens: 0,
-            reasoning_tokens: 0,
             cost_usd: cost,
             cost_input_usd: cost,
-            cost_output_usd: 0.0,
-            cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         }
     }
 

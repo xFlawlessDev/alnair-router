@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::TokenSaverConfig;
 use crate::pricing::Price;
+use crate::protocol::anthropic::estimate_messages;
 use crate::upstream::chat_backend::RouterMessage;
 
 /// Which saver contributed a saving. Used by the usage columns, the Prometheus
@@ -56,6 +57,27 @@ impl Saver {
             Saver::Terse => "terse",
             Saver::Caveman => "caveman",
             Saver::Ponytail => "ponytail",
+        }
+    }
+
+    /// Human-readable name for the dashboard.
+    pub fn label(self) -> &'static str {
+        match self {
+            Saver::Slimmer => "RTK / Slimmer",
+            Saver::Headroom => "Headroom",
+            Saver::Terse => "Terse",
+            Saver::Caveman => "Caveman",
+            Saver::Ponytail => "Ponytail",
+        }
+    }
+
+    /// Which side of the request the saver works on. Input savers shrink the
+    /// prompt; output savers only ask the model to write less, which is why
+    /// their figures are estimates.
+    pub fn side(self) -> SaverSide {
+        match self {
+            Saver::Slimmer | Saver::Headroom => SaverSide::Input,
+            Saver::Terse | Saver::Caveman | Saver::Ponytail => SaverSide::Output,
         }
     }
 }
@@ -286,7 +308,7 @@ impl SavingsTotals {
             (Saver::Ponytail, self.saved_ponytail_tokens),
         ];
         entries.retain(|(_, tokens)| *tokens > 0);
-        entries.sort_by(|a, b| b.1.cmp(&a.1));
+        entries.sort_by_key(|(_, tokens)| std::cmp::Reverse(*tokens));
         entries
     }
 
@@ -321,63 +343,221 @@ impl SavingsTotals {
     }
 }
 
+/// One step of the pipeline, captured for the playground.
+///
+/// The playground exists to *prove* the pipeline works, so it reports what each
+/// step actually did rather than re-deriving it: a step that declined shows
+/// `applied: false` and unchanged counts. Token counts come from the same
+/// estimator the router bills against, so the numbers reconcile with
+/// [`Savings`].
+#[derive(Debug, Clone)]
+pub struct StepTrace {
+    pub saver: Saver,
+    pub side: SaverSide,
+    /// True when this step changed the messages.
+    pub applied: bool,
+    /// Prompt tokens entering the step.
+    pub tokens_before: u64,
+    /// Prompt tokens leaving the step.
+    pub tokens_after: u64,
+    /// What the step did, or why it declined (Headroom unreachable, nothing
+    /// worth compressing, …).
+    pub detail: String,
+}
+
+impl StepTrace {
+    /// Prompt tokens added or removed by this step.
+    ///
+    /// Signed on purpose: the input savers remove tokens, while a directive
+    /// step *adds* the instructions it injects. Hiding that behind a
+    /// non-negative number would misrepresent the cost of the output savers.
+    pub fn delta(&self) -> i64 {
+        self.tokens_after as i64 - self.tokens_before as i64
+    }
+}
+
+/// A full pipeline run, with every step recorded.
+#[derive(Debug, Clone)]
+pub struct PipelineRun {
+    /// Messages as they arrived.
+    pub before: Vec<RouterMessage>,
+    /// Messages as they would be sent upstream.
+    pub after: Vec<RouterMessage>,
+    pub savings: Savings,
+    pub steps: Vec<StepTrace>,
+}
+
+impl PipelineRun {
+    /// Prompt tokens in the original request.
+    pub fn tokens_before(&self) -> u64 {
+        estimate_messages(&self.before)
+    }
+
+    /// Prompt tokens that would be sent upstream.
+    pub fn tokens_after(&self) -> u64 {
+        estimate_messages(&self.after)
+    }
+}
+
 /// Runs the pipeline: slimmer → headroom → terse/caveman → ponytail.
 ///
 /// Returns the messages to send upstream plus what the request-side savers did.
 /// This never fails: every saver falls back to its own input.
 pub async fn apply(
     settings: &TokenSaverSettings,
-    mut messages: Vec<RouterMessage>,
+    messages: Vec<RouterMessage>,
     model: &str,
 ) -> (Vec<RouterMessage>, Savings) {
+    let run = run(settings, messages, model).await;
+    (run.after, run.savings)
+}
+
+/// Runs the pipeline and keeps a trace of every step.
+///
+/// [`apply`] is the hot path and throws the trace away; this is the identical
+/// code with the steps retained, so the playground can never drift from what
+/// production actually does.
+pub async fn run(
+    settings: &TokenSaverSettings,
+    messages: Vec<RouterMessage>,
+    model: &str,
+) -> PipelineRun {
+    let before = messages.clone();
+    let mut messages = messages;
     let mut savings = Savings::default();
+    let mut steps = Vec::new();
 
     if settings.is_idle() || messages.is_empty() {
-        return (messages, savings);
+        return PipelineRun {
+            before,
+            after: messages,
+            savings,
+            steps,
+        };
     }
 
     if let Some(level) = settings.slimmer {
+        let tokens_before = estimate_messages(&messages);
         let stats = slimmer::compress(&mut messages, level);
-        if stats.tokens_saved() > 0 {
+        let saved = stats.tokens_saved();
+        let tokens_after = estimate_messages(&messages);
+        let detail = if saved > 0 {
+            let line = format!(
+                "{} tool result(s) · {} · saver reports {} tokens",
+                stats.hits.len(),
+                stats.filter_names(),
+                saved
+            );
             savings.notes.push(format!(
                 "rtk: {} tokens from {} tool result(s) ({})",
-                stats.tokens_saved(),
+                saved,
                 stats.hits.len(),
                 stats.filter_names()
             ));
-        }
-        savings.slimmer_tokens = stats.tokens_saved();
+            line
+        } else {
+            "no compressible tool output".to_string()
+        };
+        savings.slimmer_tokens = saved;
+        steps.push(StepTrace {
+            saver: Saver::Slimmer,
+            side: SaverSide::Input,
+            applied: saved > 0,
+            tokens_before,
+            // Measured from the rewritten messages rather than derived from the
+            // saver's own count, so the playground shows the real prompt delta
+            // and any disagreement with the reported figure stays visible.
+            tokens_after,
+            detail,
+        });
     }
 
     if let Some(headroom) = &settings.headroom {
-        match headroom_mod::compress(headroom, messages.clone(), model).await {
+        let tokens_before = estimate_messages(&messages);
+        let step = match headroom_mod::compress(headroom, messages.clone(), model).await {
             Ok(outcome) => {
                 messages = outcome.messages;
-                savings.headroom_tokens = outcome.tokens_saved;
-                if outcome.tokens_saved > 0 {
-                    savings.notes.push(format!(
-                        "headroom: {} tokens saved",
-                        outcome.tokens_saved
-                    ));
+                let reported = outcome.tokens_saved;
+                savings.headroom_tokens = reported;
+                if reported > 0 {
+                    savings
+                        .notes
+                        .push(format!("headroom: {reported} tokens saved"));
+                }
+                StepTrace {
+                    saver: Saver::Headroom,
+                    side: SaverSide::Input,
+                    applied: reported > 0,
+                    tokens_before,
+                    // Measured, not taken on the proxy's word: phantom savings
+                    // would otherwise be indistinguishable from real ones.
+                    tokens_after: estimate_messages(&messages),
+                    detail: if reported > 0 {
+                        format!("proxy reports {reported} tokens removed")
+                    } else {
+                        "proxy reported no savings".to_string()
+                    },
                 }
             }
             Err(reason) => {
                 // Fail-open is the whole contract: note it and carry on.
                 savings.notes.push(format!("headroom: {reason}"));
+                StepTrace {
+                    saver: Saver::Headroom,
+                    side: SaverSide::Input,
+                    applied: false,
+                    tokens_before,
+                    tokens_after: tokens_before,
+                    detail: format!("skipped, request forwarded untouched ({reason})"),
+                }
             }
-        }
+        };
+        steps.push(step);
     }
 
+    // Directives append to the prompt, so these steps report the tokens they
+    // cost. That is the honest trade: a few prompt tokens buy a much shorter
+    // completion, which `finalize` prices once the model answers.
     if let Some(output) = settings.output {
+        let tokens_before = estimate_messages(&messages);
         directives::inject_output(&mut messages, output);
         savings.output = Some(output);
-    }
-    if let Some(level) = settings.ponytail {
-        directives::inject_ponytail(&mut messages, level);
-        savings.ponytail = Some(level);
+        steps.push(StepTrace {
+            saver: output.saver(),
+            side: SaverSide::Output,
+            applied: true,
+            tokens_before,
+            tokens_after: estimate_messages(&messages),
+            detail: format!(
+                "injected directive · expects ~{:.0}% shorter completions",
+                output.ratio() * 100.0
+            ),
+        });
     }
 
-    (messages, savings)
+    if let Some(level) = settings.ponytail {
+        let tokens_before = estimate_messages(&messages);
+        directives::inject_ponytail(&mut messages, level);
+        savings.ponytail = Some(level);
+        steps.push(StepTrace {
+            saver: Saver::Ponytail,
+            side: SaverSide::Output,
+            applied: true,
+            tokens_before,
+            tokens_after: estimate_messages(&messages),
+            detail: format!(
+                "stacked on the output directive · ~{:.0}% shorter completions",
+                level.ratio() * 100.0
+            ),
+        });
+    }
+
+    PipelineRun {
+        before,
+        after: messages,
+        savings,
+        steps,
+    }
 }
 
 use headroom as headroom_mod;

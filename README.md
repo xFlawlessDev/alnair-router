@@ -416,6 +416,18 @@ Key settings:
   (86400) — crawl `pricing.source_url` (LiteLLM or models.dev payload) for
   model rates. Dashboard overrides win over crawled rows, which in turn shadow
   the built-in rate table.
+- `token_saver.*` — the deterministic token-saving pipeline that runs on every
+  chat request before provider translation. `slimmer_enabled` (default true)
+  compresses bulky tool output locally; `headroom_enabled` (false) routes
+  messages through an external Headroom proxy at `headroom_url`
+  (`http://localhost:8787`), failing open when the proxy is unreachable;
+  `terse_enabled` / `caveman_enabled` (both false) inject a concise-output
+  directive and are **mutually exclusive** — the router refuses to start with
+  both set; `ponytail_enabled` (false) stacks a "lazy senior dev" directive on
+  top of either. Levels are `slimmer_level` (`minimal`/`aggressive`),
+  `caveman_level` (`lite`/`full`/`ultra` plus the `wenyan-*` variants) and
+  `ponytail_level` (`lite`/`full`/`ultra`); an unknown level or a malformed
+  `headroom_url` fails at startup rather than silently falling back.
 
 `GET /api/health` is a liveness probe (no database touch); `GET /api/ready`
 checks the database. `GET /api/metrics` exposes Prometheus-style counters and is
@@ -424,7 +436,23 @@ guarded like the rest of `/api/*`.
 A subset of the settings above — client/admin auth, routing, limits, rate limits
 and pricing — can be edited from the dashboard's **Settings** page. Overrides
 live in the router database, apply immediately without a restart, and take
-precedence over `config.toml`/env until you reset them.
+precedence over `config.toml`/env until you reset them. The **Token Saving** page
+owns the `token_saver.*` controls on its **Configuration** tab, and its
+**Savings** tab reports what the pipeline clawed back, split into measured input
+savings (RTK, Headroom) and estimated output savings (the directives), because a
+terser answer cannot be measured after the fact. Both pages write the same
+override store.
+
+The **Token saver playground** (`/token-saver/playground`, `POST
+/api/token-saver/playground`) runs the pipeline on a sample request and shows
+each step's effect on the prompt. It calls the same code path live traffic does,
+so what it reports is what happens to a real request; token counts are measured
+from the rewritten messages rather than taken from each saver's own figure, and
+a step that declines is listed with unchanged counts. Per-run saver overrides let
+you compare configurations without saving them, and are validated exactly like
+the Configuration tab on the Token Saving page. Give it a model and an assumed
+completion length to price the output directives; leave the length empty and no
+output estimate is reported.
 
 The same page backs up and restores data: **Download backup** streams a
 consistent SQLite snapshot (`GET /api/backup`) and **Import backup** replaces

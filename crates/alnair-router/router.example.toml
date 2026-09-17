@@ -103,3 +103,41 @@ sync_enabled = false
 # Crawl interval in seconds (clamped to at least 60).
 sync_interval_secs = 86400
 source_url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+
+[token_saver]
+# The deterministic token-saving pipeline: every chat request runs through
+# slimmer → headroom → terse/caveman → ponytail before it is translated for a
+# provider, so the savings are the same whichever upstream serves it. Each saver
+# is independent, and every one of them fails open: if a step cannot do its job
+# the request is forwarded untouched.
+#
+# RTK/Slimmer compresses bulky tool output (diffs, greps, listings, build logs)
+# locally, before anything leaves the machine. It is the safe default.
+slimmer_enabled = true
+# "minimal" applies the lossless filters only; "aggressive" also applies the
+# filters that drop context a model may have wanted.
+slimmer_level = "minimal"
+
+# Route request messages through an external Headroom proxy for deeper
+# compression. Needs the Python CLI (`pipx install "headroom-ai[all]"`, then
+# `headroom proxy --port 8787`); the npm package is a library only. Phantom
+# savings the proxy reports without really removing tokens are rejected, and a
+# proxy that is down leaves the request untouched.
+headroom_enabled = false
+headroom_url = "http://localhost:8787"
+# Per-request timeout in milliseconds; clamped to at least 1.
+headroom_timeout_ms = 2000
+
+# Output savers inject a system directive, so they trim what the model writes
+# rather than what you send. Terse and caveman both write one, so they are
+# mutually exclusive and the router refuses to start with both enabled.
+terse_enabled = false
+caveman_enabled = false
+# lite | full | ultra | wenyan-lite | wenyan-full | wenyan-ultra
+caveman_level = "full"
+
+# Ponytail injects a "lazy senior dev" directive and stacks on top of either
+# terse or caveman.
+ponytail_enabled = false
+# lite | full | ultra
+ponytail_level = "full"

@@ -278,7 +278,44 @@ pub async fn usage_summary(
     State(state): State<AppState>,
     Query(query): Query<UsageQuery>,
 ) -> Result<impl IntoResponse> {
-    Ok(Json(state.usage().summary(&query.filter()).await?))
+    let filter = query.filter();
+    let summary = state.usage().summary(&filter).await?;
+    let savings = state.usage().savings(&filter).await?;
+    Ok(Json(summary.savings(savings)))
+}
+
+/// `POST /api/token-saver/headroom/test` — reachability check for the proxy.
+///
+/// The URL in the body wins so the button can test a value that has not been
+/// saved yet; without one the configured URL is used.
+pub async fn headroom_test(
+    State(state): State<AppState>,
+    body: Option<Json<HeadroomTestRequest>>,
+) -> Result<impl IntoResponse> {
+    let (url, timeout_ms) = {
+        let config = state.config_snapshot();
+        (
+            config.token_saver.headroom_url.clone(),
+            config.token_saver.headroom_timeout_ms,
+        )
+    };
+
+    let url = body
+        .and_then(|Json(request)| request.url)
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .unwrap_or(url);
+
+    Ok(Json(
+        crate::token_saver::probe_headroom(&url, timeout_ms).await,
+    ))
+}
+
+/// Body of the Headroom test request; both fields are optional.
+#[derive(Debug, Deserialize)]
+pub struct HeadroomTestRequest {
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// `GET /api/usage/facets` — distinct models and providers for the filter bar.
@@ -634,6 +671,7 @@ pub async fn alias_chat_test(
             cost_output_usd: usage.cost_output_usd,
             cost_reasoning_usd: usage.cost_reasoning_usd,
             latency_ms,
+            ..Default::default()
         })
         .await
     {

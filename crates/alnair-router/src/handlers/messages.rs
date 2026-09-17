@@ -10,13 +10,14 @@ use serde_json::json;
 
 use crate::db::repos::usage::NewUsageRecord;
 use crate::error::Result;
-use crate::handlers::shared::{StreamUsage, record_failed_attempts, router_headers};
+use crate::handlers::shared::{StreamUsage, record_failed_attempts, router_headers, tier_price};
 use crate::middleware::AuthenticatedKey;
 use crate::protocol::anthropic::{
     AnthropicResponseBlock, AnthropicUsage, CountTokensResponse, MessagesRequest, MessagesResponse,
     estimate_messages,
 };
 use crate::state::AppState;
+use crate::token_saver::Savings;
 use crate::upstream::ExecutedStream;
 use crate::upstream::chat_backend::{self, StreamChunk, TokenUsage, anthropic_stop_reason};
 
@@ -38,6 +39,8 @@ pub async fn messages(
     let options = chat_request.generation_options();
     let tools = chat_request.tools.clone();
     let messages = chat_request.into_messages()?;
+    let (messages, saver_savings) =
+        crate::token_saver::apply(&state.token_saver_settings(), messages, &requested_model).await;
 
     let resolver = state.resolver().await?;
     let targets = resolver.resolve(&requested_model)?;
@@ -50,14 +53,9 @@ pub async fn messages(
     record_failed_attempts(&state, &api_key_id, &requested_model, &executed.attempts).await;
 
     if stream_requested {
-        Ok(stream_response(
-            state,
-            api_key_id,
-            requested_model,
-            executed,
-        ))
+        Ok(stream_response(state, api_key_id, requested_model, saver_savings, executed).await)
     } else {
-        complete_response(state, api_key_id, requested_model, executed).await
+        complete_response(state, api_key_id, requested_model, saver_savings, executed).await
     }
 }
 
@@ -65,6 +63,7 @@ async fn complete_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    saver_savings: Savings,
     executed: ExecutedStream,
 ) -> Result<Response> {
     let target = executed.target.clone();
@@ -73,6 +72,8 @@ async fn complete_response(
 
     let completion = chat_backend::collect(executed.stream).await?;
     let usage = completion.usage.unwrap_or_default();
+    let savings_totals =
+        saver_savings.finalize(usage.completion_tokens, tier_price(&state, &target).await);
 
     state.metrics.record_request(latency_ms);
     state.metrics.record_usage(
@@ -81,6 +82,7 @@ async fn complete_response(
         usage.cached_tokens,
         usage.cost_usd,
     );
+    state.metrics.record_token_totals(savings_totals);
     state.telemetry.record_usage(
         &target.connection_id,
         usage.prompt_tokens,
@@ -89,24 +91,28 @@ async fn complete_response(
 
     if let Err(error) = state
         .usage()
-        .record(NewUsageRecord {
-            api_key_id,
-            requested_model: requested_model.clone(),
-            resolved_provider: Some(target.provider_type.clone()),
-            resolved_model: Some(target.model.clone()),
-            connection_name: Some(target.connection_name.clone()),
-            attempt: attempt_count,
-            status: "ok".to_string(),
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            cached_tokens: usage.cached_tokens,
-            reasoning_tokens: usage.reasoning_tokens,
-            cost_usd: usage.cost_usd,
-            cost_input_usd: usage.cost_input_usd,
-            cost_output_usd: usage.cost_output_usd,
-            cost_reasoning_usd: usage.cost_reasoning_usd,
-            latency_ms,
-        })
+        .record(
+            NewUsageRecord {
+                api_key_id,
+                requested_model: requested_model.clone(),
+                resolved_provider: Some(target.provider_type.clone()),
+                resolved_model: Some(target.model.clone()),
+                connection_name: Some(target.connection_name.clone()),
+                attempt: attempt_count,
+                status: "ok".to_string(),
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                cached_tokens: usage.cached_tokens,
+                reasoning_tokens: usage.reasoning_tokens,
+                cost_usd: usage.cost_usd,
+                cost_input_usd: usage.cost_input_usd,
+                cost_output_usd: usage.cost_output_usd,
+                cost_reasoning_usd: usage.cost_reasoning_usd,
+                latency_ms,
+                ..Default::default()
+            }
+            .with_savings(savings_totals),
+        )
         .await
     {
         tracing::warn!(error = %error, "failed to record usage");
@@ -151,16 +157,19 @@ async fn complete_response(
     Ok((router_headers(&target, attempt_count), Json(body)).into_response())
 }
 
-fn stream_response(
+async fn stream_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    saver_savings: Savings,
     executed: ExecutedStream,
 ) -> Response {
     let target = executed.target.clone();
     let latency_ms = executed.latency_ms;
     let attempt_count = executed.attempts.len();
     let id = message_id();
+
+    let price = tier_price(&state, &target).await;
 
     let usage_state = StreamUsage::new(
         state,
@@ -169,7 +178,8 @@ fn stream_response(
         &target,
         attempt_count,
         latency_ms,
-    );
+    )
+    .with_savings(saver_savings, price);
 
     // Anthropic clients expect `message_start` first; content blocks open
     // lazily, because the kind of the first block is only known once a chunk

@@ -73,6 +73,16 @@ pub struct SettingsOverrides {
     pub pricing_sync_interval_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_source_url: Option<String>,
+    pub slimmer_enabled: Option<bool>,
+    pub slimmer_level: Option<String>,
+    pub headroom_enabled: Option<bool>,
+    pub headroom_url: Option<String>,
+    pub headroom_timeout_ms: Option<u64>,
+    pub terse_enabled: Option<bool>,
+    pub caveman_enabled: Option<bool>,
+    pub caveman_level: Option<String>,
+    pub ponytail_enabled: Option<bool>,
+    pub ponytail_level: Option<String>,
 }
 
 impl SettingsOverrides {
@@ -143,6 +153,36 @@ impl SettingsOverrides {
         }
         if let Some(value) = &self.pricing_source_url {
             config.pricing.source_url = value.clone();
+        }
+        if let Some(value) = self.slimmer_enabled {
+            config.token_saver.slimmer_enabled = value;
+        }
+        if let Some(value) = &self.slimmer_level {
+            config.token_saver.slimmer_level = value.clone();
+        }
+        if let Some(value) = self.headroom_enabled {
+            config.token_saver.headroom_enabled = value;
+        }
+        if let Some(value) = &self.headroom_url {
+            config.token_saver.headroom_url = value.clone();
+        }
+        if let Some(value) = self.headroom_timeout_ms {
+            config.token_saver.headroom_timeout_ms = value;
+        }
+        if let Some(value) = self.terse_enabled {
+            config.token_saver.terse_enabled = value;
+        }
+        if let Some(value) = self.caveman_enabled {
+            config.token_saver.caveman_enabled = value;
+        }
+        if let Some(value) = &self.caveman_level {
+            config.token_saver.caveman_level = value.clone();
+        }
+        if let Some(value) = self.ponytail_enabled {
+            config.token_saver.ponytail_enabled = value;
+        }
+        if let Some(value) = &self.ponytail_level {
+            config.token_saver.ponytail_level = value.clone();
         }
     }
 
@@ -227,6 +267,36 @@ impl SettingsOverrides {
         }
         if self.pricing_source_url.is_some() {
             keys.push("pricing.source_url");
+        }
+        if self.slimmer_enabled.is_some() {
+            keys.push("token_saver.slimmer_enabled");
+        }
+        if self.slimmer_level.is_some() {
+            keys.push("token_saver.slimmer_level");
+        }
+        if self.headroom_enabled.is_some() {
+            keys.push("token_saver.headroom_enabled");
+        }
+        if self.headroom_url.is_some() {
+            keys.push("token_saver.headroom_url");
+        }
+        if self.headroom_timeout_ms.is_some() {
+            keys.push("token_saver.headroom_timeout_ms");
+        }
+        if self.terse_enabled.is_some() {
+            keys.push("token_saver.terse_enabled");
+        }
+        if self.caveman_enabled.is_some() {
+            keys.push("token_saver.caveman_enabled");
+        }
+        if self.caveman_level.is_some() {
+            keys.push("token_saver.caveman_level");
+        }
+        if self.ponytail_enabled.is_some() {
+            keys.push("token_saver.ponytail_enabled");
+        }
+        if self.ponytail_level.is_some() {
+            keys.push("token_saver.ponytail_level");
         }
         keys
     }

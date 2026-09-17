@@ -7,6 +7,7 @@
 use std::fmt::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::token_saver::SavingsTotals;
 use crate::upstream::Attempt;
 
 /// Cumulative counters for routing, usage, and rejection paths.
@@ -23,6 +24,11 @@ pub struct Metrics {
     cost_micros_total: AtomicU64,
     rate_limited_total: AtomicU64,
     budget_blocked_total: AtomicU64,
+    token_saver_rtk_total: AtomicU64,
+    token_saver_headroom_total: AtomicU64,
+    token_saver_terse_total: AtomicU64,
+    token_saver_caveman_total: AtomicU64,
+    token_saver_ponytail_total: AtomicU64,
 }
 
 impl Metrics {
@@ -68,6 +74,20 @@ impl Metrics {
     /// Records a request rejected by a budget cap.
     pub fn record_budget_blocked(&self) {
         self.budget_blocked_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Records final estimated output savings after completion usage is known.
+    pub fn record_token_totals(&self, totals: SavingsTotals) {
+        self.token_saver_rtk_total
+            .fetch_add(totals.saved_rtk_tokens, Ordering::Relaxed);
+        self.token_saver_headroom_total
+            .fetch_add(totals.saved_headroom_tokens, Ordering::Relaxed);
+        self.token_saver_terse_total
+            .fetch_add(totals.saved_terse_tokens, Ordering::Relaxed);
+        self.token_saver_caveman_total
+            .fetch_add(totals.saved_caveman_tokens, Ordering::Relaxed);
+        self.token_saver_ponytail_total
+            .fetch_add(totals.saved_ponytail_tokens, Ordering::Relaxed);
     }
 
     /// Renders every counter in Prometheus text exposition format (0.0.4).
@@ -134,6 +154,31 @@ impl Metrics {
             "alnair_router_budget_blocked_total",
             "Requests rejected by a budget cap",
             self.budget_blocked_total.load(Ordering::Relaxed),
+        );
+        counter(
+            "alnair_router_token_saver_rtk_tokens_total",
+            "Measured input tokens saved by RTK/Slimmer",
+            self.token_saver_rtk_total.load(Ordering::Relaxed),
+        );
+        counter(
+            "alnair_router_token_saver_headroom_tokens_total",
+            "Measured input tokens saved by Headroom",
+            self.token_saver_headroom_total.load(Ordering::Relaxed),
+        );
+        counter(
+            "alnair_router_token_saver_terse_tokens_total",
+            "Estimated output tokens saved by Terse",
+            self.token_saver_terse_total.load(Ordering::Relaxed),
+        );
+        counter(
+            "alnair_router_token_saver_caveman_tokens_total",
+            "Estimated output tokens saved by Caveman",
+            self.token_saver_caveman_total.load(Ordering::Relaxed),
+        );
+        counter(
+            "alnair_router_token_saver_ponytail_tokens_total",
+            "Estimated output tokens saved by Ponytail",
+            self.token_saver_ponytail_total.load(Ordering::Relaxed),
         );
 
         out

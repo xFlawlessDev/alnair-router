@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::db::repos::usage::NewUsageRecord;
 use crate::error::Result;
-use crate::handlers::shared::{StreamUsage, record_failed_attempts, router_headers};
+use crate::handlers::shared::{StreamUsage, record_failed_attempts, router_headers, tier_price};
 use crate::middleware::AuthenticatedKey;
 use crate::protocol::openai::{
     ChatChoice, ChatChoiceMessage, ChatCompletionChunk, ChatCompletionRequest,
@@ -17,6 +17,7 @@ use crate::protocol::openai::{
     tool_calls_payload, usage_payload,
 };
 use crate::state::AppState;
+use crate::token_saver::Savings;
 use crate::upstream::ExecutedStream;
 use crate::upstream::chat_backend::{self, StreamChunk, TokenUsage, openai_finish_reason};
 
@@ -39,6 +40,8 @@ pub async fn chat_completions(
     let options = request.generation_options();
     let tools = request.tools.clone();
     let messages = request.into_messages()?;
+    let (messages, saver_savings) =
+        crate::token_saver::apply(&state.token_saver_settings(), messages, &requested_model).await;
 
     let resolver = state.resolver().await?;
     let targets = resolver.resolve(&requested_model)?;
@@ -57,10 +60,12 @@ pub async fn chat_completions(
             api_key_id,
             requested_model,
             include_usage,
+            saver_savings,
             executed,
-        ))
+        )
+        .await)
     } else {
-        complete_response(state, api_key_id, requested_model, executed).await
+        complete_response(state, api_key_id, requested_model, saver_savings, executed).await
     }
 }
 
@@ -69,6 +74,7 @@ async fn complete_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    saver_savings: crate::token_saver::Savings,
     executed: ExecutedStream,
 ) -> Result<Response> {
     let target = executed.target.clone();
@@ -78,6 +84,11 @@ async fn complete_response(
     let completion = chat_backend::collect(executed.stream).await?;
 
     let usage_snapshot = completion.usage.unwrap_or_default();
+    let savings_totals = saver_savings.finalize(
+        usage_snapshot.completion_tokens,
+        tier_price(&state, &target).await,
+    );
+    state.metrics.record_token_totals(savings_totals);
     state.metrics.record_request(latency_ms);
     state.metrics.record_usage(
         usage_snapshot.prompt_tokens,
@@ -94,24 +105,28 @@ async fn complete_response(
     if let Some(usage) = completion.usage {
         state
             .usage()
-            .record(NewUsageRecord {
-                api_key_id,
-                requested_model: requested_model.clone(),
-                resolved_provider: Some(target.provider_type.clone()),
-                resolved_model: Some(target.model.clone()),
-                connection_name: Some(target.connection_name.clone()),
-                attempt: attempt_count,
-                status: "ok".to_string(),
-                prompt_tokens: usage.prompt_tokens,
-                completion_tokens: usage.completion_tokens,
-                cached_tokens: usage.cached_tokens,
-                reasoning_tokens: usage.reasoning_tokens,
-                cost_usd: usage.cost_usd,
-                cost_input_usd: usage.cost_input_usd,
-                cost_output_usd: usage.cost_output_usd,
-                cost_reasoning_usd: usage.cost_reasoning_usd,
-                latency_ms,
-            })
+            .record(
+                NewUsageRecord {
+                    api_key_id,
+                    requested_model: requested_model.clone(),
+                    resolved_provider: Some(target.provider_type.clone()),
+                    resolved_model: Some(target.model.clone()),
+                    connection_name: Some(target.connection_name.clone()),
+                    attempt: attempt_count,
+                    status: "ok".to_string(),
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    cached_tokens: usage.cached_tokens,
+                    reasoning_tokens: usage.reasoning_tokens,
+                    cost_usd: usage.cost_usd,
+                    cost_input_usd: usage.cost_input_usd,
+                    cost_output_usd: usage.cost_output_usd,
+                    cost_reasoning_usd: usage.cost_reasoning_usd,
+                    latency_ms,
+                    ..Default::default()
+                }
+                .with_savings(savings_totals),
+            )
             .await?;
     }
 
@@ -149,11 +164,12 @@ struct StreamState {
 }
 
 /// Streaming path: forward chunks as OpenAI `chat.completion.chunk` SSE events.
-fn stream_response(
+async fn stream_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
     include_usage: bool,
+    saver_savings: Savings,
     executed: ExecutedStream,
 ) -> Response {
     let target = executed.target.clone();
@@ -162,6 +178,10 @@ fn stream_response(
     let id = completion_id();
     let created = chrono::Utc::now().timestamp();
 
+    // Price is resolved before `state` moves into the recorder, which owns it
+    // for the life of the stream.
+    let price = tier_price(&state, &target).await;
+
     let usage_state = StreamUsage::new(
         state,
         api_key_id,
@@ -169,7 +189,8 @@ fn stream_response(
         &target,
         attempt_count,
         latency_ms,
-    );
+    )
+    .with_savings(saver_savings, price);
 
     // OpenAI opens every stream with the assistant role, so clients that key
     // off `delta.role` see it exactly once.

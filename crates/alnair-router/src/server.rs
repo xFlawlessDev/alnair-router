@@ -106,6 +106,14 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::admin::usage_timeseries),
         )
         .route("/api/usage/keys", get(handlers::admin::usage_by_key))
+        .route(
+            "/api/token-saver/headroom/test",
+            post(handlers::admin::headroom_test),
+        )
+        .route(
+            "/api/token-saver/playground",
+            post(handlers::token_saver::playground),
+        )
         .route("/api/models", get(handlers::catalog::models_catalog))
         .route(
             "/api/pricing",

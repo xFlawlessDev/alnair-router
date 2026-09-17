@@ -43,6 +43,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Usage breakdowns: prompt/completion/cached/reasoning tokens and input/output/reasoning cost components with popovers on the Usage page
 - [x] Usage trend chart on the admin page (`/api/usage/timeseries`, hour/day buckets stacked by model), whitelisted column sorting, `until` windows, an API key column and a per-record detail sheet
 - [x] Model pricing: dashboard overrides, LiteLLM/models.dev catalog sync (opt-in), reasoning-token premium, leaf-based lookup (`vendor/` prefixes and relay paths), per-connection `pricing_model` pin and a `/api/pricing/match` debug tool
+- [x] Token saving: a deterministic per-request pipeline (RTK/Slimmer tool-output compression, optional Headroom proxy, terse/caveman output directives with ponytail stacked on top) that every chat request runs through before provider translation; each saver toggles independently, fails open, and is priced into a savings rollup on the Usage, Token Saving and Prometheus surfaces; a playground (`/token-saver/playground`) runs the real pipeline on a sample request and reports each step's measured effect, with per-run overrides that are never saved
 - [x] Router-issued API keys hashed with SHA-256
 - [x] Upstream credentials AES-256-GCM encrypted at rest; mandatory `secrets.key`; boot re-encryption of legacy rows
 - [x] Configurable retry contract with exponential backoff (`router.max_retries_per_tier`, `router.max_retry_delay_ms`)
@@ -249,7 +250,7 @@ pick a single provider when there is a live account to test against.
 Carried over from the original design, still deferred. Not "todo" — these are
 deliberate exclusions so the package stays small:
 
-- RTK `tool_result` compression, prompt-cache tricks, caveman/ponytail prompt injection
+- Prompt-cache tricks
 - MITM proxy, Cloudflare/Tailscale tunnels, proxy pools, `pxpipe`
 - Bundling a shared storage/media/RAG stack (would drag unrelated dependencies in
   and defeat the separate-DB design)

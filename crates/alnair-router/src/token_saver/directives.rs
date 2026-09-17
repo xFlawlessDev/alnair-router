@@ -103,8 +103,11 @@ pub enum PonytailLevel {
 }
 
 impl PonytailLevel {
-    pub const ALL: [PonytailLevel; 3] =
-        [PonytailLevel::Lite, PonytailLevel::Full, PonytailLevel::Ultra];
+    pub const ALL: [PonytailLevel; 3] = [
+        PonytailLevel::Lite,
+        PonytailLevel::Full,
+        PonytailLevel::Ultra,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -147,7 +150,7 @@ pub fn inject_output(messages: &mut Vec<RouterMessage>, saver: OutputSaver) {
         }
         OutputSaver::Caveman(level) => {
             if !contains(messages, CAVEMAN_PROBE) {
-                inject(messages, caveman_prompt(level));
+                inject(messages, &caveman_prompt(level));
             }
         }
     }
@@ -291,9 +294,7 @@ fn caveman_prompt(level: CavemanLevel) -> String {
     };
 
     let pattern = match level {
-        CavemanLevel::Lite => {
-            "Pattern: state the thing, the action, the reason. Then next step."
-        }
+        CavemanLevel::Lite => "Pattern: state the thing, the action, the reason. Then next step.",
         CavemanLevel::Full => "Pattern: [thing] [action] [reason]. [next step].",
         CavemanLevel::Ultra => "Pattern: [thing] → [result]. [fix].",
         CavemanLevel::WenyanLite => {

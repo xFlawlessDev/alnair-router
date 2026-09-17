@@ -5,10 +5,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::db::repos::usage::NewUsageRecord;
 use crate::model::ResolvedTarget;
+use crate::pricing::Price;
 use crate::state::AppState;
+use crate::token_saver::Savings;
 use crate::upstream::AttemptOutcome;
 use crate::upstream::chat_backend::TokenUsage;
 use crate::upstream::executor::Attempt;
+
+/// Looks up the rate the winning tier is billed at, for pricing token savings.
+///
+/// Connections may pin a catalog id for relays whose upstream model path does
+/// not match any priced key, so the override wins when present.
+pub async fn tier_price(state: &AppState, target: &ResolvedTarget) -> Option<Price> {
+    let key = target.pricing_model.as_deref().unwrap_or(&target.model);
+    state.pricing_cache.price_for(key).await
+}
 
 /// Emits `x-router-*` headers so callers can see which tier answered.
 pub fn router_headers(target: &ResolvedTarget, attempt_count: usize) -> http::HeaderMap {
@@ -48,15 +59,8 @@ pub async fn record_failed_attempts(
             connection_name: Some(attempt.connection_name.clone()),
             attempt: attempt.index,
             status: "error".to_string(),
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            cached_tokens: 0,
-            reasoning_tokens: 0,
-            cost_usd: 0.0,
-            cost_input_usd: 0.0,
-            cost_output_usd: 0.0,
-            cost_reasoning_usd: 0.0,
             latency_ms: attempt.latency_ms,
+            ..Default::default()
         };
 
         if let Err(error) = state.usage().record(record).await {
@@ -82,6 +86,10 @@ pub struct StreamUsage {
     model: String,
     attempt: usize,
     latency_ms: u64,
+    /// What the request-side savers did, kept so the streamed row can report it.
+    savings: Savings,
+    /// Rate to price those savings at; absent leaves the token counts only.
+    price: Option<Price>,
     recorded: Arc<AtomicBool>,
 }
 
@@ -104,8 +112,17 @@ impl StreamUsage {
             model: target.model.clone(),
             attempt,
             latency_ms,
+            savings: Savings::default(),
+            price: None,
             recorded: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Attaches the pipeline's savings and the rate to price them at.
+    pub fn with_savings(mut self, savings: Savings, price: Option<Price>) -> Self {
+        self.savings = savings;
+        self.price = price;
+        self
     }
 
     /// Writes the usage row, ignoring any call after the first.
@@ -115,6 +132,8 @@ impl StreamUsage {
         }
 
         let usage = usage.unwrap_or_default();
+        let totals = self.savings.finalize(usage.completion_tokens, self.price);
+
         self.state.metrics.record_request(self.latency_ms);
         self.state.metrics.record_usage(
             usage.prompt_tokens,
@@ -122,6 +141,10 @@ impl StreamUsage {
             usage.cached_tokens,
             usage.cost_usd,
         );
+        self.state.metrics.record_token_totals(totals);
+        if let Some(line) = totals.describe() {
+            tracing::debug!(%line, "streamed request token savings");
+        }
         self.state.telemetry.record_usage(
             &self.connection_id,
             usage.prompt_tokens,
@@ -145,7 +168,9 @@ impl StreamUsage {
             cost_output_usd: usage.cost_output_usd,
             cost_reasoning_usd: usage.cost_reasoning_usd,
             latency_ms: self.latency_ms,
-        };
+            ..Default::default()
+        }
+        .with_savings(totals);
 
         let state = self.state.clone();
         tokio::spawn(async move {

@@ -23,6 +23,7 @@ use crate::metrics::Metrics;
 use crate::pricing::{PricingCache, PricingRepository};
 use crate::settings::{SettingsOverrides, SettingsRepository};
 use crate::telemetry::ActivityTracker;
+use crate::token_saver::TokenSaverSettings;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
 use crate::upstream::{Executor, ExecutorSettings, KeyRotator, UpstreamTimeouts};
 
@@ -229,6 +230,11 @@ impl AppState {
     /// Dashboard-managed setting overrides.
     pub fn settings(&self) -> SettingsRepository {
         SettingsRepository::new(self.pool.clone())
+    }
+
+    /// Snapshot the effective token-saving controls for one request.
+    pub fn token_saver_settings(&self) -> TokenSaverSettings {
+        TokenSaverSettings::from_config(&self.config_snapshot().token_saver)
     }
 
     /// Loads a routing snapshot and builds a resolver over it.

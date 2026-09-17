@@ -87,7 +87,10 @@ pub async fn compress(
     };
 
     if !response.status().is_success() {
-        return Err(describe_failure(&format!("HTTP {}", response.status()), &url));
+        return Err(describe_failure(
+            &format!("HTTP {}", response.status()),
+            &url,
+        ));
     }
 
     let text = response
@@ -315,7 +318,10 @@ mod tests {
     fn a_404_explains_the_loopback_rule() {
         let message = describe_failure("HTTP 404", "http://headroom:8787");
         assert!(message.contains("loopback-only"), "{message}");
-        assert!(message.contains("HEADROOM_COMPRESS_ALLOW_REMOTE"), "{message}");
+        assert!(
+            message.contains("HEADROOM_COMPRESS_ALLOW_REMOTE"),
+            "{message}"
+        );
     }
 
     #[test]

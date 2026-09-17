@@ -13,6 +13,7 @@ use alnair_router::limits::{BudgetMode, BudgetWindow};
 use alnair_router::pricing::{
     FetchedPrice, Price, PriceInput, PricingCache, PricingRepository, PricingSyncStatus,
 };
+use alnair_router::token_saver::SavingsTotals;
 use alnair_router::{Error, Result};
 
 async fn db() -> Db {
@@ -803,6 +804,7 @@ async fn usage_filters_narrow_rows_and_summary() {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         })
         .await
         .expect("record");
@@ -888,6 +890,7 @@ async fn usage_summary_rolls_up_counts_and_cost() {
         cost_output_usd: 0.0,
         cost_reasoning_usd: 0.0,
         latency_ms: 200,
+        ..Default::default()
     })
     .await
     .expect("record ok");
@@ -909,6 +912,7 @@ async fn usage_summary_rolls_up_counts_and_cost() {
         cost_output_usd: 0.0,
         cost_reasoning_usd: 0.0,
         latency_ms: 100,
+        ..Default::default()
     })
     .await
     .expect("record error");
@@ -925,6 +929,84 @@ async fn usage_summary_rolls_up_counts_and_cost() {
     assert_eq!(summary.cached_tokens, 10);
     assert!((summary.cost_usd - 0.001).abs() < 1e-9);
     assert!((summary.avg_latency_ms - 150.0).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn usage_savings_round_trip_and_aggregate() -> Result<()> {
+    let db = db().await;
+    let repo = UsageRepository::new(db.pool.clone());
+
+    repo.record(
+        NewUsageRecord {
+            requested_model: "fast".to_string(),
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            latency_ms: 10,
+            ..Default::default()
+        }
+        .with_savings(SavingsTotals {
+            saved_rtk_tokens: 400,
+            saved_headroom_tokens: 100,
+            saved_terse_tokens: 0,
+            saved_caveman_tokens: 30,
+            saved_ponytail_tokens: 5,
+            saved_cost_usd: 0.0024,
+        }),
+    )
+    .await?;
+
+    // A second row with no saver enabled must not inflate the request count.
+    repo.record(NewUsageRecord {
+        requested_model: "fast".to_string(),
+        attempt: 1,
+        status: "ok".to_string(),
+        prompt_tokens: 10,
+        completion_tokens: 5,
+        latency_ms: 10,
+        ..Default::default()
+    })
+    .await?;
+
+    let rows = repo
+        .list(10, 0, &UsageFilter::default(), Sort::default())
+        .await?;
+    let saved = rows
+        .iter()
+        .find(|row| row.saved_rtk_tokens > 0)
+        .expect("row with savings");
+    assert_eq!(saved.saved_rtk_tokens, 400);
+    assert_eq!(saved.saved_headroom_tokens, 100);
+    assert_eq!(saved.saved_caveman_tokens, 30);
+    assert_eq!(saved.saved_ponytail_tokens, 5);
+    assert_eq!(saved.saved_terse_tokens, 0);
+    assert!((saved.saved_cost_usd - 0.0024).abs() < 1e-9);
+
+    let savings = repo.savings(&UsageFilter::default()).await?;
+    assert_eq!(
+        savings.requests, 1,
+        "only the row that saved anything counts"
+    );
+    assert_eq!(savings.measured_tokens(), 500);
+    assert_eq!(savings.estimated_tokens(), 35);
+    assert_eq!(savings.saved_tokens(), 535);
+    assert_eq!(
+        savings.contributions(),
+        vec![
+            ("rtk", 400),
+            ("headroom", 100),
+            ("caveman", 30),
+            ("ponytail", 5)
+        ]
+    );
+
+    let summary = repo.summary(&UsageFilter::default()).await?;
+    let combined = summary.savings(savings);
+    assert_eq!(combined.savings.saved_rtk_tokens, 400);
+    assert_eq!(combined.requests, 2);
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -950,6 +1032,7 @@ async fn usage_list_returns_newest_first() -> Result<()> {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 10,
+            ..Default::default()
         })
         .await?;
     }
@@ -1169,6 +1252,7 @@ async fn usage_spend_since_sums_only_the_matching_key() {
                 cost_output_usd: 0.0,
                 cost_reasoning_usd: 0.0,
                 latency_ms: 10,
+                ..Default::default()
             })
             .await
             .expect("record");
@@ -1230,6 +1314,7 @@ async fn spend_by_key_splits_windows_and_skips_null_keys() {
                 cost_output_usd: 0.0,
                 cost_reasoning_usd: 0.0,
                 latency_ms: 10,
+                ..Default::default()
             })
             .await
             .expect("record");
@@ -1377,6 +1462,7 @@ async fn spend_for_key_splits_windows_for_one_key() {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 10,
+            ..Default::default()
         })
         .await
         .expect("record");
@@ -1616,6 +1702,7 @@ async fn usage_cost_breakdown_round_trips_and_sums() {
         cost_output_usd: 1.5,
         cost_reasoning_usd: 0.5,
         latency_ms: 10,
+        ..Default::default()
     })
     .await
     .expect("record");

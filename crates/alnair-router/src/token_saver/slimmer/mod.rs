@@ -98,9 +98,7 @@ impl SlimmerStats {
     pub fn tokens_saved(&self) -> u64 {
         self.hits
             .iter()
-            .map(|hit| {
-                estimate_chars(hit.chars_in).saturating_sub(estimate_chars(hit.chars_out))
-            })
+            .map(|hit| estimate_chars(hit.chars_in).saturating_sub(estimate_chars(hit.chars_out)))
             .sum()
     }
 

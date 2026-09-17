@@ -42,6 +42,16 @@ pub struct SettingsPatch {
     pub pricing_sync_enabled: Option<bool>,
     pub pricing_sync_interval_secs: Option<u64>,
     pub pricing_source_url: Option<String>,
+    pub slimmer_enabled: Option<bool>,
+    pub slimmer_level: Option<String>,
+    pub headroom_enabled: Option<bool>,
+    pub headroom_url: Option<String>,
+    pub headroom_timeout_ms: Option<u64>,
+    pub terse_enabled: Option<bool>,
+    pub caveman_enabled: Option<bool>,
+    pub caveman_level: Option<String>,
+    pub ponytail_enabled: Option<bool>,
+    pub ponytail_level: Option<String>,
 }
 
 impl SettingsPatch {
@@ -114,6 +124,31 @@ impl SettingsPatch {
                 ));
             }
             overrides.pricing_source_url = Some(url);
+        }
+
+        set(&mut overrides.slimmer_enabled, self.slimmer_enabled);
+        if let Some(level) = self.slimmer_level {
+            overrides.slimmer_level = Some(level.trim().to_string());
+        }
+        set(&mut overrides.headroom_enabled, self.headroom_enabled);
+        if let Some(url) = self.headroom_url {
+            overrides.headroom_url = Some(url.trim().trim_end_matches('/').to_string());
+        }
+        set(&mut overrides.headroom_timeout_ms, self.headroom_timeout_ms);
+        set(&mut overrides.terse_enabled, self.terse_enabled);
+        set(&mut overrides.caveman_enabled, self.caveman_enabled);
+        if let Some(level) = self.caveman_level {
+            overrides.caveman_level = Some(level.trim().to_string());
+        }
+        set(&mut overrides.ponytail_enabled, self.ponytail_enabled);
+        if let Some(level) = self.ponytail_level {
+            overrides.ponytail_level = Some(level.trim().to_string());
+        }
+
+        if overrides.terse_enabled == Some(true) && overrides.caveman_enabled == Some(true) {
+            return Err(Error::BadRequest(
+                "token_saver.terse_enabled and caveman_enabled are mutually exclusive".to_string(),
+            ));
         }
 
         Ok(())
@@ -203,6 +238,20 @@ pub struct PricingSettingsView {
     pub source_url: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TokenSaverSettingsView {
+    pub slimmer_enabled: bool,
+    pub slimmer_level: String,
+    pub headroom_enabled: bool,
+    pub headroom_url: String,
+    pub headroom_timeout_ms: u64,
+    pub terse_enabled: bool,
+    pub caveman_enabled: bool,
+    pub caveman_level: String,
+    pub ponytail_enabled: bool,
+    pub ponytail_level: String,
+}
+
 /// Values that only change by editing `config.toml` and restarting; reported so
 /// the dashboard can show the full picture without pretending to edit them.
 #[derive(Debug, Serialize)]
@@ -224,12 +273,13 @@ pub struct SettingsResponse {
     pub limits: LimitsSettingsView,
     pub rate_limit: RateLimitSettingsView,
     pub pricing: PricingSettingsView,
+    pub token_saver: TokenSaverSettingsView,
     pub overrides: Vec<&'static str>,
     pub deployment: DeploymentView,
 }
 
 impl SettingsResponse {
-    fn build(config: &RouterConfig, overrides: &SettingsOverrides) -> Self {
+    pub fn build(config: &RouterConfig, overrides: &SettingsOverrides) -> Self {
         Self {
             server: ServerSettingsView {
                 require_api_key: config.server.require_api_key,
@@ -262,6 +312,18 @@ impl SettingsResponse {
                 sync_enabled: config.pricing.sync_enabled,
                 sync_interval_secs: config.pricing.sync_interval_secs,
                 source_url: config.pricing.source_url.clone(),
+            },
+            token_saver: TokenSaverSettingsView {
+                slimmer_enabled: config.token_saver.slimmer_enabled,
+                slimmer_level: config.token_saver.slimmer_level.clone(),
+                headroom_enabled: config.token_saver.headroom_enabled,
+                headroom_url: config.token_saver.headroom_url.clone(),
+                headroom_timeout_ms: config.token_saver.headroom_timeout_ms,
+                terse_enabled: config.token_saver.terse_enabled,
+                caveman_enabled: config.token_saver.caveman_enabled,
+                caveman_level: config.token_saver.caveman_level.clone(),
+                ponytail_enabled: config.token_saver.ponytail_enabled,
+                ponytail_level: config.token_saver.ponytail_level.clone(),
             },
             overrides: overrides.keys(),
             deployment: DeploymentView {

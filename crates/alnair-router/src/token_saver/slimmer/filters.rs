@@ -145,7 +145,9 @@ fn git_diff(text: &str) -> String {
             continue;
         }
 
-        if line.starts_with("diff --git ") || line.starts_with("index ") || line.starts_with("--- ")
+        if line.starts_with("diff --git ")
+            || line.starts_with("index ")
+            || line.starts_with("--- ")
             || line.starts_with("+++ ")
         {
             continue;
@@ -319,7 +321,9 @@ fn build_output(text: &str) -> String {
         summary.push(format!("Added {added} packages"));
     }
     if hidden_deprecations > 0 {
-        summary.push(format!("... +{hidden_deprecations} more deprecated packages"));
+        summary.push(format!(
+            "... +{hidden_deprecations} more deprecated packages"
+        ));
     }
     if hidden_warnings > 0 {
         summary.push(format!("... +{hidden_warnings} more warnings"));
@@ -342,8 +346,7 @@ fn grep(text: &str) -> String {
 
     for line in text.lines() {
         let mut parts = line.splitn(3, ':');
-        let (Some(path), Some(number), Some(content)) =
-            (parts.next(), parts.next(), parts.next())
+        let (Some(path), Some(number), Some(content)) = (parts.next(), parts.next(), parts.next())
         else {
             continue;
         };
@@ -435,12 +438,15 @@ fn tree(text: &str) -> String {
         .lines()
         .filter(|line| {
             let trimmed = line.trim();
-            !trimmed.is_empty()
-                && !(trimmed.contains("directories") && trimmed.contains("files"))
+            !trimmed.is_empty() && !(trimmed.contains("directories") && trimmed.contains("files"))
         })
         .collect();
 
-    cap_lines(lines.iter().map(|l| l.to_string()).collect(), 200, "... +{n} more lines")
+    cap_lines(
+        lines.iter().map(|l| l.to_string()).collect(),
+        200,
+        "... +{n} more lines",
+    )
 }
 
 /// `ls -l`: drop noise directories, then summarise by extension.
@@ -463,7 +469,7 @@ fn ls(text: &str) -> String {
         let name = match fields.iter().position(|field| *field == "->") {
             Some(arrow) => fields.get(arrow + 1).copied().unwrap_or(""),
             None => *fields.last().unwrap_or(&""),
-        };
+        }
         .to_string();
         if name.is_empty() || name == "." || name == ".." {
             continue;
@@ -643,7 +649,7 @@ fn cap_lines(lines: Vec<String>, max: usize, marker: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::token_saver::slimmer::detect::{detect, FilterKind};
+    use crate::token_saver::slimmer::detect::{FilterKind, detect};
 
     #[test]
     fn git_diff_keeps_headers_and_caps_hunks() {
@@ -689,7 +695,9 @@ mod tests {
     fn ls_drops_noise_directories() {
         let mut text = String::from("total 8\n");
         for name in ["node_modules", "target", "dist", ".git"] {
-            text.push_str(&format!("drwxr-xr-x  4 user staff 128 Jan 1 00:00 {name}\n"));
+            text.push_str(&format!(
+                "drwxr-xr-x  4 user staff 128 Jan 1 00:00 {name}\n"
+            ));
         }
         text.push_str("-rw-r--r--  1 user staff 100 Jan 1 00:00 README.md\n");
         text.push_str("-rw-r--r--  1 user staff 200 Jan 1 00:00 Cargo.toml\n");
@@ -728,7 +736,7 @@ mod tests {
         let out = apply(FilterKind::DedupLog, text);
 
         assert!(out.contains("... (3 duplicate lines)"));
-        assert!(out.len() < text.len());
+        assert!(out.lines().count() < text.lines().count());
     }
 
     #[test]

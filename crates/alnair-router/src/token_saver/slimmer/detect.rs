@@ -149,7 +149,7 @@ fn is_git_status_line(line: &str) -> bool {
 
 /// A line that only a package manager or compiler produces.
 fn is_build_output_line(line: &str) -> bool {
-    const PREFIXES: [&str; 12] = [
+    const PREFIXES: [&str; 11] = [
         "npm warn",
         "npm error",
         "npm ERR!",
@@ -198,8 +198,7 @@ fn is_mostly_porcelain(window: &str) -> bool {
 /// `grep -n` output: a line has `path:line:text`.
 fn is_grep_row(line: &str) -> bool {
     let mut parts = line.splitn(3, ':');
-    let (Some(path), Some(number), Some(rest)) = (parts.next(), parts.next(), parts.next())
-    else {
+    let (Some(path), Some(number), Some(rest)) = (parts.next(), parts.next(), parts.next()) else {
         return false;
     };
 
@@ -380,7 +379,7 @@ mod tests {
             .map(|index| format!("unique line {index}"))
             .collect::<Vec<_>>()
             .join("\n");
-        assert_eq!(detect(text), Some(FilterKind::SmartTruncate));
+        assert_eq!(detect(&text), Some(FilterKind::SmartTruncate));
     }
 
     #[test]

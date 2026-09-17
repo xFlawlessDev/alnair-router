@@ -138,7 +138,8 @@ crates/alnair-router/
 │   │   ├── probe.rs         # admin model listing / connection tests
 │   │   └── media.rs         # HTTP proxying for non-chat endpoints
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
-│   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, public, web
+│   ├── token_saver/         # deterministic pipeline: slimmer, headroom, directives
+│   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, public, web, token_saver
 └── tests/                   # resolve, storage, fallback, routes, e2e_real
 ```
 
@@ -181,10 +182,15 @@ token is write-only: `GET /api/settings` reports only whether one is set.
 
 Managed fields: `server.require_api_key`, `server.admin_token`,
 `server.readiness_upstream_checks`, all of `router.*` and `limits.*`,
-`rate_limit.*`, and `pricing.*`. Applying an override pushes the new values into
-the live components (`UpstreamLimiter`, `RateLimiter`, `Executor`,
-`CatalogCache`) and swaps `AppState::config`; the pricing sync loop re-reads the
-config each iteration and is woken by `AppState::pricing_sync_trigger`.
+`rate_limit.*`, `pricing.*` and `token_saver.*`. Applying an override pushes the
+new values into the live components (`UpstreamLimiter`, `RateLimiter`,
+`Executor`, `CatalogCache`) and swaps `AppState::config`; the pricing sync loop
+re-reads the config each iteration and is woken by
+`AppState::pricing_sync_trigger`. `token_saver` needs no extra plumbing: the seam
+reads the setting per request via `AppState::token_saver_settings`, so a toggle
+takes effect on the next call. Overrides are validated on the way in
+(`SettingsOverrides::merge` → `config.validate`), which is what stops a
+mutually-exclusive terse+caveman pair or a misspelled level from being saved.
 
 Deployment-only values (`server.host`/`port`, `server.tray`,
 `server.serve_dashboard`, `storage.url`, `secrets.key`) stay read-only in the
@@ -595,6 +601,32 @@ suite should tell you.
     whose `secret_enc` values do not decrypt. (`db/repos/api_keys.rs`,
     `handlers/admin/keys.rs`, `backup.rs`)
 
+31. **The token saver is one function, and the playground runs that same
+    function.** `token_saver::apply` is called once by each inbound chat handler
+    (`chat.rs`, `messages.rs`, `responses.rs`) after the model reference is read
+    but before `Executor::stream` resolves targets — so the rewrite happens once
+    per request and every provider gets identical savings, rather than each
+    attempt re-compressing the same messages. Order is fixed: slimmer (RTK) →
+    headroom → terse/caveman → ponytail. Terse and caveman both write a system
+    directive and are therefore mutually exclusive; `OutputSaver` makes that
+    unrepresentable and `TokenSaverConfig::validate` rejects the combination at
+    startup *and* on hot-apply, because `SettingsOverrides::merge` calls
+    `config.validate()`. Every saver fails open: a Headroom outage records a
+    note and forwards the original messages untouched, so the pipeline can never
+    fail a request. Input savings are measured; output savings are estimated
+    from a documented ratio applied to the completion, and
+    `UsageRepository::savings()` keeps the two apart rather than blending a
+    guess into a fact. `token_saver::run` returns the same result plus a
+    `StepTrace` per step and backs `POST /api/token-saver/playground`, which
+    reports the prompt token delta **measured from the rewritten messages**
+    rather than trusting each saver's own reported figure — that is what makes
+    it evidence instead of a restatement. A directive step reports a *positive*
+    delta, since it adds the instruction it injects. Per-run overrides go
+    through the same validation as the Configuration tab on the Token Saving
+    page and are never persisted.
+    (`token_saver/`, `handlers/chat.rs`, `handlers/token_saver.rs`, `config.rs`,
+    `db/repos/usage.rs`)
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -758,12 +790,12 @@ Response headers report the routing decision:
 | `crates/alnair-llm/src/**` (81) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff |
 | `tests/resolve.rs` (24) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names |
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
-| `tests/routes.rs` (41) | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard |
+| `tests/routes.rs` | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard, Headroom probe, usage savings block, and the token-saver playground (measured shrinkage, idle pipeline, directive cost, output-estimate opt-in, override validation, Headroom fail-open) |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/streaming.rs` (5) | SSE translation: streamed tool calls + `finish_reason`, reasoning, opt-in usage chunk, and the Anthropic `tool_use`/`thinking` block sequence |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
 | `src/**` inline (49) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization, activity tracker |
-| `apps/web/src/**` (33) | API client error/transport handling, formatters, route table, theme store, alias prefix helpers, confirm-dialog regression, topology layout |
+| `apps/web/src/**` | API client error/transport handling, formatters, route table, theme store, alias prefix helpers, confirm-dialog regression, topology layout, and the token-saver playground page (run, measured reduction, rejection, malformed JSON, per-run toggles incl. the terse/caveman exclusion) |
 
 ---
 

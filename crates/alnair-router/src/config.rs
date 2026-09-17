@@ -29,6 +29,106 @@ pub struct RouterConfig {
     pub limits: LimitsConfig,
     pub rate_limit: RateLimitConfig,
     pub pricing: PricingConfig,
+    pub token_saver: TokenSaverConfig,
+}
+
+/// Token-saving pipeline controls. Runtime/dashboard overrides are supported.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TokenSaverConfig {
+    /// RTK/Slimmer is the safe local default.
+    pub slimmer_enabled: bool,
+    pub slimmer_level: String,
+    pub headroom_enabled: bool,
+    pub headroom_url: String,
+    pub headroom_timeout_ms: u64,
+    pub terse_enabled: bool,
+    pub caveman_enabled: bool,
+    pub caveman_level: String,
+    pub ponytail_enabled: bool,
+    pub ponytail_level: String,
+}
+
+impl Default for TokenSaverConfig {
+    fn default() -> Self {
+        Self {
+            slimmer_enabled: true,
+            slimmer_level: "minimal".to_string(),
+            headroom_enabled: false,
+            headroom_url: "http://localhost:8787".to_string(),
+            headroom_timeout_ms: 2_000,
+            terse_enabled: false,
+            caveman_enabled: false,
+            caveman_level: "full".to_string(),
+            ponytail_enabled: false,
+            ponytail_level: "full".to_string(),
+        }
+    }
+}
+
+impl TokenSaverConfig {
+    /// Validates this section: mutual exclusion, known levels, and a usable
+    /// Headroom URL.
+    ///
+    /// Levels are rejected rather than defaulted silently, because a misspelled
+    /// level would otherwise change model behaviour with no signal. Both the
+    /// startup/hot-apply path ([`RouterConfig::validate`]) and the playground's
+    /// per-run overrides call this, so a playground run can never accept
+    /// settings the real request path would refuse.
+    pub fn validate(&self) -> Result<()> {
+        let saver = self;
+
+        if saver.terse_enabled && saver.caveman_enabled {
+            return Err(Error::Config(
+                "token_saver.terse_enabled and token_saver.caveman_enabled are mutually \
+                 exclusive: both write a system directive, so pick one (Ponytail stacks on \
+                 top of either)."
+                    .to_string(),
+            ));
+        }
+
+        if crate::token_saver::SlimmerLevel::parse(&saver.slimmer_level).is_none() {
+            return Err(Error::Config(format!(
+                "token_saver.slimmer_level must be 'minimal' or 'aggressive' (got '{}')",
+                saver.slimmer_level
+            )));
+        }
+
+        if crate::token_saver::CavemanLevel::parse(&saver.caveman_level).is_none() {
+            return Err(Error::Config(format!(
+                "token_saver.caveman_level must be one of lite, full, ultra, wenyan-lite, \
+                 wenyan-full, wenyan-ultra (got '{}')",
+                saver.caveman_level
+            )));
+        }
+
+        if crate::token_saver::PonytailLevel::parse(&saver.ponytail_level).is_none() {
+            return Err(Error::Config(format!(
+                "token_saver.ponytail_level must be 'lite', 'full' or 'ultra' (got '{}')",
+                saver.ponytail_level
+            )));
+        }
+
+        if saver.headroom_enabled {
+            let url = saver.headroom_url.trim();
+            let parsed = url::Url::parse(url).ok();
+            match parsed {
+                Some(parsed) if matches!(parsed.scheme(), "http" | "https") => {}
+                _ => {
+                    return Err(Error::Config(format!(
+                        "token_saver.headroom_url must be an http(s) URL (got '{url}')"
+                    )));
+                }
+            }
+            if saver.headroom_timeout_ms == 0 {
+                return Err(Error::Config(
+                    "token_saver.headroom_timeout_ms must be at least 1".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -318,7 +418,12 @@ impl RouterConfig {
     ///   opts out with `server.allow_unauthenticated_admin`;
     /// - a valid `secrets.key` is mandatory so upstream credentials are never
     ///   stored in plaintext.
+    ///
+    /// Token-saving levels are validated here rather than defaulted silently: a
+    /// misspelled level would otherwise change model behaviour with no signal.
     pub fn validate(&self) -> Result<()> {
+        self.token_saver.validate()?;
+
         if !self.server.binds_loopback()
             && self.server.admin_token().is_none()
             && !self.server.allow_unauthenticated_admin

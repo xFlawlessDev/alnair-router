@@ -112,6 +112,7 @@ async fn record_usage(db: &Db, api_key_id: &str, cost_usd: f64) {
             cost_output_usd: cost_usd,
             cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         })
         .await
         .expect("record usage");
@@ -1417,6 +1418,354 @@ async fn metrics_endpoint_exposes_prometheus_text() {
     assert!(text.contains("# TYPE alnair_router_attempts_total counter"));
 }
 
+#[tokio::test]
+async fn headroom_test_reports_an_unreachable_proxy_without_failing() {
+    let (app, _db) = app(false).await;
+
+    // Nothing is listening on this port; the probe must still answer 200 with a
+    // readable failure rather than surfacing a 5xx.
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/headroom/test",
+        Some(serde_json::json!({ "url": "http://127.0.0.1:9" })),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(body["ok"], serde_json::json!(false));
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("127.0.0.1:9"),
+        "failure should name the URL: {body}"
+    );
+}
+
+/// A tool result the slimmer reliably compresses: a long unified diff.
+fn bulky_diff() -> String {
+    let mut diff = String::from("diff --git a/x b/x\n@@ -1 +1 @@\n");
+    for index in 0..200 {
+        diff.push_str(&format!("+line {index}\n"));
+    }
+    diff
+}
+
+#[tokio::test]
+async fn playground_shrinks_a_bulky_tool_result_and_reports_each_step() {
+    let (app, _db) = app(false).await;
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [
+                { "role": "system", "content": "You are helpful." },
+                { "role": "user", "content": "review this" },
+                { "role": "tool", "content": bulky_diff(), "tool_call_id": "call_1" }
+            ]
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+    // The default config enables the slimmer, so the pipeline is active.
+    assert_eq!(body["active"], serde_json::json!(true));
+
+    let before = body["tokens_before"].as_u64().expect("before");
+    let after = body["tokens_after"].as_u64().expect("after");
+    assert!(after < before, "prompt should shrink: {before} -> {after}");
+    assert_eq!(
+        body["prompt_tokens_saved"],
+        serde_json::json!(before as i64 - after as i64)
+    );
+
+    // The response must show the rewritten message, not merely claim a saving.
+    let rewritten = body["after"][2]["content"].as_str().expect("tool content");
+    assert!(
+        rewritten.len() < bulky_diff().len(),
+        "the tool result sent upstream should be shorter"
+    );
+    assert_eq!(
+        body["before"][2]["content"].as_str(),
+        Some(&bulky_diff()[..])
+    );
+
+    let steps = body["steps"].as_array().expect("steps");
+    let rtk = steps
+        .iter()
+        .find(|step| step["saver"] == serde_json::json!("rtk"))
+        .expect("rtk step");
+    assert_eq!(rtk["applied"], serde_json::json!(true));
+    assert_eq!(rtk["side"], serde_json::json!("input"));
+    assert_eq!(rtk["label"], serde_json::json!("RTK / Slimmer"));
+    assert!(
+        rtk["delta"].as_i64().expect("delta") < 0,
+        "an input saver must report a negative delta"
+    );
+}
+
+#[tokio::test]
+async fn playground_reports_an_idle_pipeline_without_inventing_savings() {
+    let (app, _db) = app(false).await;
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "overrides": {
+                "slimmer_enabled": false,
+                "headroom_enabled": false,
+                "terse_enabled": false,
+                "caveman_enabled": false,
+                "ponytail_enabled": false
+            }
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(body["active"], serde_json::json!(false));
+    assert_eq!(body["steps"].as_array().expect("steps").len(), 0);
+    assert_eq!(body["prompt_tokens_saved"], serde_json::json!(0));
+    assert_eq!(body["before"], body["after"], "nothing may be rewritten");
+}
+
+#[tokio::test]
+async fn playground_shows_a_directive_costing_prompt_tokens() {
+    let (app, _db) = app(false).await;
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "assumed_completion_tokens": 1000,
+            "overrides": {
+                "slimmer_enabled": false,
+                "terse_enabled": true
+            }
+        })),
+        None,
+    )
+    .await;
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+    // The directive is injected, which costs prompt tokens — the playground must
+    // say so rather than presenting the injection as a free win.
+    let terse = body["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .find(|step| step["saver"] == serde_json::json!("terse"))
+        .expect("terse step")
+        .clone();
+    assert_eq!(terse["side"], serde_json::json!("output"));
+    assert!(
+        terse["delta"].as_i64().expect("delta") > 0,
+        "a directive adds the instruction text it injects"
+    );
+
+    // An assumed completion lets the output side be priced.
+    assert!(
+        body["totals"]["saved_terse_tokens"]
+            .as_u64()
+            .expect("terse tokens")
+            > 0
+    );
+}
+
+#[tokio::test]
+async fn playground_without_a_completion_length_reports_no_output_estimate() {
+    let (app, _db) = app(false).await;
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "overrides": { "slimmer_enabled": false, "terse_enabled": true }
+        })),
+        None,
+    )
+    .await;
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+    // Without a completion length the output savers cannot be priced, so the
+    // playground reports nothing rather than guessing a number.
+    assert_eq!(body["totals"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn playground_rejects_a_configuration_the_settings_page_would_reject() {
+    let (app, _db) = app(false).await;
+
+    // Terse and caveman both write a system directive, so validation forbids
+    // them together. The playground must not demonstrate a config that cannot
+    // actually be saved.
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "overrides": { "terse_enabled": true, "caveman_enabled": true }
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("mutually exclusive"),
+        "error should explain the conflict: {body}"
+    );
+}
+
+#[tokio::test]
+async fn playground_fails_open_when_headroom_is_unreachable() {
+    let (app, _db) = app(false).await;
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "overrides": {
+                "slimmer_enabled": false,
+                "headroom_enabled": true,
+                "headroom_url": "http://127.0.0.1:9"
+            }
+        })),
+        None,
+    )
+    .await;
+
+    // Fail-open is the contract: an unreachable proxy must not fail the run.
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+    let headroom = body["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .find(|step| step["saver"] == serde_json::json!("headroom"))
+        .expect("headroom step")
+        .clone();
+    assert_eq!(headroom["applied"], serde_json::json!(false));
+    assert_eq!(body["before"], body["after"], "nothing may be rewritten");
+    assert!(
+        body["notes"]
+            .as_array()
+            .expect("notes")
+            .iter()
+            .any(|note| note.as_str().unwrap_or_default().contains("headroom")),
+        "the decline should be explained: {body}"
+    );
+}
+
+#[tokio::test]
+async fn usage_summary_carries_a_savings_block() {
+    let (app, db) = app(false).await;
+    let repo = alnair_router::db::repos::usage::UsageRepository::new(db.pool.clone());
+    repo.record(
+        alnair_router::db::repos::usage::NewUsageRecord {
+            requested_model: "gpt-4o".to_string(),
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            latency_ms: 10,
+            ..Default::default()
+        }
+        .with_savings(alnair_router::token_saver::SavingsTotals {
+            saved_rtk_tokens: 25,
+            saved_cost_usd: 0.001,
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("record");
+
+    let response = raw_request_with_auth(&app, "GET", "/api/usage/summary", None, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(body["savings"]["saved_rtk_tokens"], serde_json::json!(25));
+    assert_eq!(body["savings"]["requests"], serde_json::json!(1));
+    // The pre-existing top-level cost fields must survive the added block.
+    assert_eq!(body["requests"], serde_json::json!(1));
+    assert!(body["cost_usd"].is_number());
+}
+
 async fn raw_text(app: &axum::Router, path: &str) -> (StatusCode, String, Option<String>) {
     let response = raw_request_with_auth(app, "GET", path, None, None).await;
     let status = response.status();
@@ -1967,6 +2316,7 @@ async fn usage_filters_and_facets_are_queryable() {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         })
         .await
         .expect("record usage");
@@ -2047,6 +2397,7 @@ async fn usage_query_strings_deserialize() {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         })
         .await
         .expect("record usage");
@@ -2089,6 +2440,7 @@ async fn usage_timeseries_buckets_the_filtered_rows() {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         })
         .await
         .expect("record usage");
@@ -2155,6 +2507,7 @@ async fn usage_list_sorts_and_rejects_unknown_keys() {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         })
         .await
         .expect("record usage");
@@ -2202,6 +2555,7 @@ async fn usage_until_bounds_the_window() {
             cost_output_usd: 0.0,
             cost_reasoning_usd: 0.0,
             latency_ms: 5,
+            ..Default::default()
         })
         .await
         .expect("record usage");
