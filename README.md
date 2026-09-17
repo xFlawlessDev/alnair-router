@@ -712,10 +712,11 @@ a single `Cargo.toml` line.
 
 ## Development
 
-Building the router needs a Rust toolchain new enough for **edition 2024**
-(1.85 or newer) and, for a dashboard-included build, pnpm for `apps/web`. There
-is no `DATABASE_URL` to set and no `cargo sqlx prepare` step — queries run
-against the SQLite file at runtime, so `cargo build` is enough.
+Building the router needs a Rust toolchain new enough for **edition 2024** and
+the locked `icu_*` dependencies (1.88 or newer) and, for a dashboard-included
+build, pnpm for `apps/web`. There is no `DATABASE_URL` to set and no
+`cargo sqlx prepare` step — queries run against the SQLite file at runtime, so
+`cargo build` is enough.
 
 ```bash
 # Router

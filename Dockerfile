@@ -12,7 +12,7 @@ COPY apps/web/ ./
 RUN pnpm run build
 
 # --- Router ----------------------------------------------------------------
-FROM rust:1.85-slim-bookworm AS build
+FROM rust:1.88-slim-bookworm AS build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/*
