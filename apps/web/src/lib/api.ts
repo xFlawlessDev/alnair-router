@@ -106,10 +106,13 @@ function errorType(payload: unknown): string | undefined {
 
 /** Bearer for admin calls: the password session first, then a legacy token. */
 function authHeader(): string {
-  const access = getAccessToken();
-  if (access) return `Bearer ${access}`;
-  const token = getAdminToken();
+  const token = adminToken();
   return token ? `Bearer ${token}` : "";
+}
+
+/** The raw secret behind {@link authHeader}, for callers that build headers. */
+function adminToken(): string {
+  return getAccessToken() || getAdminToken();
 }
 
 async function send(
@@ -220,24 +223,41 @@ async function request<T>(
   return payload as T;
 }
 
-/** Sends a non-JSON request (binary backup download/upload). */
+/**
+ * Sends a non-JSON request (binary backup download/upload).
+ *
+ * Passing an explicit `token` (the public client key) opts out of the 401
+ * refresh-and-replay, which belongs to the dashboard session only.
+ */
 async function rawRequest(
   path: string,
   init: RequestInit = {},
-  token = getAdminToken(),
+  token?: string,
 ): Promise<Response> {
-  const headers: Record<string, string> = {
-    ...((init.headers as Record<string, string> | undefined) ?? {}),
-  };
-  if (token) headers.authorization = `Bearer ${token}`;
+  const session = token === undefined;
 
-  let response: Response;
-  try {
-    response = await fetch(path, { ...init, headers });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError")
-      throw error;
-    throw new ApiError("Cannot reach the router. Is it running?", 0);
+  const attempt = async (bearer: string): Promise<Response> => {
+    const headers: Record<string, string> = {
+      ...((init.headers as Record<string, string> | undefined) ?? {}),
+    };
+    if (bearer) headers.authorization = `Bearer ${bearer}`;
+
+    try {
+      return await fetch(path, { ...init, headers });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError")
+        throw error;
+      throw new ApiError("Cannot reach the router. Is it running?", 0);
+    }
+  };
+
+  let response = await attempt(token ?? adminToken());
+
+  // An expired access token is refreshed once, then the call is replayed.
+  if (session && response.status === 401 && getRefreshToken()) {
+    if (await refreshSession()) {
+      response = await attempt(adminToken());
+    }
   }
 
   if (!response.ok) {
@@ -520,7 +540,8 @@ export async function streamPlaygroundChat(
       signal,
     });
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
     throw new ApiError("Cannot reach the router. Is it running?", 0);
   }
 

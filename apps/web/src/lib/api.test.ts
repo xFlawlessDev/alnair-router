@@ -3,6 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setAdminToken } from "./adminToken";
 import { ApiError, api, buildUrl, streamPlaygroundChat } from "./api";
 import { setClientKey } from "./clientKey";
+import { setSession } from "./session";
+
+import type { AuthSession } from "@/types/api";
+
+const session: AuthSession = {
+  access_token: "access-1",
+  refresh_token: "refresh-1",
+  access_expires_at: "2026-01-01T00:00:00Z",
+  refresh_expires_at: "2026-01-08T00:00:00Z",
+};
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -28,6 +38,7 @@ describe("api", () => {
     vi.unstubAllGlobals();
     setAdminToken("");
     setClientKey("");
+    setSession(null);
   });
 
   it("returns the parsed payload on success", async () => {
@@ -306,6 +317,56 @@ describe("api", () => {
     });
   });
 
+  it("downloads a backup with the dashboard session token", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(new Uint8Array([0x53, 0x51, 0x4c]), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    setSession(session);
+
+    await api.downloadBackup();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/backup");
+    expect(init.headers).toMatchObject({
+      authorization: `Bearer ${session.access_token}`,
+    });
+  });
+
+  it("refreshes and replays a backup download that answers 401", async () => {
+    const rotated = { ...session, access_token: "access-2" };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              message: "sign in required",
+              type: "authentication_error",
+            },
+          },
+          401,
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse(rotated))
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([0x53, 0x51, 0x4c]), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    setSession(session);
+
+    const blob = await api.downloadBackup();
+
+    expect(blob.size).toBe(3);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/backup");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/auth/refresh");
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({
+      headers: expect.objectContaining({ authorization: "Bearer access-2" }),
+    });
+  });
+
   it("uploads a backup and surfaces restore errors", async () => {
     const fetchMock = vi
       .fn()
@@ -380,14 +441,16 @@ describe("streamPlaygroundChat", () => {
   it("dispatches each frame to its callback", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        streamResponse([
-          'data: {"type":"router","model":"deepseek","source":"alias:chatty","provider_type":"openai-compatible","attempts":1}\n\n',
-          'data: {"type":"delta","text":"pon"}\n\ndata: {"type":"delta","text":"g"}\n\n',
-          'data: {"type":"usage","prompt_tokens":12,"completion_tokens":3,"cost_usd":0.0001,"savings":{"saved_rtk_tokens":0,"saved_headroom_tokens":0,"saved_terse_tokens":0,"saved_caveman_tokens":0,"saved_ponytail_tokens":0,"saved_cost_usd":0}}\n\n',
-          "data: [DONE]\n\n",
-        ]),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          streamResponse([
+            'data: {"type":"router","model":"deepseek","source":"alias:chatty","provider_type":"openai-compatible","attempts":1}\n\n',
+            'data: {"type":"delta","text":"pon"}\n\ndata: {"type":"delta","text":"g"}\n\n',
+            'data: {"type":"usage","prompt_tokens":12,"completion_tokens":3,"cost_usd":0.0001,"savings":{"saved_rtk_tokens":0,"saved_headroom_tokens":0,"saved_terse_tokens":0,"saved_caveman_tokens":0,"saved_ponytail_tokens":0,"saved_cost_usd":0}}\n\n',
+            "data: [DONE]\n\n",
+          ]),
+        ),
     );
 
     const onRouter = vi.fn();
@@ -413,13 +476,15 @@ describe("streamPlaygroundChat", () => {
     // A real stream cuts wherever the network decides, including mid-JSON.
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        streamResponse([
-          'data: {"type":"del',
-          'ta","text":"split"}\n',
-          "\ndata: [DONE]\n\n",
-        ]),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          streamResponse([
+            'data: {"type":"del',
+            'ta","text":"split"}\n',
+            "\ndata: [DONE]\n\n",
+          ]),
+        ),
     );
 
     const onDelta = vi.fn();
@@ -434,12 +499,14 @@ describe("streamPlaygroundChat", () => {
   it("raises a non-OK response as an ApiError with the server message", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        jsonResponse(
-          { error: { message: "no such model", type: "not_found_error" } },
-          404,
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            { error: { message: "no such model", type: "not_found_error" } },
+            404,
+          ),
         ),
-      ),
     );
 
     const failure = await streamPlaygroundChat(
@@ -458,12 +525,14 @@ describe("streamPlaygroundChat", () => {
   it("reports an in-band error frame to the error callback", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        streamResponse([
-          'data: {"type":"error","message":"upstream refused"}\n\n',
-          "data: [DONE]\n\n",
-        ]),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          streamResponse([
+            'data: {"type":"error","message":"upstream refused"}\n\n',
+            "data: [DONE]\n\n",
+          ]),
+        ),
     );
 
     const onError = vi.fn();
