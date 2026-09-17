@@ -152,29 +152,35 @@ describe("UsagePage", () => {
     vi.mocked(api.usageSummary).mockResolvedValue(summary());
   });
 
-  it("reports the total row count and pages through it", async () => {
-    vi.mocked(api.listUsage).mockResolvedValue(
-      Array.from({ length: 100 }, (_, index) => record(index)),
-    );
-    vi.mocked(api.usageSummary).mockResolvedValue(summary({ requests: 200 }));
+  // Rendering three 100-row pages in jsdom runs past the 5s default once the
+  // whole suite saturates the workers; the work is real, not a hang.
+  it(
+    "reports the total row count and pages through it",
+    { timeout: 20000 },
+    async () => {
+      vi.mocked(api.listUsage).mockResolvedValue(
+        Array.from({ length: 100 }, (_, index) => record(index)),
+      );
+      vi.mocked(api.usageSummary).mockResolvedValue(summary({ requests: 200 }));
 
-    const { container, control, unmount } = await mount();
+      const { container, control, unmount } = await mount();
 
-    expect(container.textContent).toContain("Showing rows 1–100 of 200");
+      expect(container.textContent).toContain("Showing rows 1–100 of 200");
 
-    control("Next")!.click();
-    await settle();
+      control("Next")!.click();
+      await settle();
 
-    // The last page is exactly full, so Next must not offer an empty one.
-    expect(container.textContent).toContain("Showing rows 101–200 of 200");
-    expect(control("Next")!.hasAttribute("disabled")).toBe(true);
+      // The last page is exactly full, so Next must not offer an empty one.
+      expect(container.textContent).toContain("Showing rows 101–200 of 200");
+      expect(control("Next")!.hasAttribute("disabled")).toBe(true);
 
-    control("Previous")!.click();
-    await settle();
-    expect(container.textContent).toContain("Showing rows 1–100 of 200");
+      control("Previous")!.click();
+      await settle();
+      expect(container.textContent).toContain("Showing rows 1–100 of 200");
 
-    unmount();
-  });
+      unmount();
+    },
+  );
 
   it("keeps Next disabled when there is nothing more to page to", async () => {
     vi.mocked(api.listUsage).mockResolvedValue(
@@ -266,7 +272,7 @@ describe("UsagePage", () => {
       new ApiError("router unreachable", 0),
     );
     control("Refresh")!.click();
-    
+
     // Wait longer for the async load + render to complete with the error
     await new Promise((resolve) => setTimeout(resolve, 300));
     await settle();

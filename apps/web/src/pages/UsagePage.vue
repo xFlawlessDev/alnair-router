@@ -211,9 +211,10 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
   } catch (caught) {
     const message =
       caught instanceof ApiError ? caught.message : "Failed to load usage";
-    // A silent refresh has no error card, so flag the failure in the header
-    // rather than leaving stale rows under a healthy "Live" pill.
-    if (silent) staleError.value = message;
+    // Once a load has succeeded there is data on screen, so a later failure is
+    // a stale refresh: keep the last good rows and flag them rather than
+    // blanking the table under a healthy-looking "Live" pill.
+    if (silent || summary.value !== null) staleError.value = message;
     else error.value = message;
   } finally {
     // Always clear the initial spinner: the first load is silent (polling).
@@ -351,7 +352,9 @@ onUnmounted(() => {
             />
           </span>
           <template v-if="staleError">Refresh failed</template>
-          <template v-else>{{ live ? `Live · ${updatedLabel}` : "Paused" }}</template>
+          <template v-else>{{
+            live ? `Live · ${updatedLabel}` : "Paused"
+          }}</template>
         </span>
         <Button variant="outline" size="sm" @click="live = !live">
           <Play v-if="!live" />
@@ -370,15 +373,10 @@ onUnmounted(() => {
       >
         <TriangleAlert class="size-4 shrink-0" />
         <span
-          >Showing the last successful refresh ({{ updatedLabel }}). {{
-            staleError
-          }}</span
+          >Showing the last successful refresh ({{ updatedLabel }}).
+          {{ staleError }}</span
         >
-        <Button
-          variant="outline"
-          size="sm"
-          class="ml-auto"
-          @click="load()"
+        <Button variant="outline" size="sm" class="ml-auto" @click="load()"
           >Retry</Button
         >
       </CardContent>
@@ -533,6 +531,10 @@ onUnmounted(() => {
       />
     </Card>
 
-    <UsageRecordSheet v-model:open="detailOpen" :record="selected" :keys="keys" />
+    <UsageRecordSheet
+      v-model:open="detailOpen"
+      :record="selected"
+      :keys="keys"
+    />
   </div>
 </template>
