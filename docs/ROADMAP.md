@@ -40,6 +40,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Admin CRUD + usage stats, bearer auth on `/v1/*`, optional admin-token auth on `/api/*`
 - [x] Usage filtering by API key, model (substring), provider type and connection (snapshotted per row), shared by the table, summary and per-model rollup, with `/api/usage/facets` suggestions
 - [x] Usage breakdowns: prompt/completion/cached/reasoning tokens and input/output/reasoning cost components with popovers on the Usage page
+- [x] Usage trend chart on the admin page (`/api/usage/timeseries`, hour/day buckets stacked by model), whitelisted column sorting, `until` windows, an API key column and a per-record detail sheet
 - [x] Model pricing: dashboard overrides, LiteLLM/models.dev catalog sync (opt-in), reasoning-token premium, leaf-based lookup (`vendor/` prefixes and relay paths), per-connection `pricing_model` pin and a `/api/pricing/match` debug tool
 - [x] Router-issued API keys hashed with SHA-256
 - [x] Upstream credentials AES-256-GCM encrypted at rest; mandatory `secrets.key`; boot re-encryption of legacy rows

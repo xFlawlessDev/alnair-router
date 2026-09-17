@@ -8,7 +8,7 @@ use alnair_router::db::repos::combos::{ComboRepository, CreateCombo};
 use alnair_router::db::repos::connections::{
     ConnectionRepository, CreateConnection, UpdateConnection,
 };
-use alnair_router::db::repos::usage::{NewUsageRecord, UsageFilter, UsageRepository};
+use alnair_router::db::repos::usage::{NewUsageRecord, Sort, UsageFilter, UsageRepository};
 use alnair_router::limits::{BudgetMode, BudgetWindow};
 use alnair_router::pricing::{
     FetchedPrice, Price, PriceInput, PricingCache, PricingRepository, PricingSyncStatus,
@@ -797,7 +797,10 @@ async fn usage_filters_narrow_rows_and_summary() {
 
     let provider_filter =
         UsageFilter::new(None, None, Some("anthropic-native".to_string()), None, None);
-    let rows = repo.list(10, 0, &provider_filter).await.expect("list");
+    let rows = repo
+        .list(10, 0, &provider_filter, Sort::default())
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].requested_model, "anthropic/claude");
     let summary = repo.summary(&provider_filter).await.expect("summary");
@@ -806,7 +809,10 @@ async fn usage_filters_narrow_rows_and_summary() {
 
     // Model matching is a case-insensitive substring, so both variants match.
     let model_filter = UsageFilter::new(None, Some("GPT-4O".to_string()), None, None, None);
-    let rows = repo.list(10, 0, &model_filter).await.expect("list");
+    let rows = repo
+        .list(10, 0, &model_filter, Sort::default())
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 2);
     let summary = repo.summary(&model_filter).await.expect("summary");
     assert_eq!(summary.requests, 2);
@@ -814,7 +820,10 @@ async fn usage_filters_narrow_rows_and_summary() {
     // The connection filter is an exact name match.
     let connection_filter =
         UsageFilter::new(None, None, None, Some("openai-main".to_string()), None);
-    let rows = repo.list(10, 0, &connection_filter).await.expect("list");
+    let rows = repo
+        .list(10, 0, &connection_filter, Sort::default())
+        .await
+        .expect("list");
     assert_eq!(rows.len(), 2);
     let summary = repo.summary(&connection_filter).await.expect("summary");
     assert!((summary.cost_usd - 4.0).abs() < f64::EPSILON);
@@ -932,7 +941,9 @@ async fn usage_list_returns_newest_first() -> Result<()> {
         .await?;
     }
 
-    let rows = repo.list(10, 0, &UsageFilter::default()).await?;
+    let rows = repo
+        .list(10, 0, &UsageFilter::default(), Sort::default())
+        .await?;
     assert_eq!(rows.len(), 2);
     assert!(rows[0].created_at >= rows[1].created_at);
     Ok(())
@@ -1597,7 +1608,7 @@ async fn usage_cost_breakdown_round_trips_and_sums() {
     .expect("record");
 
     let rows = repo
-        .list(10, 0, &UsageFilter::default())
+        .list(10, 0, &UsageFilter::default(), Sort::default())
         .await
         .expect("list");
     assert_eq!(rows[0].cost_input_usd, 1.0);

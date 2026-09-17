@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { USAGE_RANGES } from "@/lib/ranges";
 import type { ApiKey, UsageFacets } from "@/types/api";
 
 /** Sentinel because Select values cannot be empty strings. */
@@ -31,12 +32,15 @@ const props = defineProps<{
   model: string;
   provider: string;
   connection: string;
+  /** Selected time window; lives here so every filter reads as one group. */
+  range: string;
 }>();
 const emit = defineEmits<{
   "update:apiKeyId": [string];
   "update:model": [string];
   "update:provider": [string];
   "update:connection": [string];
+  "update:range": [string];
   clear: [];
 }>();
 
@@ -57,7 +61,8 @@ const hasFilters = computed(
     props.apiKeyId !== ALL ||
     props.model.trim() !== "" ||
     props.provider !== ALL ||
-    props.connection !== ALL,
+    props.connection !== ALL ||
+    props.range !== "all",
 );
 
 watch(picked, (suggestion) => {
@@ -74,6 +79,29 @@ function updateModel(value: unknown): void {
 
 <template>
   <div class="flex flex-wrap items-end gap-3 rounded-lg border p-3">
+    <div class="grid gap-1.5">
+      <Label for="usage-range-filter" class="text-xs text-muted-foreground"
+        >Time range</Label
+      >
+      <Select
+        :model-value="range"
+        @update:model-value="emit('update:range', String($event))"
+      >
+        <SelectTrigger id="usage-range-filter" class="h-9 w-44">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem
+            v-for="item in USAGE_RANGES"
+            :key="item.value"
+            :value="item.value"
+          >
+            {{ item.label }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+
     <div class="grid gap-1.5">
       <Label for="usage-key-filter" class="text-xs text-muted-foreground"
         >API key</Label

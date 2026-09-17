@@ -483,17 +483,22 @@ suite should tell you.
 
 23. **Usage reads share one filter set.** `UsageFilter` (blank values count as
     unset; `model` is a case-insensitive substring, the rest exact) is applied
-    by `/api/usage`, `/api/usage/summary` and `/api/usage/models`, and the time
-    range now narrows the table too, not just the cards. Rows snapshot the
-    serving `connection_name` at write time (migration `0005`), so filtering
-    stays meaningful after a connection is renamed or deleted;
+    by `/api/usage`, `/api/usage/summary`, `/api/usage/models` and
+    `/api/usage/timeseries`, and the time range now narrows the table too, not
+    just the cards. Rows snapshot the serving `connection_name` at write time
+    (migration `0005`), so filtering stays meaningful after a connection is
+    renamed or deleted;
     `resolved_provider` remains the wire protocol, not the connection.
     `/api/usage/models` is the admin-side per-model rollup (the dashboard's
     Overview feeds it to `UsageSummaryCards`), mirroring what
-    `/api/public/usage` returns for a single key. `/api/usage/facets` returns
+    `/api/public/usage` returns for a single key; `/api/usage/timeseries`
+    exposes the same bucketed-per-model rollup the self-service page already
+    charts, so the admin Usage page reuses `UsageTrendChart.vue`. Ordering is
+    opt-in through `sort`/`order`, validated against a `SortField` whitelist so
+    no query value reaches the `ORDER BY` string. `/api/usage/facets` returns
     the distinct models and connections (most used first) plus providers for the
     dashboard's suggestions. (`db/repos/usage.rs`, `handlers/admin.rs`,
-    `UsageFilterBar.vue`)
+    `UsageFilterBar.vue`, `UsageTable.vue`, `lib/usageView.ts`)
 
 24. **Pricing is an override → crawl → built-in chain.** `model_prices` keeps
     two rows per model at most: `override` (written from the dashboard) and

@@ -461,10 +461,22 @@ export interface KeySpend {
 /** Usage filters; `model` is a case-insensitive substring match. */
 export interface UsageFilter {
   since?: string | null;
+  /** Inclusive upper bound, used by the month selector. */
+  until?: string | null;
   api_key_id?: string | null;
   model?: string | null;
   provider?: string | null;
   connection?: string | null;
+}
+
+/** Column the usage table is sorted by; mirrors the router's whitelist. */
+export type UsageSortField =
+  "time" | "model" | "connection" | "status" | "tokens" | "cost" | "latency";
+
+/** Sort state for the usage table. */
+export interface UsageSort {
+  field: UsageSortField;
+  descending: boolean;
 }
 
 export interface ActiveAttempt {

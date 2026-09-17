@@ -39,9 +39,11 @@ import type {
   SettingsPatch,
   SettingsResponse,
   UpstreamModelsResponse,
-  UsageRecord,
+  UsageBucket,
   UsageFacets,
   UsageFilter,
+  UsageRecord,
+  UsageSort,
   UsageSummary,
   VersionResponse,
 } from "@/types/api";
@@ -349,22 +351,31 @@ export const api = {
     request<KeyPlan>("PATCH", `/api/plans/${id}`, { body }),
   deletePlan: (id: ID) => request<void>("DELETE", `/api/plans/${id}`),
 
-  listUsage: (limit: number, offset: number, filter: UsageFilter = {}) =>
+  listUsage: (
+    limit: number,
+    offset: number,
+    filter: UsageFilter = {},
+    sort?: UsageSort,
+  ) =>
     request<UsageRecord[]>("GET", "/api/usage", {
       query: {
         limit,
         offset,
         since: filter.since,
+        until: filter.until,
         api_key_id: filter.api_key_id,
         model: filter.model,
         provider: filter.provider,
         connection: filter.connection,
+        sort: sort?.field,
+        order: sort ? (sort.descending ? "desc" : "asc") : undefined,
       },
     }),
   usageSummary: (filter: UsageFilter = {}) =>
     request<UsageSummary>("GET", "/api/usage/summary", {
       query: {
         since: filter.since,
+        until: filter.until,
         api_key_id: filter.api_key_id,
         model: filter.model,
         provider: filter.provider,
@@ -377,10 +388,24 @@ export const api = {
     request<ModelUsage[]>("GET", "/api/usage/models", {
       query: {
         since: filter.since,
+        until: filter.until,
         api_key_id: filter.api_key_id,
         model: filter.model,
         provider: filter.provider,
         connection: filter.connection,
+      },
+    }),
+
+  usageTimeseries: (filter: UsageFilter = {}, bucket: "hour" | "day" = "day") =>
+    request<UsageBucket[]>("GET", "/api/usage/timeseries", {
+      query: {
+        since: filter.since,
+        until: filter.until,
+        api_key_id: filter.api_key_id,
+        model: filter.model,
+        provider: filter.provider,
+        connection: filter.connection,
+        bucket,
       },
     }),
 

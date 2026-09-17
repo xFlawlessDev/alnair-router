@@ -218,6 +218,9 @@ pub struct UsageQuery {
     /// ISO-8601 lower bound for usage queries.
     #[serde(default)]
     pub since: Option<chrono::DateTime<chrono::Utc>>,
+    /// ISO-8601 upper bound, inclusive.
+    #[serde(default)]
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
     pub api_key_id: Option<String>,
     #[serde(default)]
@@ -226,17 +229,32 @@ pub struct UsageQuery {
     pub provider: Option<String>,
     #[serde(default)]
     pub connection: Option<String>,
+    /// Sort key for the usage table; absent keeps newest first.
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// `asc` or `desc`; absent defaults to descending.
+    #[serde(default)]
+    pub order: Option<String>,
+    /// `hour` or `day`; only read by the trend endpoint, defaults to `day`.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 impl UsageQuery {
     fn filter(&self) -> crate::db::repos::usage::UsageFilter {
-        crate::db::repos::usage::UsageFilter::new(
+        let mut filter = crate::db::repos::usage::UsageFilter::new(
             self.api_key_id.clone(),
             self.model.clone(),
             self.provider.clone(),
             self.connection.clone(),
             self.since,
-        )
+        );
+        filter.until = self.until;
+        filter
+    }
+
+    fn sort(&self) -> Result<crate::db::repos::usage::Sort> {
+        crate::db::repos::usage::Sort::parse(self.sort.as_deref(), self.order.as_deref())
     }
 }
 
@@ -250,6 +268,7 @@ pub async fn list_usage(
             query.limit.clamp(1, 500),
             query.offset.max(0),
             &query.filter(),
+            query.sort()?,
         )
         .await?;
     Ok(Json(records))
@@ -274,6 +293,17 @@ pub async fn usage_models(
     Query(query): Query<UsageQuery>,
 ) -> Result<impl IntoResponse> {
     Ok(Json(state.usage().models(&query.filter()).await?))
+}
+
+/// `GET /api/usage/timeseries` — the trend chart behind the usage table.
+pub async fn usage_timeseries(
+    State(state): State<AppState>,
+    Query(query): Query<UsageQuery>,
+) -> Result<impl IntoResponse> {
+    let bucket = crate::db::repos::usage::Bucket::parse(query.bucket.as_deref())?;
+    Ok(Json(
+        state.usage().timeseries(&query.filter(), bucket).await?,
+    ))
 }
 
 /// Spend per key for the dashboard's budget monitor.

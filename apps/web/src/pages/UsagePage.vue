@@ -6,18 +6,25 @@ import {
   Play,
   RefreshCw,
   ScrollText,
+  TriangleAlert,
 } from "@lucide/vue";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import {
+  computed,
+  defineAsyncComponent,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from "vue";
 import { RouterLink } from "vue-router";
 
 import EmptyState from "@/components/EmptyState.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import UsageSummaryCards from "@/components/UsageSummaryCards.vue";
 import ProviderTopology from "@/components/usage/ProviderTopology.vue";
-import UsageBreakdownPopover, {
-  type BreakdownRow,
-} from "@/components/usage/UsageBreakdownPopover.vue";
 import UsageFilterBar from "@/components/usage/UsageFilterBar.vue";
+import UsageRecordSheet from "@/components/usage/UsageRecordSheet.vue";
+import UsageTable from "@/components/usage/UsageTable.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,42 +41,40 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api } from "@/lib/api";
-import {
-  formatCost,
-  formatDateTime,
-  formatLatency,
-  formatNumber,
-} from "@/lib/format";
 import { USAGE_RANGES, rangeToSince } from "@/lib/ranges";
 import type {
   ActivitySnapshot,
   ApiKey,
+  UsageBucket,
   UsageFacets,
   UsageFilter,
   UsageRecord,
+  UsageSort,
+  UsageSortField,
   UsageSummary,
 } from "@/types/api";
 
 /** Sentinel because Select values cannot be empty strings. */
 const ALL = "__all__";
 
+/** Unovis is heavy; keep it out of the main bundle until the chart renders. */
+const UsageTrendChart = defineAsyncComponent(
+  () => import("@/components/usage/UsageTrendChart.vue"),
+);
+
 const limits = [50, 100, 200, 500];
 
 const records = ref<UsageRecord[]>([]);
 const summary = ref<UsageSummary | null>(null);
+const trend = ref<UsageBucket[]>([]);
 const keys = ref<ApiKey[]>([]);
 const facets = ref<UsageFacets | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
+/** A background refresh failed; the table on screen is stale, not live. */
+const staleError = ref<string | null>(null);
 const range = ref("all");
 const limit = ref(100);
 const offset = ref(0);
@@ -77,6 +82,9 @@ const apiKeyId = ref(ALL);
 const model = ref("");
 const provider = ref(ALL);
 const connection = ref(ALL);
+const sort = ref<UsageSort>({ field: "time", descending: true });
+const selected = ref<UsageRecord | null>(null);
+const detailOpen = ref(false);
 let modelTimer: number | undefined;
 
 // Live activity polling
@@ -91,57 +99,33 @@ const activeNodes = computed(() =>
   nodes.value.filter((node) => node.in_flight > 0),
 );
 
-/** Token rows: cached and reasoning are subsets, the hints say so. */
-function tokenRows(record: UsageRecord): BreakdownRow[] {
-  return [
-    { label: "Prompt", value: record.prompt_tokens },
-    {
-      label: "Cached read",
-      value: record.cached_tokens,
-      hint: "Included in prompt tokens; billed at the cache-read rate.",
-    },
-    { label: "Completion", value: record.completion_tokens },
-    {
-      label: "Reasoning",
-      value: record.reasoning_tokens,
-      hint: "Included in completion tokens; billed at the reasoning rate.",
-    },
-  ].filter(
-    (row) =>
-      row.value > 0 || row.label === "Prompt" || row.label === "Completion",
-  );
-}
+/** Total matching rows, from the same `COUNT(*)` the summary cards use. */
+const totalRows = computed(() => summary.value?.requests ?? 0);
 
-/** Cost rows: input, output and the reasoning premium that make up the total. */
-function costRows(record: UsageRecord): BreakdownRow[] {
-  const rows: BreakdownRow[] = [
-    { label: "Input", value: record.cost_input_usd, format: "cost" },
-    {
-      label: "Output",
-      value: record.cost_output_usd,
-      format: "cost",
-      hint: "Completion tokens at the output rate.",
-    },
-    {
-      label: "Reasoning premium",
-      value: record.cost_reasoning_usd,
-      format: "cost",
-      hint: "Extra rate charged for reasoning tokens.",
-    },
-  ];
-  const known = rows.reduce((sum, row) => sum + row.value, 0);
-  if (known <= 0 && record.cost_usd > 0) {
-    return [
-      {
-        label: "Recorded total",
-        value: record.cost_usd,
-        format: "cost",
-        hint: "This row predates the cost breakdown.",
-      },
-    ];
-  }
-  return rows;
-}
+/** A full page is only the last one when it reaches the filtered total. */
+const hasMore = computed(
+  () => offset.value + records.value.length < totalRows.value,
+);
+
+const rangeLabel = computed(() =>
+  records.value.length
+    ? `Showing rows ${offset.value + 1}–${offset.value + records.value.length} of ${totalRows.value}`
+    : "No rows to show",
+);
+
+const filtersActive = computed(
+  () =>
+    apiKeyId.value !== ALL ||
+    model.value.trim() !== "" ||
+    provider.value !== ALL ||
+    connection.value !== ALL,
+);
+
+/** Short ranges read better with hour buckets; longer ones with days. */
+const bucket = computed<"hour" | "day">(() =>
+  range.value === "1h" || range.value === "24h" ? "hour" : "day",
+);
+
 const updatedLabel = computed(() =>
   updatedAt.value
     ? updatedAt.value.toLocaleTimeString(undefined, { hour12: false })
@@ -152,7 +136,7 @@ async function refreshActivity(): Promise<void> {
   try {
     activity.value = await api.activity(30);
   } catch {
-    // Keep the last snapshot; the summary cards already surface API errors.
+    // Keep the last snapshot; the usage load surfaces connectivity problems.
   }
 }
 
@@ -169,15 +153,32 @@ function stopPolling(): void {
 
 function startPolling(): void {
   stopPolling();
-  void refreshActivity();
-  void load({ silent: true });
-  activityTimer = window.setInterval(refreshActivity, 2000);
+  pollNow();
+  void load({ silent: true }); // Initial sync before starting interval-based polling
+  activityTimer = window.setInterval(pollNow, 2000);
   tableTimer = window.setInterval(() => void load({ silent: true }), 5000);
 }
 
-watch(live, (enabled) => (enabled ? startPolling() : stopPolling()));
+/** Hidden tabs skip the tick; the visibility handler catches up on return. */
+function pollNow(): void {
+  if (document.visibilityState !== "visible") return;
+  void refreshActivity();
+}
 
-/** Current filter set, shared by the table and the summary cards. */
+function onVisibilityChange(): void {
+  if (document.visibilityState !== "visible") return;
+  void refreshActivity();
+  void load({ silent: true });
+}
+
+watch(live, (enabled) => {
+  if (enabled) startPolling();
+  else stopPolling();
+});
+
+// Stop toggles resume the last successful rows; don't lose them during a pause.
+
+/** Current filter set, shared by the table, summary cards and trend chart. */
 function currentFilter(): UsageFilter {
   return {
     since: rangeToSince(range.value),
@@ -193,21 +194,27 @@ async function load(options: { silent?: boolean } = {}): Promise<void> {
   const silent = options.silent === true;
   if (!silent) loading.value = true;
   error.value = null;
+  const filter = currentFilter();
   try {
-    const [recordsResponse, summaryResponse] = await Promise.all([
-      api.listUsage(limit.value, offset.value, currentFilter()),
-      api.usageSummary(currentFilter()),
-    ]);
+    const [recordsResponse, summaryResponse, trendResponse] = await Promise.all(
+      [
+        api.listUsage(limit.value, offset.value, filter, sort.value),
+        api.usageSummary(filter),
+        api.usageTimeseries(filter, bucket.value),
+      ],
+    );
     records.value = recordsResponse;
     summary.value = summaryResponse;
+    trend.value = trendResponse;
     updatedAt.value = new Date();
-
-    if (!silent) facets.value = await api.usageFacets();
+    staleError.value = null;
   } catch (caught) {
-    if (!silent) {
-      error.value =
-        caught instanceof ApiError ? caught.message : "Failed to load usage";
-    }
+    const message =
+      caught instanceof ApiError ? caught.message : "Failed to load usage";
+    // A silent refresh has no error card, so flag the failure in the header
+    // rather than leaving stale rows under a healthy "Live" pill.
+    if (silent) staleError.value = message;
+    else error.value = message;
   } finally {
     // Always clear the initial spinner: the first load is silent (polling).
     loading.value = false;
@@ -251,6 +258,11 @@ function onConnectionFilter(value: string): void {
   applyFilters();
 }
 
+function onRangeFilter(value: string): void {
+  range.value = value;
+  applyFilters();
+}
+
 /** Typing in the model filter is debounced; picking a suggestion is instant. */
 function onModelFilter(value: string): void {
   model.value = value;
@@ -258,11 +270,37 @@ function onModelFilter(value: string): void {
   modelTimer = window.setTimeout(() => applyFilters(), 300);
 }
 
+/** Re-clicking the active column flips direction; a new column starts descending. */
+function onSort(field: UsageSortField): void {
+  sort.value =
+    sort.value.field === field
+      ? { field, descending: !sort.value.descending }
+      : { field, descending: true };
+  offset.value = 0;
+  void load();
+}
+
+function openDetail(record: UsageRecord): void {
+  selected.value = record;
+  detailOpen.value = true;
+}
+
 function clearFilters(): void {
   apiKeyId.value = ALL;
   model.value = "";
   provider.value = ALL;
   connection.value = ALL;
+  range.value = "all";
+  applyFilters();
+}
+
+/** Clears the filter that is hiding rows, keeping the rest of the view. */
+function clearToAll(): void {
+  apiKeyId.value = ALL;
+  model.value = "";
+  provider.value = ALL;
+  connection.value = ALL;
+  range.value = "all";
   applyFilters();
 }
 
@@ -272,13 +310,18 @@ function previousPage(): void {
 }
 
 function nextPage(): void {
+  if (!hasMore.value) return;
   offset.value += limit.value;
   void load();
 }
 
-onMounted(init);
+onMounted(() => {
+  void init();
+  document.addEventListener("visibilitychange", onVisibilityChange);
+});
 onUnmounted(() => {
   if (modelTimer !== undefined) window.clearTimeout(modelTimer);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
   stopPolling();
 });
 </script>
@@ -293,15 +336,22 @@ onUnmounted(() => {
         <span class="flex items-center gap-2 text-xs text-muted-foreground">
           <span class="relative flex size-2">
             <span
-              v-if="live"
+              v-if="live && !staleError"
               class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75"
             />
             <span
               class="relative inline-flex size-2 rounded-full"
-              :class="live ? 'bg-emerald-500' : 'bg-muted-foreground/40'"
+              :class="
+                staleError
+                  ? 'bg-destructive'
+                  : live
+                    ? 'bg-emerald-500'
+                    : 'bg-muted-foreground/40'
+              "
             />
           </span>
-          {{ live ? `Live · ${updatedLabel}` : "Paused" }}
+          <template v-if="staleError">Refresh failed</template>
+          <template v-else>{{ live ? `Live · ${updatedLabel}` : "Paused" }}</template>
         </span>
         <Button variant="outline" size="sm" @click="live = !live">
           <Play v-if="!live" />
@@ -313,6 +363,26 @@ onUnmounted(() => {
         </Button>
       </template>
     </PageHeader>
+
+    <Card v-if="staleError" class="border-destructive/40">
+      <CardContent
+        class="flex flex-wrap items-center gap-2 p-4 text-sm text-destructive"
+      >
+        <TriangleAlert class="size-4 shrink-0" />
+        <span
+          >Showing the last successful refresh ({{ updatedLabel }}). {{
+            staleError
+          }}</span
+        >
+        <Button
+          variant="outline"
+          size="sm"
+          class="ml-auto"
+          @click="load()"
+          >Retry</Button
+        >
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader
@@ -357,6 +427,14 @@ onUnmounted(() => {
 
     <UsageSummaryCards :summary="summary" />
 
+    <UsageTrendChart
+      v-if="trend.length"
+      :points="trend"
+      :bucket="bucket"
+      :since="rangeToSince(range)"
+      :until="null"
+    />
+
     <UsageFilterBar
       :keys="keys"
       :facets="facets"
@@ -364,30 +442,18 @@ onUnmounted(() => {
       :model="model"
       :provider="provider"
       :connection="connection"
+      :range="range"
       @update:api-key-id="onApiKeyFilter"
       @update:model="onModelFilter"
       @update:provider="onProviderFilter"
       @update:connection="onConnectionFilter"
+      @update:range="onRangeFilter"
       @clear="clearFilters"
     />
 
     <div class="flex flex-wrap items-center gap-3">
-      <Select v-model="range" @update:model-value="applyFilters">
-        <SelectTrigger class="w-44">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem
-            v-for="item in USAGE_RANGES"
-            :key="item.value"
-            :value="item.value"
-          >
-            {{ item.label }}
-          </SelectItem>
-        </SelectContent>
-      </Select>
       <Select v-model.number="limit" @update:model-value="applyFilters">
-        <SelectTrigger class="w-32">
+        <SelectTrigger class="w-32" aria-label="Rows per page">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -396,11 +462,7 @@ onUnmounted(() => {
           </SelectItem>
         </SelectContent>
       </Select>
-      <span class="text-xs text-muted-foreground">
-        Showing rows {{ records.length ? offset + 1 : 0 }}–{{
-          offset + records.length
-        }}
-      </span>
+      <span class="text-xs text-muted-foreground">{{ rangeLabel }}</span>
       <div class="ml-auto flex items-center gap-1">
         <Button
           variant="outline"
@@ -413,7 +475,7 @@ onUnmounted(() => {
         <Button
           variant="outline"
           size="sm"
-          :disabled="loading || records.length < limit"
+          :disabled="loading || !hasMore"
           @click="nextPage"
         >
           Next <ChevronRight />
@@ -427,9 +489,25 @@ onUnmounted(() => {
       }}</CardContent>
     </Card>
 
-    <p v-else-if="loading" class="text-sm text-muted-foreground">
-      Loading usage…
-    </p>
+    <Card v-else-if="loading" aria-busy="true">
+      <CardContent class="grid gap-3 p-4">
+        <span class="sr-only">Loading usage…</span>
+        <Skeleton v-for="row in 8" :key="row" class="h-9 w-full" />
+      </CardContent>
+    </Card>
+
+    <EmptyState
+      v-else-if="!records.length && filtersActive"
+      title="No rows match these filters"
+      description="The router has recorded usage, but nothing in the selected window matches. Try a wider time range."
+    >
+      <template #icon><ScrollText class="size-5" /></template>
+      <template #action>
+        <Button variant="outline" size="sm" @click="clearToAll">
+          Clear filters
+        </Button>
+      </template>
+    </EmptyState>
 
     <EmptyState
       v-else-if="!records.length"
@@ -437,100 +515,24 @@ onUnmounted(() => {
       description="Usage rows appear here once requests flow through /v1/*."
     >
       <template #icon><ScrollText class="size-5" /></template>
+      <template #action>
+        <Button variant="outline" size="sm" as-child>
+          <RouterLink to="/guide">Open the API guide</RouterLink>
+        </Button>
+      </template>
     </EmptyState>
 
     <Card v-else>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Time</TableHead>
-            <TableHead>Model</TableHead>
-            <TableHead>Resolved</TableHead>
-            <TableHead>Attempt</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Tokens</TableHead>
-            <TableHead>Cost</TableHead>
-            <TableHead>Latency</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableRow v-for="record in records" :key="record.id">
-            <TableCell class="text-xs whitespace-nowrap text-muted-foreground">
-              {{ formatDateTime(record.created_at) }}
-            </TableCell>
-            <TableCell>
-              <code class="text-xs">{{ record.requested_model }}</code>
-            </TableCell>
-            <TableCell>
-              <div
-                v-if="
-                  record.connection_name ||
-                  record.resolved_provider ||
-                  record.resolved_model
-                "
-                class="flex flex-col gap-1"
-              >
-                <code v-if="record.connection_name" class="text-xs">{{
-                  record.connection_name
-                }}</code>
-                <Badge
-                  v-if="record.resolved_provider"
-                  variant="outline"
-                  class="w-fit text-xs"
-                >
-                  {{ record.resolved_provider }}
-                </Badge>
-                <code
-                  v-if="record.resolved_model"
-                  class="text-xs text-muted-foreground"
-                >
-                  {{ record.resolved_model }}
-                </code>
-              </div>
-              <span v-else class="text-muted-foreground">—</span>
-            </TableCell>
-            <TableCell class="text-muted-foreground">{{
-              record.attempt
-            }}</TableCell>
-            <TableCell>
-              <Badge
-                :variant="record.status === 'ok' ? 'default' : 'destructive'"
-              >
-                {{ record.status }}
-              </Badge>
-            </TableCell>
-            <TableCell class="text-xs text-muted-foreground">
-              <UsageBreakdownPopover
-                title="Token breakdown"
-                :total="record.prompt_tokens + record.completion_tokens"
-                :rows="tokenRows(record)"
-              >
-                {{ formatNumber(record.prompt_tokens) }} /
-                {{ formatNumber(record.completion_tokens) }}
-                <span v-if="record.cached_tokens">
-                  · {{ formatNumber(record.cached_tokens) }} cached</span
-                >
-                <span v-if="record.reasoning_tokens">
-                  · {{ formatNumber(record.reasoning_tokens) }} reasoning</span
-                >
-              </UsageBreakdownPopover>
-            </TableCell>
-            <TableCell class="text-xs">
-              <UsageBreakdownPopover
-                title="Cost breakdown"
-                total-format="cost"
-                :total="record.cost_usd"
-                :rows="costRows(record)"
-              >
-                {{ formatCost(record.cost_usd) }}
-              </UsageBreakdownPopover>
-            </TableCell>
-            <TableCell class="text-xs">{{
-              formatLatency(record.latency_ms)
-            }}</TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
+      <UsageTable
+        :records="records"
+        :keys="keys"
+        :sort="sort"
+        :average-latency-ms="summary?.avg_latency_ms ?? 0"
+        @sort="onSort"
+        @select="openDetail"
+      />
     </Card>
+
+    <UsageRecordSheet v-model:open="detailOpen" :record="selected" :keys="keys" />
   </div>
 </template>

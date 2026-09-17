@@ -297,7 +297,9 @@ proxy is reachable from the network. In Docker, publish the port explicitly
 
 **Admin:** `/api/health`, `/api/version`, `/api/init`, `/api/connections`,
 `/api/aliases`, `/api/combos`, `/api/keys`, `/api/plans`, `/api/usage`,
-`/api/usage/summary`, `/api/usage/facets`, `/api/usage/keys` (spend per key,
+`/api/usage/summary`, `/api/usage/facets`, `/api/usage/models` (per-model
+rollup), `/api/usage/timeseries` (time-bucketed rollup per model, for the
+dashboard's trend chart), `/api/usage/keys` (spend per key,
 split by budget window, for the dashboard's budget monitor), `/api/models`
 (provider + model + price catalog), `/api/pricing`, `/api/pricing/sync`,
 `/api/settings`, `/api/backup`, `/api/restore`, `/api/metrics`,
@@ -314,7 +316,10 @@ daily/weekly/monthly/lifetime budgets, model allowlist, plan and expiry;
 `/api/plans` manages the reusable rule sets.
 Usage reads accept `api_key_id`, `model` (case-insensitive substring),
 `provider` (the wire protocol: `openai-compatible` / `anthropic-native`),
-`connection` (the upstream that served the attempt) and `since`, and
+`connection` (the upstream that served the attempt), `since`/`until` (ISO-8601,
+inclusive), and — on `/api/usage` — `sort` and `order` to order the table by
+`time`, `model`, `connection`, `status`, `tokens`, `cost` or `latency`.
+`/api/usage/timeseries` additionally takes `bucket=hour|day`, and
 `/api/usage/facets` lists the distinct models, providers and connections the
 dashboard offers as filter options. Pricing rate lookups strip a `vendor/`
 prefix and fall back to a connection's `pricing_model` when the upstream id is a

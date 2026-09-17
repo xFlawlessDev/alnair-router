@@ -193,6 +193,46 @@ describe("api", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/usage/summary");
   });
 
+  it("serializes usage sorting and defaults to no sort params", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listUsage(50, 100, {}, { field: "cost", descending: true });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/usage?limit=50&offset=100&sort=cost&order=desc",
+    );
+
+    await api.listUsage(50, 0, {}, { field: "latency", descending: false });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "/api/usage?limit=50&offset=0&sort=latency&order=asc",
+    );
+
+    await api.listUsage(50, 0);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/usage?limit=50&offset=0");
+  });
+
+  it("requests the usage trend with the shared filters and bucket", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.usageTimeseries({
+      since: "2026-01-01T00:00:00Z",
+      provider: "openai-compatible",
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/usage/timeseries?since=2026-01-01T00%3A00%3A00Z&provider=openai-compatible&bucket=day",
+    );
+
+    await api.usageTimeseries({}, "hour");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "/api/usage/timeseries?bucket=hour",
+    );
+  });
+
   it("requests the per-model usage rollup with the same filters", async () => {
     const fetchMock = vi
       .fn()

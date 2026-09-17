@@ -167,6 +167,95 @@ pub struct UsageBucket {
     pub cost_usd: f64,
 }
 
+/// Column the usage table is sorted by. Whitelisted so the value can never
+/// reach the SQL string as anything but a fixed fragment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortField {
+    CreatedAt,
+    RequestedModel,
+    Connection,
+    Status,
+    Tokens,
+    Cost,
+    Latency,
+}
+
+impl SortField {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "time" | "created_at" => Ok(SortField::CreatedAt),
+            "model" | "requested_model" => Ok(SortField::RequestedModel),
+            "connection" => Ok(SortField::Connection),
+            "status" => Ok(SortField::Status),
+            "tokens" => Ok(SortField::Tokens),
+            "cost" => Ok(SortField::Cost),
+            "latency" | "latency_ms" => Ok(SortField::Latency),
+            other => Err(crate::error::Error::BadRequest(format!(
+                "sort must be one of time, model, connection, status, tokens, cost, \
+                 latency (got '{other}')"
+            ))),
+        }
+    }
+
+    /// Sort key. `tokens` sums the two columns the table shows as one figure.
+    fn expression(self) -> &'static str {
+        match self {
+            SortField::CreatedAt => "created_at",
+            SortField::RequestedModel => "requested_model",
+            SortField::Connection => "connection_name",
+            SortField::Status => "status",
+            SortField::Tokens => "prompt_tokens + completion_tokens",
+            SortField::Cost => "cost_usd",
+            SortField::Latency => "latency_ms",
+        }
+    }
+}
+
+/// Sort order for the usage table: a whitelisted field plus a direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sort {
+    field: SortField,
+    descending: bool,
+}
+
+impl Default for Sort {
+    /// Newest first, the order the live table has always used.
+    fn default() -> Self {
+        Self {
+            field: SortField::CreatedAt,
+            descending: true,
+        }
+    }
+}
+
+impl Sort {
+    /// Parses `sort` and `order` query values. Absent `sort` keeps the default
+    /// order; `order` accepts `asc`/`desc` and defaults to descending.
+    pub fn parse(sort: Option<&str>, order: Option<&str>) -> Result<Self> {
+        let field = match sort.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => SortField::parse(value)?,
+            None => SortField::CreatedAt,
+        };
+        let descending = match order.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("desc") | Some("descending") => true,
+            Some("asc") | Some("ascending") => false,
+            Some(other) => {
+                return Err(crate::error::Error::BadRequest(format!(
+                    "order must be 'asc' or 'desc' (got '{other}')"
+                )));
+            }
+        };
+        Ok(Self { field, descending })
+    }
+
+    /// `ORDER BY` body, with `created_at DESC` as a stable tiebreak so paging
+    /// through equal keys cannot repeat or skip rows.
+    fn clause(self) -> String {
+        let direction = if self.descending { "DESC" } else { "ASC" };
+        format!("{} {direction}, created_at DESC", self.field.expression())
+    }
+}
+
 /// Optional usage filters. Blank strings count as "no filter"; the model is a
 /// case-insensitive substring match, the rest are exact.
 #[derive(Debug, Clone, Default)]
@@ -259,8 +348,9 @@ impl UsageRepository {
         limit: i64,
         offset: i64,
         filter: &UsageFilter,
+        sort: Sort,
     ) -> Result<Vec<UsageRecord>> {
-        let rows = sqlx::query_as::<_, UsageRecord>(
+        let sql = format!(
             "SELECT * FROM usage_records
              WHERE (?1 IS NULL OR api_key_id = ?1)
                AND (?2 IS NULL OR lower(requested_model) LIKE ?2)
@@ -268,19 +358,22 @@ impl UsageRepository {
                AND (?4 IS NULL OR connection_name = ?4)
                AND (?5 IS NULL OR created_at >= ?5)
                AND (?6 IS NULL OR created_at <= ?6)
-             ORDER BY created_at DESC
+             ORDER BY {}
              LIMIT ?7 OFFSET ?8",
-        )
-        .bind(&filter.api_key_id)
-        .bind(filter.model_pattern())
-        .bind(&filter.provider)
-        .bind(&filter.connection)
-        .bind(filter.since)
-        .bind(filter.until)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+            sort.clause()
+        );
+
+        let rows = sqlx::query_as::<_, UsageRecord>(&sql)
+            .bind(&filter.api_key_id)
+            .bind(filter.model_pattern())
+            .bind(&filter.provider)
+            .bind(&filter.connection)
+            .bind(filter.since)
+            .bind(filter.until)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows)
     }
 
@@ -559,6 +652,99 @@ mod tests {
         assert_eq!(Bucket::parse(Some("hour")).expect("hour"), Bucket::Hour);
         assert_eq!(Bucket::parse(Some(" day ")).expect("day"), Bucket::Day);
         assert!(Bucket::parse(Some("week")).is_err());
+    }
+
+    #[test]
+    fn sort_parses_whitelisted_fields_and_directions() {
+        let default = Sort::parse(None, None).expect("default");
+        assert_eq!(default.field, SortField::CreatedAt);
+        assert!(default.descending, "the table defaults to newest first");
+
+        assert_eq!(
+            Sort::parse(Some("cost"), None).expect("cost").field,
+            SortField::Cost
+        );
+        assert!(
+            !Sort::parse(Some("cost"), Some("asc"))
+                .expect("ascending")
+                .descending
+        );
+        assert!(
+            Sort::parse(Some("latency"), Some(" descending "))
+                .expect("descending")
+                .descending
+        );
+
+        // Unknown keys are rejected rather than interpolated into the SQL.
+        assert!(Sort::parse(Some("created_at; DROP TABLE usage_records"), None).is_err());
+        assert!(Sort::parse(Some("cost"), Some("sideways")).is_err());
+    }
+
+    #[tokio::test]
+    async fn list_orders_by_the_requested_column() {
+        let db = Db::connect_in_memory().await.expect("db");
+        let repository = UsageRepository::new(db.pool.clone());
+        repository
+            .record(record("cheap", 1.0))
+            .await
+            .expect("first");
+        repository
+            .record(record("pricey", 9.0))
+            .await
+            .expect("second");
+
+        let by_cost = repository
+            .list(
+                10,
+                0,
+                &UsageFilter::default(),
+                Sort::parse(Some("cost"), Some("asc")).expect("sort"),
+            )
+            .await
+            .expect("rows");
+        assert_eq!(by_cost[0].requested_model, "cheap");
+        assert_eq!(by_cost[1].requested_model, "pricey");
+
+        let by_model = repository
+            .list(
+                10,
+                0,
+                &UsageFilter::default(),
+                Sort::parse(Some("model"), Some("desc")).expect("sort"),
+            )
+            .await
+            .expect("rows");
+        assert_eq!(by_model[0].requested_model, "pricey");
+    }
+
+    #[tokio::test]
+    async fn list_filters_on_both_ends_of_the_window() {
+        let db = Db::connect_in_memory().await.expect("db");
+        let repository = UsageRepository::new(db.pool.clone());
+        repository.record(record("a", 1.0)).await.expect("row");
+
+        let future = UsageFilter {
+            since: Some(Utc::now() + chrono::Duration::hours(1)),
+            ..UsageFilter::default()
+        };
+        let rows = repository
+            .list(10, 0, &future, Sort::default())
+            .await
+            .expect("rows");
+        assert!(rows.is_empty(), "since in the future excludes every row");
+
+        let past = UsageFilter {
+            until: Some(Utc::now() - chrono::Duration::hours(1)),
+            ..UsageFilter::default()
+        };
+        let rows = repository
+            .list(10, 0, &past, Sort::default())
+            .await
+            .expect("rows");
+        assert!(
+            rows.is_empty(),
+            "until in the past excludes every row, so the month selector works"
+        );
     }
 
     #[tokio::test]

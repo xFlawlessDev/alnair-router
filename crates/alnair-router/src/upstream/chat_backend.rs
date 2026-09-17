@@ -47,6 +47,20 @@ pub fn message_text(role: impl Into<String>, text: impl Into<String>) -> RouterM
     Message::new(role, text)
 }
 
+/// Replaces a message's content with plain text, dropping any multimodal parts.
+///
+/// Used by the token-saving pipeline, which rewrites message bodies in place
+/// without touching tool calls or thinking blocks.
+pub fn set_message_text(message: &mut RouterMessage, text: impl Into<String>) {
+    message.content = MessageContent::Text(text.into());
+}
+
+/// True when a message carries plain text only, so a caller may rewrite it
+/// in place without destroying multimodal parts.
+pub fn message_is_text(message: &RouterMessage) -> bool {
+    matches!(message.content, MessageContent::Text(_))
+}
+
 /// Builds a multimodal message from ordered parts.
 pub fn message_parts(role: impl Into<String>, parts: Vec<MessagePart>) -> RouterMessage {
     let parts = parts

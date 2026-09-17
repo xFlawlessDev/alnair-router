@@ -2064,6 +2064,157 @@ async fn usage_query_strings_deserialize() {
     assert_eq!(body["requests"], 1);
 }
 
+/// The dashboard's trend chart reads `/api/usage/timeseries`, which buckets the
+/// same filtered rows the table shows.
+#[tokio::test]
+async fn usage_timeseries_buckets_the_filtered_rows() {
+    let (app, db) = app(false).await;
+    let repo = UsageRepository::new(db.pool.clone());
+
+    for (model, cost) in [("oa/gpt-4o", 1.0), ("oa/gpt-4o", 2.0), ("kr/claude", 4.0)] {
+        repo.record(NewUsageRecord {
+            api_key_id: None,
+            requested_model: model.to_string(),
+            resolved_provider: Some("openai-compatible".to_string()),
+            resolved_model: None,
+            connection_name: Some("openai-main".to_string()),
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cached_tokens: 0,
+            reasoning_tokens: 0,
+            cost_usd: cost,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
+            latency_ms: 5,
+        })
+        .await
+        .expect("record usage");
+    }
+
+    let (status, body) = get(&app, "/api/usage/timeseries?bucket=hour").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    let rows = body.as_array().expect("rows");
+    assert_eq!(rows.len(), 2, "one row per (bucket, model): {body}");
+
+    // Rows come back ordered by bucket then model, so look them up by name.
+    let openai = rows
+        .iter()
+        .find(|row| row["model"] == "oa/gpt-4o")
+        .expect("openai row");
+    assert_eq!(
+        openai["requests"], 2,
+        "both attempts share one bucket: {body}"
+    );
+    assert_eq!(openai["cost_usd"], 3.0);
+    assert!(
+        openai["bucket"].as_str().unwrap_or("").ends_with(":00:00Z"),
+        "hour buckets are RFC 3339: {body}"
+    );
+
+    // The same filters the table uses narrow the series.
+    let (status, body) = get(
+        &app,
+        "/api/usage/timeseries?model=claude&provider=openai-compatible",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    let rows = body.as_array().expect("rows");
+    assert_eq!(rows.len(), 1, "only matching rows are bucketed: {body}");
+    assert_eq!(rows[0]["model"], "kr/claude");
+
+    // An unknown bucket is a client error, not a silent fallback.
+    let (status, _) = get(&app, "/api/usage/timeseries?bucket=week").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// The usage table sorts by whitelisted columns; anything else is rejected
+/// before it can reach the SQL.
+#[tokio::test]
+async fn usage_list_sorts_and_rejects_unknown_keys() {
+    let (app, db) = app(false).await;
+    let repo = UsageRepository::new(db.pool.clone());
+
+    for (model, cost) in [("cheap", 1.0), ("pricey", 9.0)] {
+        repo.record(NewUsageRecord {
+            api_key_id: None,
+            requested_model: model.to_string(),
+            resolved_provider: None,
+            resolved_model: None,
+            connection_name: None,
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cached_tokens: 0,
+            reasoning_tokens: 0,
+            cost_usd: cost,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
+            latency_ms: 5,
+        })
+        .await
+        .expect("record usage");
+    }
+
+    let (status, body) = get(&app, "/api/usage?sort=cost&order=asc").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body[0]["requested_model"], "cheap");
+    assert_eq!(body[1]["requested_model"], "pricey");
+
+    let (status, body) = get(&app, "/api/usage?sort=model&order=desc").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body[0]["requested_model"], "pricey");
+
+    let (status, _) = get(&app, "/api/usage?sort=cost%3B%20DROP%20TABLE").await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unknown sort keys are refused"
+    );
+
+    let (status, _) = get(&app, "/api/usage?sort=cost&order=sideways").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// `until` bounds the window at both ends, which the month selector relies on.
+#[tokio::test]
+async fn usage_until_bounds_the_window() {
+    let (app, db) = app(false).await;
+    UsageRepository::new(db.pool.clone())
+        .record(NewUsageRecord {
+            api_key_id: None,
+            requested_model: "metered".to_string(),
+            resolved_provider: None,
+            resolved_model: None,
+            connection_name: None,
+            attempt: 1,
+            status: "ok".to_string(),
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            cached_tokens: 0,
+            reasoning_tokens: 0,
+            cost_usd: 1.0,
+            cost_input_usd: 0.0,
+            cost_output_usd: 0.0,
+            cost_reasoning_usd: 0.0,
+            latency_ms: 5,
+        })
+        .await
+        .expect("record usage");
+
+    let (status, body) = get(&app, "/api/usage?until=2000-01-01T00:00:00Z").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body.as_array().map(Vec::len), Some(0));
+
+    let (status, body) = get(&app, "/api/usage/summary?until=2000-01-01T00:00:00Z").await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["requests"], 0);
+}
+
 // ------------------------------------------------------- key plans and rules
 
 #[tokio::test]
