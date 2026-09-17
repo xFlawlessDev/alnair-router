@@ -174,7 +174,7 @@ own SQLite database and its own HTTP server.
 ├── crates/
 │   ├── alnair-llm/      # provider stack (OpenAI-compatible + Anthropic-native)
 │   └── alnair-router/   # the router crate (binary + library)
-└── docs/                # HANDOVER.md, ROADMAP.md
+└── docs/                # HANDOVER.md, ROADMAP.md, screenshots/
 ```
 
 ## Admin dashboard
@@ -185,6 +185,15 @@ prices, API keys, usage, runtime settings, and database backup/restore — and t
 built assets are **embedded into the router binary**: with a production build,
 open `http://127.0.0.1:7878/` and the dashboard is there. Set
 `server.serve_dashboard = false` when a reverse proxy serves it instead.
+
+Screenshots of every page, captured from a live router, live in
+[`docs/screenshots`](docs/screenshots) — see its
+[README](docs/screenshots/README.md) for the full index.
+
+| | | |
+|---|---|---|
+| [![Overview](docs/screenshots/02-overview.png)](docs/screenshots/02-overview.png) <br> **Overview** — status, usage rollup, catalog | [![Usage](docs/screenshots/12-usage.png)](docs/screenshots/12-usage.png) <br> **Usage** — live topology, trend chart, filters | [![Playground](docs/screenshots/10-playground-chat.png)](docs/screenshots/10-playground-chat.png) <br> **Playground** — streamed chat, tier badge |
+| [![Token saving](docs/screenshots/09-token-saving-config.png)](docs/screenshots/09-token-saving-config.png) <br> **Token saving** — pipeline controls, levels | [![Console](docs/screenshots/13-console.png)](docs/screenshots/13-console.png) <br> **Console** — live API transcript log | [![My Usage](docs/screenshots/16-my-usage.png)](docs/screenshots/16-my-usage.png) <br> **My Usage** — client-key self-service rollup |
 
 For development, run it with Vite against the live router:
 
@@ -697,6 +706,7 @@ ALNAIR_ROUTER_E2E_OPENAI_API_KEY=sk-... \
 
 - [`docs/HANDOVER.md`](docs/HANDOVER.md) — architecture, design decisions, how to run it
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is done, what is missing, what is unsafe
+- [`docs/screenshots/`](docs/screenshots) — dashboard screenshots of every page, plus an index
 
 ## Releasing
 
