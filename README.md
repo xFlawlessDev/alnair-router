@@ -7,7 +7,8 @@
 **One OpenAI-compatible endpoint in front of every model you use.** Prefixes
 route to upstream connections, named combos expand into ordered fallback chains,
 and every attempt is metered — with an embedded dashboard, no external database,
-and a single binary.
+and a single Rust binary that stays lightweight and fast: a small footprint, low
+latency, and no runtime to install.
 
 [![CI](https://github.com/xFlawlessDev/alnair-router/actions/workflows/ci.yml/badge.svg)](https://github.com/xFlawlessDev/alnair-router/actions/workflows/ci.yml)
 [![Release](https://github.com/xFlawlessDev/alnair-router/actions/workflows/release.yml/badge.svg)](https://github.com/xFlawlessDev/alnair-router/actions/workflows/release.yml)
@@ -23,6 +24,7 @@ and a single binary.
 - **Embedded dashboard** — connections, aliases, combos, catalog, keys, usage, settings, backup/restore.
 - **Key controls** — rate limits, daily/weekly/monthly/lifetime budgets, model allowlists and plans.
 - **Token saving** — a deterministic pipeline compresses bulky tool output and injects concise-output directives, with savings measured and priced per request.
+- **Lightweight & fast** — one Rust binary, no runtime to install, low memory and low per-request overhead.
 - **Both wire formats** — OpenAI (`/v1/chat/completions`, `/v1/responses`) and Anthropic (`/v1/messages`).
 
 ## Install
@@ -176,6 +178,31 @@ own SQLite database and its own HTTP server.
 │   └── alnair-router/   # the router crate (binary + library)
 └── docs/                # HANDOVER.md, ROADMAP.md, screenshots/
 ```
+
+## Built in Rust
+
+The whole router is Rust — edition 2024, one workspace, one binary. No runtime,
+no interpreter, no container needed: a compiled artifact with a small footprint,
+fast startup and low per-request overhead, which is what makes the rest of this
+README possible:
+
+- **Tokio + Axum 0.8** — async streaming end to end, so SSE from an upstream is
+  piped to the client without buffering the completion in memory.
+- **SQLx + SQLite** — the database is a file, migrations are embedded with
+  `sqlx::migrate!`, and queries are runtime SQL (no `DATABASE_URL`, no
+  `cargo sqlx prepare` step). Nothing else to install or run.
+- **rustls, no OpenSSL** — static builds with no system TLS dependency.
+- **rust-embed** — the built Vue dashboard is compiled into the binary, so
+  deploying one file deploys the API and the UI together.
+- **aes-gcm + argon2** — upstream credentials encrypted at rest, dashboard
+  passwords hashed properly.
+- **`lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`** — the release
+  profile is tuned for a small, self-contained binary rather than fast rebuilds.
+
+A Cargo workspace is the only build dependency: `cargo build --release -p
+alnair-router` produces a binary that contains the router, the embedded
+dashboard, and its own SQLite migrations. No Node, no Python, no external
+database, no runtime package install.
 
 ## Admin dashboard
 
@@ -684,6 +711,11 @@ That keeps the provider layer swappable: replacing it is a one-file change plus
 a single `Cargo.toml` line.
 
 ## Development
+
+Building the router needs a Rust toolchain new enough for **edition 2024**
+(1.85 or newer) and, for a dashboard-included build, pnpm for `apps/web`. There
+is no `DATABASE_URL` to set and no `cargo sqlx prepare` step — queries run
+against the SQLite file at runtime, so `cargo build` is enough.
 
 ```bash
 # Router
