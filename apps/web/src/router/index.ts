@@ -9,11 +9,11 @@ import KeysPage from "@/pages/KeysPage.vue";
 import LoginPage from "@/pages/LoginPage.vue";
 import NotFoundPage from "@/pages/NotFoundPage.vue";
 import OverviewPage from "@/pages/OverviewPage.vue";
+import PlaygroundPage from "@/pages/PlaygroundPage.vue";
 import PricingPage from "@/pages/PricingPage.vue";
 import PublicUsagePage from "@/pages/PublicUsagePage.vue";
 import SettingsPage from "@/pages/SettingsPage.vue";
 import TokenSaverPage from "@/pages/TokenSaverPage.vue";
-import TokenSaverPlaygroundPage from "@/pages/TokenSaverPlaygroundPage.vue";
 import UsagePage from "@/pages/UsagePage.vue";
 
 import { loadAuthStatus } from "@/lib/authState";
@@ -73,10 +73,16 @@ export const router = createRouter({
       meta: { title: "Token Saving" },
     },
     {
+      path: "/playground",
+      name: "playground",
+      component: PlaygroundPage,
+      meta: { title: "Playground" },
+    },
+    // The playground started as a token-saver-only page; keep the old URL
+    // working for anyone who bookmarked it.
+    {
       path: "/token-saver/playground",
-      name: "token-saver-playground",
-      component: TokenSaverPlaygroundPage,
-      meta: { title: "Token saver playground" },
+      redirect: { name: "playground" },
     },
     {
       path: "/settings",

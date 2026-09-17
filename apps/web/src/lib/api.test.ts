@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setAdminToken } from "./adminToken";
-import { ApiError, api, buildUrl } from "./api";
+import { ApiError, api, buildUrl, streamPlaygroundChat } from "./api";
 import { setClientKey } from "./clientKey";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -353,5 +353,125 @@ describe("api", () => {
     expect(init.headers).toMatchObject({
       authorization: "Bearer sk-router-test",
     });
+  });
+});
+
+/** A `Response` whose body streams `chunks` as raw text, as SSE arrives. */
+function streamResponse(chunks: string[], status = 200): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    status,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+describe("streamPlaygroundChat", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAdminToken("");
+  });
+
+  it("dispatches each frame to its callback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          'data: {"type":"router","model":"deepseek","source":"alias:chatty","provider_type":"openai-compatible","attempts":1}\n\n',
+          'data: {"type":"delta","text":"pon"}\n\ndata: {"type":"delta","text":"g"}\n\n',
+          'data: {"type":"usage","prompt_tokens":12,"completion_tokens":3,"cost_usd":0.0001,"savings":{"saved_rtk_tokens":0,"saved_headroom_tokens":0,"saved_terse_tokens":0,"saved_caveman_tokens":0,"saved_ponytail_tokens":0,"saved_cost_usd":0}}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    );
+
+    const onRouter = vi.fn();
+    const onDelta = vi.fn();
+    const onUsage = vi.fn();
+
+    await streamPlaygroundChat(
+      { model: "chatty", messages: [{ role: "user", content: "hi" }] },
+      { onRouter, onDelta, onUsage },
+    );
+
+    expect(onRouter).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "deepseek", source: "alias:chatty" }),
+    );
+    // Each delta arrives separately so the transcript can grow token by token.
+    expect(onDelta.mock.calls.map(([text]) => text)).toEqual(["pon", "g"]);
+    expect(onUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt_tokens: 12, completion_tokens: 3 }),
+    );
+  });
+
+  it("reassembles a frame split across chunk boundaries", async () => {
+    // A real stream cuts wherever the network decides, including mid-JSON.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          'data: {"type":"del',
+          'ta","text":"split"}\n',
+          "\ndata: [DONE]\n\n",
+        ]),
+      ),
+    );
+
+    const onDelta = vi.fn();
+    await streamPlaygroundChat(
+      { model: "chatty", messages: [{ role: "user", content: "hi" }] },
+      { onDelta },
+    );
+
+    expect(onDelta).toHaveBeenCalledWith("split");
+  });
+
+  it("raises a non-OK response as an ApiError with the server message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          { error: { message: "no such model", type: "not_found_error" } },
+          404,
+        ),
+      ),
+    );
+
+    const failure = await streamPlaygroundChat(
+      { model: "nope", messages: [{ role: "user", content: "hi" }] },
+      {},
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({
+      message: "no such model",
+      status: 404,
+      type: "not_found_error",
+    });
+  });
+
+  it("reports an in-band error frame to the error callback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          'data: {"type":"error","message":"upstream refused"}\n\n',
+          "data: [DONE]\n\n",
+        ]),
+      ),
+    );
+
+    const onError = vi.fn();
+    await streamPlaygroundChat(
+      { model: "chatty", messages: [{ role: "user", content: "hi" }] },
+      { onError },
+    );
+
+    expect(onError).toHaveBeenCalledWith("upstream refused");
   });
 });

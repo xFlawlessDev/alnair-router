@@ -6,12 +6,11 @@ import {
   FlaskConical,
   Info,
   Play,
-  RotateCcw,
 } from "@lucide/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
 
-import PageHeader from "@/components/PageHeader.vue";
+import SaverToggles from "@/components/playground/SaverToggles.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,11 +33,11 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { formatCost, formatNumber } from "@/lib/format";
+import type { SaverToggle } from "@/lib/playground";
 import type {
   PlaygroundMessage,
   PlaygroundResult,
   SavingsTotals,
-  SettingsResponse,
   TokenSaverSettings,
 } from "@/types/api";
 
@@ -138,7 +137,18 @@ const PRESETS: Preset[] = [
   },
 ];
 
-const settings = ref<SettingsResponse | null>(null);
+const props = defineProps<{
+  toggles: SaverToggle[];
+  overrides: Partial<TokenSaverSettings>;
+}>();
+
+const emit = defineEmits<{
+  toggle: [string];
+  reset: [];
+  /** A run invalidates any result the other tab was showing. */
+  run: [];
+}>();
+
 const preset = ref(PRESETS[0]!.id);
 /**
  * The editor is the source of truth for what runs: the samples seed it, and
@@ -153,45 +163,10 @@ const model = ref("");
  * estimate the output side", which is different from a zero token count.
  */
 const completionTokens = ref("1000");
-const overrides = ref<Partial<TokenSaverSettings>>({});
 const result = ref<PlaygroundResult | null>(null);
 const running = ref(false);
 const error = ref<string | null>(null);
 const showTranscripts = ref(false);
-
-const live = computed<TokenSaverSettings | null>(
-  () => settings.value?.token_saver ?? null,
-);
-
-/** The settings a run will use: live values with any per-run override applied. */
-const effective = computed<Partial<TokenSaverSettings> | null>(() => {
-  if (live.value) return { ...live.value, ...overrides.value };
-  return Object.keys(overrides.value).length ? overrides.value : null;
-});
-
-const toggles = computed(() => {
-  const config = effective.value;
-  if (!config) return [];
-  return [
-    {
-      key: "slimmer_enabled",
-      label: "RTK / Slimmer",
-      on: !!config.slimmer_enabled,
-    },
-    {
-      key: "headroom_enabled",
-      label: "Headroom",
-      on: !!config.headroom_enabled,
-    },
-    { key: "terse_enabled", label: "Terse", on: !!config.terse_enabled },
-    { key: "caveman_enabled", label: "Caveman", on: !!config.caveman_enabled },
-    {
-      key: "ponytail_enabled",
-      label: "Ponytail",
-      on: !!config.ponytail_enabled,
-    },
-  ];
-});
 
 const promptBefore = computed(() => result.value?.tokens_before ?? 0);
 const promptAfter = computed(() => result.value?.tokens_after ?? 0);
@@ -222,30 +197,6 @@ function selectPreset(id: string): void {
   const entry = PRESETS.find((candidate) => candidate.id === id);
   if (entry) messagesText.value = JSON.stringify(entry.messages, null, 2);
   messagesError.value = null;
-  result.value = null;
-  error.value = null;
-}
-
-/** Switches a per-run saver on or off without touching saved settings. */
-function toggle(key: string): void {
-  const current = effective.value;
-  if (!current) return;
-  const next = { ...overrides.value } as Record<string, unknown>;
-  next[key] = !(current as Record<string, unknown>)[key];
-
-  // Terse and caveman are mutually exclusive, so turning one on clears the
-  // other rather than letting the server reject the run.
-  if (key === "terse_enabled" && next.terse_enabled)
-    next.caveman_enabled = false;
-  if (key === "caveman_enabled" && next.caveman_enabled)
-    next.terse_enabled = false;
-
-  overrides.value = next as Partial<TokenSaverSettings>;
-  result.value = null;
-}
-
-function resetOverrides(): void {
-  overrides.value = {};
   result.value = null;
   error.value = null;
 }
@@ -303,8 +254,8 @@ async function run(): Promise<void> {
       messages: parsed,
       model: model.value.trim() || undefined,
       assumed_completion_tokens: assumedCompletion.value,
-      overrides: Object.keys(overrides.value).length
-        ? overrides.value
+      overrides: Object.keys(props.overrides).length
+        ? (props.overrides as never)
         : undefined,
     });
   } catch (caught) {
@@ -326,30 +277,17 @@ function asText(message: PlaygroundMessage): string {
   return message.content ?? "";
 }
 
-onMounted(async () => {
-  try {
-    settings.value = await api.settings();
-  } catch {
-    // The playground still runs against the live configuration without this:
-    // the settings load only powers the toggles' initial state.
-    settings.value = null;
-  }
-});
+defineExpose({ run });
 </script>
 
 <template>
-  <div class="flex flex-col gap-8">
-    <PageHeader
-      title="Token saver playground"
-      description="Runs the real pipeline — the same code every chat request goes through — and shows exactly what it changed. Nothing here is simulated."
-    >
-      <template #actions>
-        <Button :disabled="running" @click="run">
-          <Play :class="running ? 'animate-pulse' : ''" />
-          {{ running ? "Running…" : "Run pipeline" }}
-        </Button>
-      </template>
-    </PageHeader>
+  <div class="flex flex-col gap-4">
+    <div class="flex justify-end">
+      <Button :disabled="running" @click="run">
+        <Play :class="running ? 'animate-pulse' : ''" />
+        {{ running ? "Running…" : "Run pipeline" }}
+      </Button>
+    </div>
 
     <Card>
       <CardHeader>
@@ -440,33 +378,13 @@ onMounted(async () => {
           — or toggle them here to compare without saving.
         </CardDescription>
       </CardHeader>
-      <CardContent class="grid gap-3">
-        <div class="flex flex-wrap gap-2">
-          <Button
-            v-for="entry in toggles"
-            :key="entry.key"
-            :variant="entry.on ? 'default' : 'outline'"
-            size="sm"
-            :aria-pressed="entry.on"
-            @click="toggle(entry.key)"
-          >
-            <CircleCheck v-if="entry.on" class="size-3.5" />
-            <CircleAlert v-else class="size-3.5" />
-            {{ entry.label }}
-          </Button>
-        </div>
-        <div
-          v-if="Object.keys(overrides).length"
-          class="flex items-center gap-3"
-        >
-          <Badge variant="outline">
-            {{ Object.keys(overrides).length }} unsaved change(s)
-          </Badge>
-          <Button variant="ghost" size="sm" @click="resetOverrides">
-            <RotateCcw class="size-3.5" />
-            Use saved settings
-          </Button>
-        </div>
+      <CardContent>
+        <SaverToggles
+          :toggles="toggles"
+          :override-count="Object.keys(overrides).length"
+          @toggle="emit('toggle', $event)"
+          @reset="emit('reset')"
+        />
       </CardContent>
     </Card>
 
@@ -510,9 +428,7 @@ onMounted(async () => {
           <CardContent>
             <p class="text-2xl font-semibold tabular-nums">
               {{
-                promptReduction === null
-                  ? "—"
-                  : `${promptReduction.toFixed(1)}%`
+                promptReduction === null ? "—" : `${promptReduction.toFixed(1)}%`
               }}
             </p>
             <p class="pt-1 text-xs text-muted-foreground">

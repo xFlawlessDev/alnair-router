@@ -205,6 +205,17 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
 }
 
+/// Reads a response body as text, for SSE endpoints whose frames are not JSON.
+async fn body_text(response: axum::response::Response) -> String {
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 /// POSTs a raw binary body, for the backup restore endpoint.
 async fn post_bytes(
     app: &axum::Router,
@@ -2367,6 +2378,185 @@ async fn bare_alias_name_works_through_chat_completions() {
 
     assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
     assert_eq!(body["choices"][0]["message"]["content"], "pong");
+}
+
+/// Serves an SSE completion that also reports token usage, so the playground
+/// chat's terminal frame has something to report.
+async fn spawn_usage_chat_upstream() -> String {
+    let router = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(|| async {
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/event-stream")],
+                concat!(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n",
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"total_tokens\":15}}\n\n",
+                    "data: [DONE]\n\n"
+                ),
+            )
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}/v1")
+}
+
+/// Extracts the JSON payload of every `data:` frame, dropping `[DONE]`.
+fn sse_frames(body: &str) -> Vec<serde_json::Value> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|payload| *payload != "[DONE]")
+        .filter_map(|payload| serde_json::from_str(payload).ok())
+        .collect()
+}
+
+#[tokio::test]
+async fn playground_chat_streams_router_delta_usage_frames() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_usage_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(
+        &app,
+        &connection_id,
+        "playchat",
+        Some("deepseek-v4.1-flash"),
+    )
+    .await;
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/playground/chat",
+        Some(serde_json::json!({
+            "model": "playchat",
+            "messages": [{ "role": "user", "content": "hi" }]
+        })),
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    let body = body_text(response).await;
+    let frames = sse_frames(&body);
+
+    // The routing decision opens the stream, so the dashboard can label the
+    // answer with the tier that produced it before any token arrives.
+    assert_eq!(frames[0]["type"], "router");
+    assert_eq!(frames[0]["model"], "deepseek-v4.1-flash");
+    assert_eq!(frames[0]["source"], "alias:playchat");
+    assert_eq!(frames[0]["attempts"], 1);
+
+    let text: String = frames
+        .iter()
+        .filter(|frame| frame["type"] == "delta")
+        .filter_map(|frame| frame["text"].as_str())
+        .collect();
+    assert_eq!(text, "pong");
+
+    let usage = frames
+        .iter()
+        .find(|frame| frame["type"] == "usage")
+        .expect("usage frame");
+    assert!(usage["prompt_tokens"].as_u64().is_some());
+    assert!(usage["savings"].is_object());
+
+    // The stream always terminates with the OpenAI sentinel.
+    assert!(body.contains("data: [DONE]"));
+}
+
+#[tokio::test]
+async fn playground_chat_rejects_a_configuration_the_settings_page_would_reject() {
+    let (app, _db) = app(false).await;
+
+    // Terse and caveman both write a system directive, so the settings page
+    // rejects them together. The playground must not demonstrate a config that
+    // cannot be saved.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/playground/chat",
+        serde_json::json!({
+            "model": "anything",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "overrides": { "terse_enabled": true, "caveman_enabled": true }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected body: {body}");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+}
+
+#[tokio::test]
+async fn playground_chat_unknown_model_reports_an_error_frame() {
+    let (app, _db) = app(false).await;
+
+    // Resolution happens before the stream opens, so an unknown reference is a
+    // plain HTTP error rather than an in-band frame.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/playground/chat",
+        serde_json::json!({
+            "model": "nope/nothing",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "unexpected body: {body}");
+    assert_eq!(body["error"]["type"], "not_found_error");
+}
+
+#[tokio::test]
+async fn playground_chat_requires_the_admin_guard() {
+    let (app, _db) = app_with_admin_token("secret-token").await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/playground/chat",
+        serde_json::json!({
+            "model": "anything",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "unexpected body: {body}");
+
+    // The same request with the bearer passes the guard and then fails on the
+    // unknown model, proving the credential was what allowed it through.
+    let (status, body) = json_request_with_auth(
+        &app,
+        "POST",
+        "/api/playground/chat",
+        serde_json::json!({
+            "model": "anything",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }),
+        Some("secret-token"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "unexpected body: {body}");
 }
 
 #[tokio::test]

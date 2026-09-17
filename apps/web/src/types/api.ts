@@ -479,6 +479,55 @@ export interface PlaygroundRequest {
   overrides?: Partial<TokenSaverSettings>;
 }
 
+/** One message in a playground chat, in the OpenAI wire shape. */
+export interface PlaygroundChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/** `POST /api/playground/chat` body. */
+export interface PlaygroundChatRequest {
+  /** Alias prefix, combo name, or `prefix/model` reference to resolve. */
+  model: string;
+  messages: PlaygroundChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+  /** Per-run settings; omitted runs the live configuration. */
+  overrides?: Partial<TokenSaverSettings>;
+}
+
+/** First frame of the playground stream: the tier that answered. */
+export interface PlaygroundChatRouter {
+  model: string;
+  /** `alias:<prefix>`, `combo:<name>` or `direct`, as the resolver reports it. */
+  source: string;
+  provider_type: ProviderType;
+  /** Tiers attempted before one answered. */
+  attempts: number;
+}
+
+/** Terminal frame of the playground stream: tokens, cost and pipeline savings. */
+export interface PlaygroundChatUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+  savings: SavingsTotals;
+}
+
+/** Frames `POST /api/playground/chat` emits, discriminated by `type`. */
+export type PlaygroundChatFrame =
+  | ({ type: "router" } & PlaygroundChatRouter)
+  | { type: "delta"; text: string }
+  | { type: "thinking"; text: string }
+  | {
+      type: "tool_call";
+      id: string;
+      name: string;
+      arguments: string;
+    }
+  | ({ type: "usage" } & PlaygroundChatUsage)
+  | { type: "error"; message: string };
+
 /** `POST /api/token-saver/playground` result. */
 export interface PlaygroundResult {
   model: string;

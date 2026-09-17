@@ -284,7 +284,7 @@ watch(
     <p class="text-xs text-muted-foreground">
       Try any pipeline on one request in the
       <RouterLink
-        to="/token-saver/playground"
+        to="/playground"
         class="font-medium text-foreground underline underline-offset-4"
         >playground</RouterLink
       >.

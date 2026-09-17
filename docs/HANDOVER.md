@@ -621,14 +621,23 @@ suite should tell you.
     from a documented ratio applied to the completion, and
     `UsageRepository::savings()` keeps the two apart rather than blending a
     guess into a fact. `token_saver::run` returns the same result plus a
-    `StepTrace` per step and backs `POST /api/token-saver/playground`, which
-    reports the prompt token delta **measured from the rewritten messages**
-    rather than trusting each saver's own reported figure — that is what makes
-    it evidence instead of a restatement. A directive step reports a *positive*
-    delta, since it adds the instruction it injects. Per-run overrides go
-    through the same validation as the Configuration tab on the Token Saving
-    page and are never persisted.
-    (`token_saver/`, `handlers/chat.rs`, `handlers/token_saver.rs`, `config.rs`,
+    `StepTrace` per step and backs the playground's Token Saver tab
+    (`POST /api/token-saver/playground`), which reports the prompt token delta
+    **measured from the rewritten messages** rather than trusting each saver's
+    own reported figure — that is what makes it evidence instead of a
+    restatement. A directive step reports a *positive* delta, since it adds the
+    instruction it injects. Per-run overrides go through the same validation as
+    the Configuration tab on the Token Saving page and are never persisted.
+    The playground's Chat tab (`POST /api/playground/chat`) streams through the
+    identical path — `token_saver::apply`, then `Executor::stream` — so its
+    transcript is what a client would get, and it reports the answering tier and
+    the pipeline's savings per turn. It is deliberately admin-guarded rather than
+    key-guarded, so the playground still works when `server.require_api_key` is
+    on and needs no pasted router key. The two handlers share
+    `handlers::shared::playground_settings`, so an override the request path
+    would reject cannot be demonstrated here.
+    (`token_saver/`, `handlers/chat.rs`, `handlers/shared.rs`,
+    `handlers/token_saver.rs`, `handlers/playground.rs`, `config.rs`,
     `db/repos/usage.rs`)
 
 32. **The admin probe tolerates a provider without `/models`.** The models probe
@@ -813,12 +822,12 @@ Response headers report the routing decision:
 | `crates/alnair-llm/src/**` (81) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff |
 | `tests/resolve.rs` (24) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names |
 | `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
-| `tests/routes.rs` | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard, Headroom probe, usage savings block, and the token-saver playground (measured shrinkage, idle pipeline, directive cost, output-estimate opt-in, override validation, Headroom fail-open) |
+| `tests/routes.rs` | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard, Headroom probe, usage savings block, the token-saver playground (measured shrinkage, idle pipeline, directive cost, output-estimate opt-in, override validation, Headroom fail-open), and the playground chat stream (router/delta/usage frames, unknown-model error frame, override validation, admin guard) |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/streaming.rs` (5) | SSE translation: streamed tool calls + `finish_reason`, reasoning, opt-in usage chunk, and the Anthropic `tool_use`/`thinking` block sequence |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
 | `src/**` inline (49) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization, activity tracker |
-| `apps/web/src/**` | API client error/transport handling, formatters, route table, theme store, alias prefix helpers, confirm-dialog regression, topology layout, and the token-saver playground page (run, measured reduction, rejection, malformed JSON, per-run toggles incl. the terse/caveman exclusion) |
+| `apps/web/src/**` | API client error/transport handling, formatters, route table (incl. the legacy-playground redirect), theme store, alias prefix helpers, confirm-dialog regression, topology layout, and the playground hub (page tab shell sharing overrides across tabs, the token-saver tab's run/measured-reduction/rejection/malformed-JSON/per-run toggles incl. the terse/caveman exclusion, the chat tab's streaming, error frame, system prompt and savings, and the SSE client's frame dispatch, split-frame reassembly, non-OK and in-band errors) |
 
 ---
 

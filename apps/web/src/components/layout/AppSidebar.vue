@@ -41,7 +41,7 @@ const monitorItems: NavItem[] = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
   { label: "Usage", to: "/usage", icon: ScrollText },
   { label: "Token Saving", to: "/token-saver", icon: Sparkles },
-  { label: "Playground", to: "/token-saver/playground", icon: FlaskConical },
+  { label: "Playground", to: "/playground", icon: FlaskConical },
   { label: "Console", to: "/logs", icon: Terminal },
 ];
 

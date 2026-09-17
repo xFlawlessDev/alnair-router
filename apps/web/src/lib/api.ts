@@ -31,6 +31,9 @@ import type {
   ModelPriceInput,
   ModelUsage,
   MyUsageResponse,
+  PlaygroundChatRequest,
+  PlaygroundChatRouter,
+  PlaygroundChatUsage,
   PlaygroundRequest,
   PlaygroundResult,
   PriceMatch,
@@ -473,3 +476,134 @@ export const api = {
     return (await response.json()) as PublicCatalogResponse;
   },
 };
+
+/** Callbacks for each frame the playground chat stream emits. */
+export interface PlaygroundChatHandlers {
+  /** The routing decision, sent once before any token arrives. */
+  onRouter?: (info: PlaygroundChatRouter) => void;
+  /** A piece of the answer, to append to the transcript. */
+  onDelta?: (text: string) => void;
+  /** A piece of the model's reasoning, if the provider reports any. */
+  onThinking?: (text: string) => void;
+  /** Token, cost and savings totals for the finished completion. */
+  onUsage?: (usage: PlaygroundChatUsage) => void;
+  /** A failure after the stream had already opened. */
+  onError?: (message: string) => void;
+}
+
+/**
+ * Streams a playground completion as SSE frames.
+ *
+ * The endpoint is admin-guarded and lives on the same origin, so this reuses the
+ * session/admin-token header rather than any client API key. A non-OK response
+ * (resolution failures happen before the stream opens) is raised as an
+ * `ApiError`, matching `request`.
+ */
+export async function streamPlaygroundChat(
+  body: PlaygroundChatRequest,
+  handlers: PlaygroundChatHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = {
+    accept: "text/event-stream",
+    "content-type": "application/json",
+  };
+  const authorization = authHeader();
+  if (authorization) headers.authorization = authorization;
+
+  let response: Response;
+  try {
+    response = await fetch("/api/playground/chat", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new ApiError("Cannot reach the router. Is it running?", 0);
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let payload: unknown;
+    try {
+      payload = text ? JSON.parse(text) : undefined;
+    } catch {
+      payload = undefined;
+    }
+    throw new ApiError(
+      errorMessage(payload) ?? `Request failed with status ${response.status}`,
+      response.status,
+      errorType(payload),
+    );
+  }
+
+  if (!response.body) return;
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Frames are separated by a blank line; a partial frame stays buffered
+      // until its terminator arrives.
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const raw = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        dispatchFrame(raw, handlers);
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** Decodes one SSE block and hands its payload to the matching callback. */
+function dispatchFrame(raw: string, handlers: PlaygroundChatHandlers): void {
+  const payload = raw
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  if (!payload || payload === "[DONE]") return;
+
+  let frame: unknown;
+  try {
+    frame = JSON.parse(payload);
+  } catch {
+    return;
+  }
+  if (!frame || typeof frame !== "object") return;
+
+  const typed = frame as Record<string, unknown>;
+  switch (typed.type) {
+    case "router":
+      handlers.onRouter?.(typed as unknown as PlaygroundChatRouter);
+      break;
+    case "delta":
+      if (typeof typed.text === "string") handlers.onDelta?.(typed.text);
+      break;
+    case "thinking":
+      if (typeof typed.text === "string") handlers.onThinking?.(typed.text);
+      break;
+    case "usage":
+      handlers.onUsage?.(typed as unknown as PlaygroundChatUsage);
+      break;
+    case "error":
+      handlers.onError?.(
+        typeof typed.message === "string" ? typed.message : "Stream failed",
+      );
+      break;
+    default:
+      break;
+  }
+}

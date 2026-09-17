@@ -114,6 +114,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/token-saver/playground",
             post(handlers::token_saver::playground),
         )
+        .route("/api/playground/chat", post(handlers::playground::chat))
         .route("/api/models", get(handlers::catalog::models_catalog))
         .route(
             "/api/pricing",

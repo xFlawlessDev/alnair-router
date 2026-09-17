@@ -9,6 +9,7 @@ pub mod chat;
 pub mod media;
 pub mod messages;
 pub mod models;
+pub mod playground;
 pub mod providers;
 pub mod public;
 pub mod responses;

@@ -1,9 +1,13 @@
-import { createApp, nextTick } from "vue";
+import { createApp, defineComponent, h, nextTick, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import TokenSaverPlaygroundPage from "./TokenSaverPlaygroundPage.vue";
+import TokenSaverTab from "./TokenSaverTab.vue";
 import { api } from "@/lib/api";
-import type { PlaygroundResult, SettingsResponse } from "@/types/api";
+import { buildToggles, toggleSaver } from "@/lib/playground";
+import type {
+  PlaygroundResult,
+  TokenSaverSettings,
+} from "@/types/api";
 
 vi.mock("vue-router", () => ({
   RouterLink: { template: "<a><slot /></a>" },
@@ -20,7 +24,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-const tokenSaver = {
+const tokenSaver: TokenSaverSettings = {
   slimmer_enabled: true,
   slimmer_level: "minimal",
   headroom_enabled: false,
@@ -31,11 +35,7 @@ const tokenSaver = {
   caveman_level: "full",
   ponytail_enabled: false,
   ponytail_level: "full",
-};
-
-const settings = {
-  token_saver: tokenSaver,
-} as unknown as SettingsResponse;
+} as unknown as TokenSaverSettings;
 
 /** A run where the slimmer shrank a bulky tool result. */
 const shrunk: PlaygroundResult = {
@@ -75,8 +75,30 @@ const settle = async () => {
   await nextTick();
 };
 
-const mount = async () => {
-  const app = createApp(TokenSaverPlaygroundPage as never);
+/**
+ * Mounts the tab behind the same override wiring the page provides, so the
+ * shared-toggle behaviour is exercised rather than stubbed.
+ */
+const mount = async (saved: TokenSaverSettings = tokenSaver) => {
+  const harness = defineComponent({
+    setup() {
+      const overrides = ref<Partial<TokenSaverSettings>>({});
+      const effective = () => ({ ...saved, ...overrides.value });
+      return () =>
+        h(TokenSaverTab, {
+          toggles: buildToggles(effective()),
+          overrides: overrides.value,
+          onToggle: (key: string) => {
+            overrides.value = toggleSaver(overrides.value, effective(), key);
+          },
+          onReset: () => {
+            overrides.value = {};
+          },
+        });
+    },
+  });
+
+  const app = createApp(harness);
   const container = document.createElement("div");
   document.body.appendChild(container);
   app.mount(container);
@@ -96,9 +118,8 @@ const button = (container: HTMLElement, label: string) =>
     candidate.textContent?.includes(label),
   );
 
-describe("TokenSaverPlaygroundPage", () => {
+describe("TokenSaverTab", () => {
   beforeEach(() => {
-    vi.mocked(api.settings).mockResolvedValue(settings);
     vi.mocked(api.runPlayground).mockResolvedValue(shrunk);
   });
 
@@ -176,11 +197,10 @@ describe("TokenSaverPlaygroundPage", () => {
   });
 
   it("clears the other directive when the mutual pair is toggled", async () => {
-    vi.mocked(api.settings).mockResolvedValue({
-      token_saver: { ...tokenSaver, terse_enabled: true },
-    } as unknown as SettingsResponse);
-
-    const { container, unmount } = await mount();
+    const { container, unmount } = await mount({
+      ...tokenSaver,
+      terse_enabled: true,
+    });
 
     button(container, "Caveman")!.click();
     await settle();

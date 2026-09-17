@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::TokenSaverConfig;
 use crate::error::Result;
+use crate::handlers::shared::playground_settings;
 use crate::state::AppState;
-use crate::token_saver::{SaverSide, SavingsTotals, TokenSaverSettings};
+use crate::token_saver::{SaverSide, SavingsTotals};
 use crate::upstream::chat_backend::RouterMessage;
 
 /// Model name handed to the pipeline when the request names none. Headroom uses
@@ -85,21 +86,7 @@ pub async fn playground(
     State(state): State<AppState>,
     Json(request): Json<PlaygroundRequest>,
 ) -> Result<impl IntoResponse> {
-    // No overrides means "show me what production does right now". Overrides
-    // face the same validation the settings page does, so the playground cannot
-    // demonstrate a configuration the request path would reject. A rejected
-    // override is the caller's mistake, so it reports as a bad request rather
-    // than a server fault.
-    let settings = match &request.overrides {
-        Some(config) => {
-            config.validate().map_err(|error| match error {
-                crate::error::Error::Config(message) => crate::error::Error::BadRequest(message),
-                other => other,
-            })?;
-            TokenSaverSettings::from_config(config)
-        }
-        None => state.token_saver_settings(),
-    };
+    let settings = playground_settings(&state, request.overrides.as_ref())?;
 
     let model = request
         .model

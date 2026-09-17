@@ -4,13 +4,37 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::db::repos::usage::NewUsageRecord;
+use crate::error::Result;
 use crate::model::ResolvedTarget;
 use crate::pricing::Price;
 use crate::state::AppState;
-use crate::token_saver::Savings;
+use crate::token_saver::{Savings, TokenSaverSettings};
 use crate::upstream::AttemptOutcome;
 use crate::upstream::chat_backend::TokenUsage;
 use crate::upstream::executor::Attempt;
+
+/// Resolves the saver settings a playground run should use.
+///
+/// Overrides face the same validation the settings page does, so neither
+/// playground endpoint can demonstrate a configuration the request path would
+/// reject. A rejected override is the caller's mistake, so it reports as a bad
+/// request rather than a server fault. Absent overrides mean "show me what
+/// production does right now".
+pub fn playground_settings(
+    state: &AppState,
+    overrides: Option<&crate::config::TokenSaverConfig>,
+) -> Result<TokenSaverSettings> {
+    match overrides {
+        Some(config) => {
+            config.validate().map_err(|error| match error {
+                crate::error::Error::Config(message) => crate::error::Error::BadRequest(message),
+                other => other,
+            })?;
+            Ok(TokenSaverSettings::from_config(config))
+        }
+        None => Ok(state.token_saver_settings()),
+    }
+}
 
 /// Looks up the rate the winning tier is billed at, for pricing token savings.
 ///
