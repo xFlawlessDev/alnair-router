@@ -631,6 +631,25 @@ suite should tell you.
     (`token_saver/`, `handlers/chat.rs`, `handlers/token_saver.rs`, `config.rs`,
     `db/repos/usage.rs`)
 
+32. **The admin probe tolerates a provider without `/models`.** The models probe
+    (`crates/alnair-router/src/upstream/probe.rs`) normally lists a connection's
+    upstream via `GET {base_url}/models`, and both `POST /api/connections/{id}/test`
+    and `POST /api/aliases/{id}/test` are built on it. Some OpenAI-compatible
+    providers — CodeBuddy Intl is the shipped example — expose only
+    `/chat/completions` and 404 on `/models`, which used to turn a working
+    connection into a `502 upstream error`. When the `/models` probe 404s, the
+    probe now POSTs a one-token request to the connection's chat route
+    (`/chat/completions`, or `/messages` for `anthropic-native`): any response
+    other than 404/5xx proves the route exists (401/403 mean the key was
+    rejected, not the path), so the outcome is returned with `enumerable: false`
+    and an empty model list. A 404 on the chat route, a 5xx, or an HTML body on
+    `/models` still fails loudly — those mean a wrong `base_url`, not a provider
+    that merely omits model listing. The flag rides along in the JSON
+    (`enumerable` on the connection test, models list and alias test) so the
+    dashboard says "model list not available" instead of "0 models" and the
+    import dialog points the operator at manual alias entry. (`probe.rs`,
+    `handlers/admin/mod.rs`, `apps/web/src/components/aliases/`)
+
 ---
 
 ## 5. The `alnair-llm` crate — read this

@@ -36,6 +36,7 @@ const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
 
 const connectionId = ref("");
 const models = ref<UpstreamModel[]>([]);
+const result = ref<{ enumerable: boolean }>({ enumerable: true });
 const loading = ref(false);
 const error = ref<string | null>(null);
 const search = ref("");
@@ -117,10 +118,12 @@ async function loadModels(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const result = await api.listUpstreamModels(connectionId.value);
-    models.value = result.models;
+    const response = await api.listUpstreamModels(connectionId.value);
+    models.value = response.models;
+    result.value = { enumerable: response.enumerable };
   } catch (caught) {
     models.value = [];
+    result.value = { enumerable: true };
     error.value =
       caught instanceof ApiError ? caught.message : "Failed to load models";
   } finally {
@@ -281,6 +284,9 @@ async function importSelected(): Promise<void> {
           </p>
         </template>
 
+        <p v-else-if="!result.enumerable" class="rounded-md border p-4 text-sm text-muted-foreground">
+          This provider does not publish a model list. Add aliases manually with their model id.
+        </p>
         <p v-else class="rounded-md border p-4 text-sm text-muted-foreground">
           This upstream returned no models.
         </p>

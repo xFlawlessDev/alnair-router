@@ -2105,6 +2105,132 @@ async fn connection_test_summarizes_html_errors() {
     );
 }
 
+/// Responds with a plain JSON 404 to everything, which is what a wrong
+/// base_url looks like when the host answers but no route matches.
+async fn spawn_plain_404_upstream() -> String {
+    let router = axum::Router::new().fallback(|| async {
+        (
+            StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({ "error_msg": "404 Route Not Found" })),
+        )
+    });
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn connection_test_rejects_a_base_url_where_every_route_404s() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_plain_404_upstream().await;
+    let id = create_probe_connection(&app, &base_url).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "unexpected body: {body}");
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("404"), "unexpected message: {message}");
+}
+
+/// Serves an OpenAI-compatible upstream that exposes only the chat route:
+/// `/models` is absent (404) but `/chat/completions` exists (401 without a
+/// usable key), which is how CodeBuddy Intl behaves.
+async fn spawn_chat_only_upstream() -> String {
+    let router = axum::Router::new().route(
+        "/chat/completions",
+        axum::routing::post(|| async {
+            (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({ "error": "invalid api key" })),
+            )
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn connection_test_accepts_a_provider_without_a_models_endpoint() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_chat_only_upstream().await;
+    let id = create_probe_connection(&app, &base_url).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["enumerable"], false);
+    assert_eq!(body["models_count"], 0);
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("model list not available"),
+        "unexpected body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn connection_models_reports_a_non_enumerable_provider() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_chat_only_upstream().await;
+    let id = create_probe_connection(&app, &base_url).await;
+
+    let (status, body) = get(&app, &format!("/api/connections/{id}/models")).await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["enumerable"], false);
+    assert_eq!(body["models"].as_array().expect("models").len(), 0);
+}
+
+#[tokio::test]
+async fn alias_test_skips_the_model_check_for_a_non_enumerable_provider() {
+    let (app, _db) = app(false).await;
+    let base_url = spawn_chat_only_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    let alias_id = create_alias_for(&app, &connection_id, "cb", Some("claude-sonnet-4")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/aliases/{alias_id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["enumerable"], false);
+    assert_eq!(body["model_available"], serde_json::Value::Null);
+}
+
 /// Serves a one-shot OpenAI-compatible SSE completion that replies "pong".
 async fn spawn_chat_upstream() -> String {
     let router = axum::Router::new().route(

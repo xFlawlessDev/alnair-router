@@ -179,11 +179,13 @@ export interface UpstreamModelsResponse {
   base_url: string;
   latency_ms: number;
   models: UpstreamModel[];
+  enumerable: boolean;
 }
 
 export interface ConnectionTestResult {
   ok: boolean;
   models_count: number;
+  enumerable: boolean;
   latency_ms: number;
   message: string;
 }
@@ -194,6 +196,7 @@ export interface AliasTestResult {
   model: string | null;
   model_available: boolean | null;
   models_count: number;
+  enumerable: boolean;
   latency_ms: number;
 }
 

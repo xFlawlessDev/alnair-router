@@ -456,6 +456,7 @@ pub async fn connection_models(
         "base_url": connection.base_url,
         "latency_ms": outcome.latency_ms,
         "models": outcome.models,
+        "enumerable": outcome.enumerable,
     })))
 }
 
@@ -472,11 +473,18 @@ pub async fn connection_test(
     let outcome = crate::upstream::probe::fetch_models(&connection).await?;
     let count = outcome.models.len();
 
+    let message = if outcome.enumerable {
+        format!("Connected — {count} models available")
+    } else {
+        "Connected — model list not available (this provider does not publish /models)".to_string()
+    };
+
     Ok(Json(json!({
         "ok": true,
         "models_count": count,
+        "enumerable": outcome.enumerable,
         "latency_ms": outcome.latency_ms,
-        "message": format!("Connected — {count} models available"),
+        "message": message,
     })))
 }
 
@@ -517,17 +525,25 @@ pub async fn alias_test(
     let model = alias.model_override.clone();
     let available = model
         .as_deref()
+        .filter(|_| outcome.enumerable)
         .map(|model| crate::upstream::probe::model_available(&outcome.models, model));
 
-    let (ok, message) = match (model.as_deref(), available) {
-        (Some(model), Some(true)) => (
+    let (ok, message) = match (model.as_deref(), available, outcome.enumerable) {
+        (_, _, false) => (
+            true,
+            format!(
+                "Connected — model list not available (this provider does not publish /models); cannot verify '{}'",
+                model.as_deref().unwrap_or("")
+            ),
+        ),
+        (Some(model), Some(true), _) => (
             true,
             format!(
                 "Connected — '{model}' is available on '{}'",
                 connection.name
             ),
         ),
-        (Some(model), _) => (
+        (Some(model), _, _) => (
             false,
             format!(
                 "Connected, but '{model}' is not among the {} models offered by '{}'",
@@ -535,7 +551,7 @@ pub async fn alias_test(
                 connection.name
             ),
         ),
-        (None, _) => (
+        (None, _, _) => (
             true,
             format!(
                 "Connected — prefix '{}' routes any model to '{}'",
@@ -550,6 +566,7 @@ pub async fn alias_test(
         "model": model,
         "model_available": available,
         "models_count": outcome.models.len(),
+        "enumerable": outcome.enumerable,
         "latency_ms": outcome.latency_ms,
     })))
 }
@@ -565,6 +582,7 @@ fn test_failure(
         "model": model,
         "model_available": available,
         "models_count": 0,
+        "enumerable": false,
         "latency_ms": 0,
     })
 }

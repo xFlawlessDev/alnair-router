@@ -28,6 +28,9 @@ pub struct UpstreamModel {
 pub struct ProbeOutcome {
     pub models: Vec<UpstreamModel>,
     pub latency_ms: u64,
+    /// False when the provider does not publish a `/models` endpoint and the
+    /// outcome is inferred from a chat-route liveness probe instead.
+    pub enumerable: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +50,9 @@ struct UpstreamModelRaw {
 ///
 /// When the plain `base_url` answers 404 while `{base_url}/v1` works, the
 /// error explains the missing `/v1` instead of dumping the upstream's HTML.
+/// When the upstream does not publish a `/models` endpoint at all, the probe
+/// falls back to a chat-route liveness check and reports the connection as
+/// reachable but not model-enumerable.
 pub async fn fetch_models(connection: &Connection) -> Result<ProbeOutcome> {
     let base = connection.base_url.trim_end_matches('/');
 
@@ -66,6 +72,9 @@ pub async fn fetch_models(connection: &Connection) -> Result<ProbeOutcome> {
         Err(error) => {
             if let Some(hint) = version_hint(connection, base, &error).await {
                 return Err(Error::Upstream(hint));
+            }
+            if let Some(outcome) = chat_liveness_probe(connection, base, &error).await {
+                return Ok(outcome);
             }
             Err(error)
         }
@@ -136,7 +145,11 @@ async fn probe_url(connection: &Connection, url: &str) -> Result<ProbeOutcome> {
         })
         .collect();
 
-    Ok(ProbeOutcome { models, latency_ms })
+    Ok(ProbeOutcome {
+        models,
+        latency_ms,
+        enumerable: true,
+    })
 }
 
 /// One extra probe against `{base}/v1/models` when the configured base 404s.
@@ -155,6 +168,95 @@ async fn version_hint(connection: &Connection, base: &str, error: &Error) -> Opt
          update the connection's base_url to '{base}/v1' (the router appends \
          /chat/completions to base_url)"
     ))
+}
+
+/// Falls back to a chat-route liveness probe when `/models` is not served.
+///
+/// Some OpenAI-compatible providers (e.g. CodeBuddy Intl) only expose a
+/// `/chat/completions` endpoint and return 404 for `/models`. When the models
+/// probe 404s we issue an authenticated POST to the chat route with a minimal
+/// request; a 401/403/4xx that reaches the route proves the upstream is live,
+/// so we report it reachable but not model-enumerable rather than failing.
+async fn chat_liveness_probe(
+    connection: &Connection,
+    base: &str,
+    models_error: &Error,
+) -> Option<ProbeOutcome> {
+    let error_str = models_error.to_string();
+    if !error_str.contains("404") {
+        return None;
+    }
+    // If the /models 404 body looked like HTML, the base_url is almost certainly
+    // a web UI rather than the API root. Don't paper over a misconfiguration
+    // with a chat-route probe — surface the HTML hint instead so the operator
+    // can correct the URL.
+    if error_str.contains("an HTML page") {
+        return None;
+    }
+
+    let chat_path = chat_route_path(connection.provider_type.as_str());
+    let url = format!("{base}{chat_path}");
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(PROBE_CONNECT_TIMEOUT)
+        .timeout(PROBE_TIMEOUT)
+        .build()
+        .map_err(|error| Error::Internal(error.to_string()))
+        .ok()?;
+
+    let mut request = client.post(&url).json(&serde_json::json!({
+        "model": "openai/gpt-oss-120b",
+        "messages": [{ "role": "user", "content": "ping" }],
+        "max_tokens": 1,
+        "stream": false,
+    }));
+
+    if let Some(api_key) = connection
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+    {
+        request = if connection.provider_type == "anthropic-native" {
+            request.header("x-api-key", api_key)
+        } else {
+            request.bearer_auth(api_key)
+        };
+    }
+    if connection.provider_type == "anthropic-native" {
+        request = request.header("anthropic-version", "2023-06-01");
+    }
+    for (name, value) in connection.headers() {
+        request = request.header(name, value);
+    }
+
+    let started = Instant::now();
+    let response = request.send().await.ok()?;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    let status = response.status();
+
+    // Liveness means the chat route itself exists. Only a 404 proves it does
+    // not — that is a wrong base_url and must fail loudly. Everything else
+    // (401/403, 400/422, 429, even a 5xx) means the request reached a handler:
+    // CodeBuddy Intl answers 504 for a rejected key, so treating 5xx as "not
+    // live" would re-create the false negative this fallback exists to fix.
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return None;
+    }
+
+    Some(ProbeOutcome {
+        models: Vec::new(),
+        latency_ms,
+        enumerable: false,
+    })
+}
+
+/// Appended to the connection base URL to reach its chat endpoint.
+fn chat_route_path(provider_type: &str) -> &'static str {
+    match provider_type {
+        "anthropic-native" => "/messages",
+        _ => "/chat/completions",
+    }
 }
 
 /// Describes an error body without dumping HTML at the operator.
