@@ -43,6 +43,8 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub telemetry: Arc<ActivityTracker>,
     pub pricing_cache: Arc<PricingCache>,
+    /// TTL-cached GitHub release lookup for the dashboard's update banner.
+    pub update_checker: Arc<crate::update::UpdateChecker>,
     /// Wakes the pricing sync loop after a settings save.
     pub pricing_sync_trigger: Arc<Notify>,
     /// Wakes the serve loop to rebind when LAN access or the port changes.
@@ -99,6 +101,7 @@ impl AppState {
             metrics,
             telemetry,
             pricing_cache,
+            update_checker: crate::update::UpdateChecker::new(),
             pricing_sync_trigger: Arc::new(Notify::new()),
             rebind: Arc::new(Notify::new()),
             loops_started: Arc::new(AtomicBool::new(false)),

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import {
+  ArrowUpCircle,
   Boxes,
   CircleAlert,
   CircleCheck,
   Copy,
+  ExternalLink,
   Gauge,
   KeyRound,
   Plug,
@@ -53,14 +55,18 @@ import type {
   InitState,
   ModelCatalogEntry,
   ModelUsage,
+  UpdateStatus,
   UsageSummary,
   VersionResponse,
 } from "@/types/api";
 
 const baseUrl = `${window.location.origin}/v1`;
+/** Self-service usage page: a client key reads its own rollup there. */
+const meUrl = `${window.location.origin}/me`;
 
 const health = ref<HealthResponse | null>(null);
 const version = ref<VersionResponse | null>(null);
+const update = ref<UpdateStatus | null>(null);
 const initState = ref<InitState | null>(null);
 const summary = ref<UsageSummary | null>(null);
 const usageModels = ref<ModelUsage[]>([]);
@@ -111,13 +117,21 @@ function priceTitle(entry: ModelCatalogEntry): string | undefined {
   return `Matched catalog key: ${entry.price_matched}`;
 }
 
-async function copyBaseUrl(): Promise<void> {
+async function copyValueToClipboard(value: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(baseUrl);
-    toast.success(`Copied "${baseUrl}"`);
+    await navigator.clipboard.writeText(value);
+    toast.success(`Copied "${value}"`);
   } catch {
     toast.error("Clipboard is not available");
   }
+}
+
+async function copyBaseUrl(): Promise<void> {
+  await copyValueToClipboard(baseUrl);
+}
+
+async function copyMeUrl(): Promise<void> {
+  await copyValueToClipboard(meUrl);
 }
 
 const healthy = computed(() => health.value?.status === "ok");
@@ -169,11 +183,12 @@ async function load(): Promise<void> {
   partialError.value = null;
 
   const filter = { since: since.value };
-  const [core, models, usage, live] = await Promise.allSettled([
+  const [core, models, usage, live, release] = await Promise.allSettled([
     Promise.all([api.health(), api.version(), api.initState()]),
     api.modelCatalog(),
     Promise.all([api.usageSummary(filter), api.usageModels(filter)]),
     api.activity(30),
+    api.update(),
   ]);
 
   if (core.status === "fulfilled") {
@@ -206,11 +221,34 @@ async function load(): Promise<void> {
   } else {
     failures.push("live activity");
   }
+  // A failed update check is not worth a page-level warning: the banner falls
+  // back to naming the running version.
+  if (release.status === "fulfilled") {
+    update.value = release.value;
+  }
   if (failures.length) {
     partialError.value = `Could not load: ${failures.join(", ")}.`;
   }
 
   loading.value = false;
+}
+
+/** Re-asks GitHub, bypassing the router's cache. */
+async function checkForUpdates(): Promise<void> {
+  try {
+    update.value = await api.update(true);
+    if (update.value.update_available) {
+      toast.info(`v${update.value.latest_version} is available`);
+    } else if (update.value.error) {
+      toast.error(update.value.error);
+    } else {
+      toast.success("You are on the latest version");
+    }
+  } catch (caught) {
+    toast.error(
+      caught instanceof ApiError ? caught.message : "Update check failed",
+    );
+  }
 }
 
 async function reloadUsage(): Promise<void> {
@@ -265,6 +303,15 @@ onMounted(load);
         <KeyRound class="size-3" />
         {{ initState.require_api_key ? "Key required" : "Auth open" }}
       </Badge>
+      <button
+        class="inline-flex w-fit items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs transition-colors hover:bg-accent"
+        title="Copy self-service usage URL"
+        data-testid="my-usage-copy"
+        @click="copyMeUrl"
+      >
+        {{ meUrl }}
+        <Copy class="size-3 text-muted-foreground" />
+      </button>
     </div>
 
     <Card v-if="error" class="border-destructive/40">
@@ -293,6 +340,41 @@ onMounted(load);
           <span class="text-muted-foreground">{{ partialError }}</span>
           <Button variant="ghost" size="sm" class="ml-auto" @click="load">
             Retry
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card
+        v-if="update?.update_available"
+        class="border-emerald-500/40"
+        data-testid="update-banner"
+      >
+        <CardContent class="flex flex-wrap items-center gap-2 p-4 text-sm">
+          <ArrowUpCircle class="size-4 text-emerald-500" />
+          <span>
+            <span class="font-medium"
+              >v{{ update.latest_version }} is available</span
+            >
+            <span class="text-muted-foreground">
+              — this router runs v{{ update.version }}.</span
+            >
+          </span>
+          <a
+            v-if="update.release_url"
+            :href="update.release_url"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1 underline underline-offset-4"
+          >
+            Release notes <ExternalLink class="size-3" />
+          </a>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="ml-auto"
+            @click="checkForUpdates"
+          >
+            Check again
           </Button>
         </CardContent>
       </Card>

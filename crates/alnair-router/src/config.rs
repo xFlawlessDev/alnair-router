@@ -30,6 +30,7 @@ pub struct RouterConfig {
     pub rate_limit: RateLimitConfig,
     pub pricing: PricingConfig,
     pub token_saver: TokenSaverConfig,
+    pub update: UpdateConfig,
 }
 
 /// Token-saving pipeline controls. Runtime/dashboard overrides are supported.
@@ -128,6 +129,36 @@ impl TokenSaverConfig {
         }
 
         Ok(())
+    }
+}
+
+/// Release update checks against the project's GitHub releases.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// Query GitHub on demand for the newest release. Off keeps the router
+    /// fully offline; the dashboard then shows the running version only.
+    pub check_enabled: bool,
+    /// `owner/repo` slug the release lookup targets.
+    pub repo: String,
+    /// Base URL of the releases API. Overridable so a mirror or GitHub
+    /// Enterprise host can be used instead of the public API.
+    pub api_url: String,
+    /// How long a release lookup is reused before the next request re-asks.
+    pub cache_ttl_secs: u64,
+    /// Include pre-releases when looking for the newest version.
+    pub include_prereleases: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            check_enabled: true,
+            repo: "xFlawlessDev/alnair-router".to_string(),
+            api_url: "https://api.github.com".to_string(),
+            cache_ttl_secs: 3_600,
+            include_prereleases: false,
+        }
     }
 }
 
@@ -776,5 +807,15 @@ mod tests {
         assert!(!pricing.sync_enabled, "sync stays opt-in");
         assert_eq!(pricing.sync_interval_secs, 86_400);
         assert!(pricing.source_url.contains("litellm"));
+    }
+
+    #[test]
+    fn update_defaults_are_pinned() {
+        let update = UpdateConfig::default();
+        assert!(update.check_enabled, "checks are on by default");
+        assert!(update.repo.contains('/'), "repo must be an owner/name slug");
+        assert!(update.api_url.starts_with("https://"));
+        assert_eq!(update.cache_ttl_secs, 3_600);
+        assert!(!update.include_prereleases, "stable builds only");
     }
 }

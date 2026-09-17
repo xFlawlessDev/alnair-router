@@ -13,8 +13,9 @@ describe("router", () => {
 
     expect(names).toContain("playground");
     expect(names).toContain("token-saver");
+    expect(names).toContain("changelog");
     expect(names).not.toContain("token-saver-playground");
-    expect(names).toHaveLength(15);
+    expect(names).toHaveLength(16);
   });
 
   it("redirects the old playground URL to the hub", () => {

@@ -32,6 +32,7 @@ pub fn build_router(state: AppState) -> Router {
     // `server.admin_token` is configured the token is enforced on all of them.
     let admin = Router::new()
         .route("/api/version", get(handlers::admin::version))
+        .route("/api/update", get(handlers::admin::update))
         .route("/api/init", get(handlers::admin::init_state))
         .route("/api/providers", get(handlers::providers::list_providers))
         .route(

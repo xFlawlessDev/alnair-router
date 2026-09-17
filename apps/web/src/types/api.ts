@@ -24,6 +24,25 @@ export interface VersionResponse {
   version: string;
 }
 
+/** `GET /api/update` — newest release compared against the running version. */
+export interface UpdateStatus {
+  name: string;
+  /** Version this router was built from. */
+  version: string;
+  /** Newest release GitHub reports; null when skipped or the lookup failed. */
+  latest_version: string | null;
+  /** True only when `latest_version` is strictly greater than `version`. */
+  update_available: boolean;
+  release_url: string | null;
+  release_notes: string | null;
+  published_at: string | null;
+  /** When the lookup was made; null when the answer was never fetched. */
+  checked_at: string | null;
+  check_enabled: boolean;
+  /** Why no `latest_version` came back, when the lookup failed. */
+  error: string | null;
+}
+
 /** `GET /api/auth/status` — what the sign-in screen needs to know. */
 export interface AuthStatus {
   password_set: boolean;

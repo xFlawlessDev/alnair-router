@@ -248,6 +248,99 @@ async fn health_reports_ok() {
 }
 
 #[tokio::test]
+async fn update_is_admin_guarded_and_reports_the_running_version() {
+    // A local port with nothing listening: the lookup fails fast instead of
+    // reaching out to GitHub from the test suite.
+    let mut config = RouterConfig::default();
+    config.server.admin_token = Some("admin-secret".to_string());
+    config.update.api_url = "http://127.0.0.1:1".to_string();
+    let (app, _db) = app_with_config(config).await;
+
+    // The update endpoint is an admin route, so it follows the same posture.
+    let (status, _) = get(&app, "/api/update").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) = get_with_auth(&app, "/api/update", Some("admin-secret")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(body["check_enabled"], true);
+    // An unreachable host reports the failure but still names the running
+    // version, which is what the dashboard falls back to.
+    assert!(body["latest_version"].is_null());
+    assert!(body["error"].is_string(), "expected an error: {body}");
+}
+
+/// Serves a canned `/repos/{repo}/releases/latest` payload.
+async fn spawn_releases_upstream(tag: &'static str) -> String {
+    let router = axum::Router::new().route(
+        "/repos/{owner}/{repo}/releases/latest",
+        axum::routing::get(move || async move {
+            axum::Json(serde_json::json!({
+                "tag_name": tag,
+                "html_url": format!("https://example.test/tag/{tag}"),
+                "body": "notes",
+                "published_at": "2026-01-02T03:04:05Z",
+                "prerelease": false,
+            }))
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock releases");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn update_detects_a_newer_release() {
+    let base = spawn_releases_upstream("v99.0.0").await;
+    let mut config = RouterConfig::default();
+    config.update.repo = "owner/repo".to_string();
+    config.update.api_url = base;
+    let (app, _db) = app_with_config(config).await;
+
+    let (status, body) = get(&app, "/api/update?refresh=true").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["latest_version"], "99.0.0");
+    assert_eq!(body["update_available"], true);
+    assert_eq!(body["release_url"], "https://example.test/tag/v99.0.0");
+    assert_eq!(body["release_notes"], "notes");
+    assert!(body["error"].is_null());
+}
+
+#[tokio::test]
+async fn update_does_not_flag_the_running_version_as_newer() {
+    let base = spawn_releases_upstream("v0.1.0").await;
+    let mut config = RouterConfig::default();
+    config.update.repo = "owner/repo".to_string();
+    config.update.api_url = base;
+    let (app, _db) = app_with_config(config).await;
+
+    let (status, body) = get(&app, "/api/update?refresh=true").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["latest_version"], "0.1.0");
+    assert_eq!(body["update_available"], false);
+}
+
+#[tokio::test]
+async fn update_check_can_be_disabled_by_configuration() {
+    let mut config = RouterConfig::default();
+    config.update.check_enabled = false;
+    let (app, _db) = app_with_config(config).await;
+
+    let (status, body) = get(&app, "/api/update").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["check_enabled"], false);
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert!(body["latest_version"].is_null());
+}
+
+#[tokio::test]
 async fn models_list_is_empty_on_a_fresh_database() {
     let (app, _db) = app(false).await;
     let (status, body) = get(&app, "/v1/models").await;

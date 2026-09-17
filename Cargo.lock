@@ -99,6 +99,7 @@ dependencies = [
  "mime_guess",
  "reqwest",
  "rust-embed",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",

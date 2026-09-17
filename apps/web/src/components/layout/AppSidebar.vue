@@ -3,6 +3,7 @@ import {
   BookOpen,
   CircleDollarSign,
   FlaskConical,
+  History,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -124,6 +125,18 @@ const isActive = (path: string): boolean => route.path === path;
 
     <SidebarFooter>
       <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            as-child
+            :is-active="isActive('/changelog')"
+            tooltip="Changelog"
+          >
+            <RouterLink to="/changelog">
+              <History />
+              <span>Changelog</span>
+            </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
             as-child

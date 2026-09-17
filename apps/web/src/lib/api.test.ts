@@ -117,6 +117,44 @@ describe("api", () => {
     await expect(api.deleteAlias("alias-1")).resolves.toBeUndefined();
   });
 
+  it("asks for the cached update status by default", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        name: "alnair-router",
+        version: "0.1.0",
+        latest_version: "0.2.0",
+        update_available: true,
+        release_url: null,
+        release_notes: null,
+        published_at: null,
+        checked_at: null,
+        check_enabled: true,
+        error: null,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.update()).resolves.toMatchObject({
+      update_available: true,
+    });
+    // Without a refresh the router serves its cached answer.
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/update",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("passes refresh=true to bypass the router's cache", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.update(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/update?refresh=true",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("serializes bodies and attaches the admin token when set", async () => {
     const fetchMock = vi
       .fn()

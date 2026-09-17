@@ -44,6 +44,7 @@ import type {
   RevealedApiKey,
   SettingsPatch,
   SettingsResponse,
+  UpdateStatus,
   UpstreamModelsResponse,
   UsageBucket,
   UsageFacets,
@@ -281,6 +282,10 @@ async function rawRequest(
 export const api = {
   health: () => request<HealthResponse>("GET", "/api/health"),
   version: () => request<VersionResponse>("GET", "/api/version"),
+  update: (refresh = false) =>
+    request<UpdateStatus>("GET", "/api/update", {
+      query: { refresh: refresh ? "true" : undefined },
+    }),
   initState: () => request<InitState>("GET", "/api/init"),
 
   authStatus: () => request<AuthStatus>("GET", "/api/auth/status"),

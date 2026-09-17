@@ -471,6 +471,13 @@ Key settings:
     (`lite`/`full`/`ultra` plus the `wenyan-*` variants) and `ponytail_level`
     (`lite`/`full`/`ultra`). An unknown level or a malformed `headroom_url`
     fails at startup rather than silently falling back.
+- `update.check_enabled` (default true) — let the dashboard ask GitHub for the
+  newest release so the Overview and Changelog pages can flag an available
+  update. `update.repo` sets the `owner/name` slug, `update.api_url` the
+  releases API base (a mirror or GitHub Enterprise host), `update.cache_ttl_secs`
+  (3600) how long a lookup is reused, and `update.include_prereleases` (false)
+  whether pre-releases count as newer. Set `check_enabled = false` for a fully
+  offline router; the dashboard then shows the running version only.
 
 A subset of the settings above — client/admin auth, routing, limits, rate limits
 and pricing — can be edited from the dashboard's **Settings** page. Overrides

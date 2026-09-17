@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 
 import AliasesPage from "@/pages/AliasesPage.vue";
+import ChangelogPage from "@/pages/ChangelogPage.vue";
 import CombosPage from "@/pages/CombosPage.vue";
 import ConnectionsPage from "@/pages/ConnectionsPage.vue";
 import ConsolePage from "@/pages/ConsolePage.vue";
@@ -107,6 +108,12 @@ export const router = createRouter({
       name: "guide",
       component: GuidePage,
       meta: { title: "API Guide" },
+    },
+    {
+      path: "/changelog",
+      name: "changelog",
+      component: ChangelogPage,
+      meta: { title: "Changelog" },
     },
     {
       path: "/login",

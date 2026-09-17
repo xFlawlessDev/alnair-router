@@ -19,6 +19,7 @@ use crate::db::repos::usage::NewUsageRecord;
 use crate::error::{Error, Result};
 use crate::limits::BudgetWindow;
 use crate::state::AppState;
+use crate::update::UpdateStatus;
 
 use crate::upstream::chat_backend;
 
@@ -854,6 +855,30 @@ pub async fn version() -> impl IntoResponse {
         "name": env!("CARGO_PKG_NAME"),
         "version": env!("CARGO_PKG_VERSION"),
     }))
+}
+
+/// `GET /api/update` — newest release, compared against the running version.
+///
+/// `?refresh=true` bypasses the cache. GitHub failures come back as a populated
+/// `error` field rather than an HTTP error, so the dashboard can always render
+/// the running version.
+pub async fn update(
+    State(state): State<AppState>,
+    Query(query): Query<UpdateQuery>,
+) -> Json<UpdateStatus> {
+    let config = state.config_snapshot();
+    Json(
+        state
+            .update_checker
+            .status(&config.update, query.refresh)
+            .await,
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateQuery {
+    #[serde(default)]
+    refresh: bool,
 }
 
 /// Reports whether the router has been configured with at least one connection.

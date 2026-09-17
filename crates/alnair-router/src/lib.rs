@@ -31,6 +31,7 @@ pub mod settings;
 pub mod state;
 pub mod telemetry;
 pub mod token_saver;
+pub mod update;
 pub mod upstream;
 
 pub use config::RouterConfig;

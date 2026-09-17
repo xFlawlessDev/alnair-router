@@ -7,6 +7,7 @@ WORKDIR /app/apps/web
 COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY assets /app/assets
+COPY CHANGELOG.md /app/CHANGELOG.md
 COPY apps/web/ ./
 RUN pnpm run build
 

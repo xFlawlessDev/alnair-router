@@ -141,3 +141,19 @@ caveman_level = "full"
 ponytail_enabled = false
 # lite | full | ultra
 ponytail_level = "full"
+
+[update]
+# Ask GitHub for the newest release when the dashboard's Overview page (or the
+# Changelog page) loads, so it can say whether an update is available. Set false
+# for a fully offline router: the dashboard then shows the running version only.
+check_enabled = true
+# Repository the release lookup targets.
+repo = "xFlawlessDev/alnair-router"
+# Releases API base. Point this at a mirror or GitHub Enterprise host instead of
+# the public API when the router cannot reach api.github.com directly.
+api_url = "https://api.github.com"
+# How long a release lookup is reused before the next request re-asks GitHub.
+cache_ttl_secs = 3600
+# Count pre-releases as newer versions. Off by default: a pre-release should not
+# advertise itself as an update to everyone running a stable build.
+include_prereleases = false
