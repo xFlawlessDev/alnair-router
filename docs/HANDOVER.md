@@ -777,7 +777,8 @@ dashboard. For live development use Vite instead:
 ```bash
 cd apps/web
 pnpm install
-pnpm dev                      # :5173, proxies /api and /v1 to ALNAIR_ROUTER_URL (:7878)
+pnpm dev                      # :5173, proxies /api and /v1 to the running router
+                              # (ALNAIR_ROUTER_URL, else router.pid, else :7878)
 pnpm run check                # vue-tsc --noEmit + production build (rebuild embeds it)
 pnpm test                     # Vitest: api client, formatters, router
 ```

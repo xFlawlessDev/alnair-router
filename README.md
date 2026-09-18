@@ -250,10 +250,12 @@ For development, run it with Vite against the live router:
 ```bash
 cd apps/web
 pnpm install
-pnpm dev           # http://localhost:5173, proxies /api and /v1 to :7878
+pnpm dev           # http://localhost:5173, proxies /api and /v1 to the router
 ```
 
-Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
+The proxy follows the running router — `ALNAIR_ROUTER_URL` if set, otherwise the
+address recorded in `$ALNAIR_ROUTER_HOME/router.pid` (default `:7878`), so a
+custom `--port` needs no extra setup. See
 [`apps/web/README.md`](apps/web/README.md).
 
 ### System tray

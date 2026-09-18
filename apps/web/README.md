@@ -34,6 +34,10 @@ Vite serves on `http://localhost:5173` and proxies `/api` and `/v1` to
 ALNAIR_ROUTER_URL=http://192.168.1.10:7878 pnpm dev
 ```
 
+When `ALNAIR_ROUTER_URL` is unset, the proxy follows the address the running
+router recorded in `$ALNAIR_ROUTER_HOME/router.pid`, so a router started with a
+custom `--port` (or `server.port`) is used automatically.
+
 ## What it does
 
 | Page            | Purpose                                                                                                                                                                                                                                                                                                  |

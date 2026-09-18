@@ -4,9 +4,14 @@ import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 
+import { resolveRouterTarget } from "./src/lib/routerTarget.ts";
+
 // Where the alnair-router server listens during development. `pnpm dev`
-// proxies `/api` and `/v1` there so the browser stays same-origin.
-const routerTarget = process.env.ALNAIR_ROUTER_URL ?? "http://127.0.0.1:7878";
+// proxies `/api` and `/v1` there so the browser stays same-origin. Besides an
+// explicit ALNAIR_ROUTER_URL, the target follows the address the running router
+// recorded, so `--port` and `server.port` changes are picked up automatically.
+const routerTarget = resolveRouterTarget();
+console.log(`[alnair-router] dev proxy -> ${routerTarget}`);
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],

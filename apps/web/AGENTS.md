@@ -7,7 +7,7 @@ Admin dashboard for the `alnair-router` crate. Vue 3 + TypeScript + Vite + Tailw
 Run from `apps/web` (pnpm only; the lockfile is `pnpm-lock.yaml`):
 
 - `pnpm install --frozen-lockfile` installs the locked dependencies.
-- `pnpm dev` starts Vite on `:5173`, proxying `/api` and `/v1` to `ALNAIR_ROUTER_URL` (default `http://127.0.0.1:7878`).
+- `pnpm dev` starts Vite on `:5173`, proxying `/api` and `/v1` to `ALNAIR_ROUTER_URL` (default `http://127.0.0.1:7878`). When the env var is unset the target follows the address in `$ALNAIR_ROUTER_HOME/router.pid`, so a running router on a custom `--port` is picked up automatically (`src/lib/routerTarget.ts`).
 - `pnpm run check` runs `vue-tsc --noEmit` and a production build.
 - `pnpm test` runs the Vitest suite.
 - `pnpm run format` formats with Prettier.
