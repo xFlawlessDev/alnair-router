@@ -50,21 +50,24 @@ fn ensure_dashboard(dist: &Path) {
     println!("cargo:rerun-if-changed=../../apps/web/dist");
 }
 
+/// Brand label shown by Explorer and the Task Manager, which read
+/// `FileDescription` rather than the executable's file name.
+const DISPLAY_NAME: &str = "Alnair Router";
+
 /// Compiles the app icon and version block into the Windows executable.
 ///
 /// The icon is the same artwork the tray uses, so a shortcut, the taskbar and
-/// Explorer all show the brand mark; `FileDescription` comes from the package
-/// description, which is what Explorer and the Task Manager display.
+/// Explorer all show the brand mark; `FileDescription` carries the short
+/// display name instead of the package description, which is too long to read
+/// in the Task Manager list.
 fn embed_windows_resources(manifest: &Path) {
     let icon = manifest.join("../../assets/alnair-white.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
 
     let mut resource = winresource::WindowsResource::new();
     resource.set_icon(&icon.to_string_lossy());
-
-    if let Ok(description) = std::env::var("CARGO_PKG_DESCRIPTION") {
-        resource.set("FileDescription", &description);
-    }
+    resource.set("FileDescription", DISPLAY_NAME);
+    resource.set("ProductName", DISPLAY_NAME);
 
     if let Err(error) = resource.compile() {
         println!("cargo:warning=cannot embed the Windows icon: {error}");
