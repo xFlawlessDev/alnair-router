@@ -45,6 +45,23 @@ impl Guard {
     fn exited(&mut self) -> bool {
         self.0.try_wait().expect("try_wait").is_some()
     }
+
+    /// Waits up to `timeout` for the process to be reaped.
+    ///
+    /// Reaping is asynchronous even after `stop` reports the PID gone, so a
+    /// bare `exited()` right after can still lose the race.
+    fn wait_exited(&mut self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.exited() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
 
 impl Drop for Guard {
@@ -284,7 +301,7 @@ fn stop_shuts_down_a_foreground_instance_and_clears_the_pid() {
 
     // `stop` reached the instance this test spawned, not some other process.
     assert!(
-        guard.exited(),
+        guard.wait_exited(Duration::from_secs(10)),
         "the serving process should have exited; {report}"
     );
     assert!(

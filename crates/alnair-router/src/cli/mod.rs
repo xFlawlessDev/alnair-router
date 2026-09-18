@@ -272,21 +272,30 @@ router however it was started. Background runs log to {home}/logs/router.log.
 }
 
 /// Prints the process state plus the auto-start state and paths.
+///
+/// This is a diagnostic command, so an unreadable auto-start registration is
+/// reported as `unknown` rather than failing the whole command.
 pub fn status() -> Result<()> {
     daemon::print_process_status()?;
 
     let home = crate::config::router_home();
     let exe = std::env::current_exe()
         .map_err(|error| Error::Config(format!("cannot resolve the executable path: {error}")))?;
-    let launcher = autostart::auto_launch(&exe)?;
-    let enabled = launcher
-        .is_enabled()
-        .map_err(|error| Error::Config(format!("failed to read auto-start state: {error}")))?;
 
-    println!(
-        "auto-start: {}",
-        if enabled { "enabled" } else { "disabled" }
-    );
+    let auto_start = match autostart::auto_launch(&exe).and_then(|launcher| {
+        launcher
+            .is_enabled()
+            .map_err(|error| Error::Config(error.to_string()))
+    }) {
+        Ok(true) => "enabled",
+        Ok(false) => "disabled",
+        Err(error) => {
+            tracing::warn!(%error, "cannot read auto-start state");
+            "unknown"
+        }
+    };
+
+    println!("auto-start: {auto_start}");
     println!("binary:     {}", exe.display());
     println!("config:     {}", home.join("config.toml").display());
     println!(

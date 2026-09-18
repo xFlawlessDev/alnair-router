@@ -91,14 +91,23 @@ pub(super) fn live_process() -> Option<Record> {
 
 /// True while a process with this PID exists and can still serve.
 ///
-/// `kill -0` answers "does this PID exist", and on Unix a process that has
-/// exited but not been reaped yet stays in the table as a zombie answering the
-/// same way. A router that already stopped must not read as alive, or `stop`
-/// waits out its timeouts and tells the operator to retry with `--force`.
+/// On Unix a process that has exited but not been reaped yet stays in the
+/// process table as a zombie; a router that already stopped must not read as
+/// alive, or `stop` waits out its timeouts and tells the operator to retry with
+/// `--force`.
+///
+/// Linux is answered from `/proc` rather than `kill -0`: the helper process
+/// that `kill` needs can itself fail to fork under load, which would report a
+/// running router as gone and make `stop` return before the process exited.
 pub(super) fn pid_is_alive(pid: u32) -> bool {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
-        signal_exists(pid) && !is_zombie(pid)
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .is_ok_and(|stat| !stat_reports_zombie(&stat))
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        signal_exists(pid)
     }
     #[cfg(windows)]
     {
@@ -120,7 +129,11 @@ pub(super) fn pid_is_alive(pid: u32) -> bool {
 }
 
 /// `kill -0` only tests for the process' existence.
-#[cfg(unix)]
+///
+/// Other Unix systems keep zombies too, but without `/proc` the only cheap
+/// signal is `kill -0`. The case is rare in practice: a detached router is
+/// reaped by init, not left to linger.
+#[cfg(all(unix, not(target_os = "linux")))]
 fn signal_exists(pid: u32) -> bool {
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
@@ -128,13 +141,6 @@ fn signal_exists(pid: u32) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
-}
-
-/// True for a process that has exited but not been reaped yet.
-#[cfg(target_os = "linux")]
-fn is_zombie(pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/stat"))
-        .is_ok_and(|stat| stat_reports_zombie(&stat))
 }
 
 /// Reads the state field of a `/proc/<pid>/stat` line, where `Z` is a zombie.
