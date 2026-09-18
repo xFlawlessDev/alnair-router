@@ -1,6 +1,7 @@
 target/
 data/
 node_modules/
+package-lock.json
 npm/alnair-router-*/bin/
 # Staging dirs for Dockerfile.release; the release workflow fills them.
 linux-amd64/
