@@ -1,6 +1,6 @@
 [package]
 name = "alnair-llm"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 description = "Vendored LLM provider stack (OpenAI-compatible + Anthropic-native) used by alnair-router"
