@@ -78,6 +78,12 @@ describe("ChangelogPage", () => {
     expect(container.textContent).toContain("Bug Fixes");
     expect(container.textContent).toContain("Running");
 
+    // Markdown is rendered, not echoed: no link syntax or backticks survive,
+    // and a commit bullet becomes a real anchor.
+    expect(container.textContent).not.toContain("](");
+    expect(container.textContent).not.toContain("`");
+    expect(container.querySelector('a[href*="/commit/"]')).toBeTruthy();
+
     unmount();
   });
 

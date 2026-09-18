@@ -2,6 +2,13 @@
 // used because an alias would have to resolve a file plus the `?raw` suffix.
 import raw from "../../../../CHANGELOG.md?raw";
 
+/** The trailing `([hash](url))` standard-version appends to each bullet. */
+export interface ChangelogCommit {
+  /** Abbreviated hash, e.g. `7d64c57`. */
+  hash: string;
+  url: string;
+}
+
 /** One bullet under a release, grouped by its conventional-commit type. */
 export interface ChangelogChange {
   /** `Features`, `Bug Fixes`, `Performance Improvements`, … */
@@ -9,6 +16,8 @@ export interface ChangelogChange {
   text: string;
   /** Conventional-commit scope, e.g. `routing` from `feat(routing): …`. */
   scope: string | null;
+  /** Commit this line came from, when the changelog carries a link. */
+  commit: ChangelogCommit | null;
 }
 
 /** A released version and everything listed under it. */
@@ -25,16 +34,28 @@ export interface ChangelogRelease {
   paragraphs: string[];
 }
 
-const RELEASE_HEADING = /^##\s+(.+?)\s*$/;
-const GROUP_HEADING = /^###\s+(.+?)\s*$/;
+const HEADING = /^(#{2,3})\s+(.+?)\s*$/;
+const LINK = /\[([^\]]+)\]\([^)]*\)/g;
 const BULLET = /^[*-]\s+(.+?)\s*$/;
+
+/**
+ * A version such as `1.2.3` or `v1.2.3`. standard-version writes the patch
+ * releases as a linked `###` heading, so a heading only counts as a release
+ * when its text carries a version and a bare word (`### Features`) does not.
+ */
+const VERSION = /\bv?\d+\.\d+\.\d+\b/;
+
+/** `[1.2.3](https://…)` -> `1.2.3`, leaving a plain heading untouched. */
+function stripLinks(heading: string): string {
+  return heading.replace(LINK, "$1");
+}
 
 /** `1.2.3 (2026-01-31)` or `[1.2.3] - 2026-01-31` -> version + date. */
 export function parseReleaseHeading(heading: string): {
   version: string;
   kind: string | null;
 } {
-  const trimmed = heading.replace(/[[\]]/g, "").trim();
+  const trimmed = stripLinks(heading).replace(/[[\]]/g, "").trim();
   const match = /^(\S+)(?:\s*[-–—(]\s*([^)]+?)\)?\s*)?$/.exec(trimmed);
   const version = (match?.[1] ?? trimmed).trim();
   const kind = /^\d/.test(version) ? null : version;
@@ -46,6 +67,40 @@ function splitScope(text: string): { scope: string | null; text: string } {
   const match = /^\*\*(.+?):?\*\*:?\s*(.*)$/.exec(text);
   if (!match) return { scope: null, text };
   return { scope: match[1]!.trim(), text: match[2]!.trim() };
+}
+
+/** The `([hash](url))` suffix standard-version appends to a bullet. */
+const COMMIT = /\s*\(\[([0-9a-f]{7,})\]\(([^)]+)\)\)\s*$/i;
+
+/** Splits a bullet into its prose and the commit link at the end, if any. */
+function splitCommit(text: string): {
+  text: string;
+  commit: ChangelogCommit | null;
+} {
+  const match = COMMIT.exec(text);
+  if (!match) return { text, commit: null };
+  const trimmed = text.slice(0, match.index).trim();
+  return { text: trimmed, commit: { hash: match[1]!, url: match[2]! } };
+}
+
+/** Strips markdown links and code ticks so the bullet reads as plain prose. */
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(LINK, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
+
+/** Parses a bullet into its change, lifting the scope and commit link out. */
+export function parseChange(
+  raw: string,
+  group: string,
+): ChangelogChange | null {
+  const { scope, text: afterScope } = splitScope(raw);
+  const { text, commit } = splitCommit(afterScope);
+  const clean = stripMarkdown(text);
+  if (!clean) return null;
+  return { group, text: clean, scope, commit };
 }
 
 /**
@@ -61,11 +116,13 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
   let group = "";
 
   for (const line of markdown.split(/\r?\n/)) {
-    const releaseMatch = RELEASE_HEADING.exec(line);
-    if (releaseMatch) {
-      const { version, kind } = parseReleaseHeading(releaseMatch[1]!);
+    const heading = HEADING.exec(line);
+    const groupMatch = heading && !VERSION.test(heading[2]!) ? heading : null;
+
+    if (heading && !groupMatch) {
+      const { version, kind } = parseReleaseHeading(heading[2]!);
       const date = /\((\d{4}-\d{2}-\d{2})\)|\b(\d{4}-\d{2}-\d{2})\b/.exec(
-        releaseMatch[1]!,
+        stripLinks(heading[2]!),
       );
       release = {
         version,
@@ -80,9 +137,8 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
       continue;
     }
 
-    const groupMatch = GROUP_HEADING.exec(line);
     if (groupMatch) {
-      group = groupMatch[1]!.trim();
+      group = stripLinks(groupMatch[2]!).trim();
       if (release && !release.groups.includes(group)) {
         release.groups.push(group);
       }
@@ -93,12 +149,12 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
 
     const bullet = BULLET.exec(line);
     if (bullet) {
-      const { scope, text } = splitScope(bullet[1]!);
-      if (text) release.changes.push({ group, text, scope });
+      const change = parseChange(bullet[1]!, group);
+      if (change) release.changes.push(change);
       continue;
     }
 
-    const text = line.trim();
+    const text = stripMarkdown(line.trim());
     if (text && !text.startsWith("#")) release.paragraphs.push(text);
   }
 

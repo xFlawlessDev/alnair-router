@@ -4,6 +4,7 @@ import {
   CircleAlert,
   CircleCheck,
   ExternalLink,
+  GitCommitHorizontal,
   RefreshCw,
   ScrollText,
   Sparkles,
@@ -283,6 +284,18 @@ onMounted(() => checkForUpdates());
                     >{{ change.scope }}</code
                   >
                   {{ change.text }}
+                  <a
+                    v-if="change.commit"
+                    :href="change.commit.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="ml-1 inline-flex items-center gap-0.5 font-mono text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    :title="`Commit ${change.commit.hash}`"
+                  >
+                    <GitCommitHorizontal class="size-3" />{{
+                      change.commit.hash
+                    }}
+                  </a>
                 </span>
               </li>
             </ul>
