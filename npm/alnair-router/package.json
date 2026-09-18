@@ -1,6 +1,6 @@
 {
   "name": "@xflawlessdev/alnair-router",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Standalone OpenAI-compatible AI router with aliases, fallback combos, and an embedded dashboard",
   "license": "MIT",
   "homepage": "https://github.com/xFlawlessDev/alnair-router#readme",
@@ -24,8 +24,8 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@xflawlessdev/alnair-router-darwin-arm64": "0.1.0",
-    "@xflawlessdev/alnair-router-linux-x64": "0.1.0",
-    "@xflawlessdev/alnair-router-win32-x64": "0.1.0"
+    "@xflawlessdev/alnair-router-darwin-arm64": "0.1.1",
+    "@xflawlessdev/alnair-router-linux-x64": "0.1.1",
+    "@xflawlessdev/alnair-router-win32-x64": "0.1.1"
   }
 }
