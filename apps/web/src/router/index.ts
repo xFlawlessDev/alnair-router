@@ -149,8 +149,14 @@ router.beforeEach(async (to) => {
   if (to.meta.public) return true;
 
   const status = await loadAuthStatus();
+  // An unreachable router must not trap the user on the login screen.
   if (status === null) return true;
 
-  if (status.authenticated || status.admin_open || getAdminToken()) return true;
+  if (status.authenticated || getAdminToken()) return true;
+
+  // The open loopback posture skips the password, but a router that still
+  // needs its first password must send the owner to setup instead.
+  if (status.admin_open && !status.setup_required) return true;
+
   return { name: "login", query: { redirect: to.fullPath } };
 });
