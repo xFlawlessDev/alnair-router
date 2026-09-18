@@ -10,6 +10,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// How long to wait for the router to start answering.
@@ -54,10 +55,29 @@ impl Drop for Guard {
 }
 
 /// A port nothing is using, released again before the child binds it.
+///
+/// Handing the same port to two tests would break them in a way that looks
+/// nothing like a port clash: the second server fails to bind and exits, but
+/// its health probe is answered by the first one, so the test happily drives a
+/// router it does not own. Linux hands the same ephemeral port out again
+/// quickly enough for that to happen, so ports are handed out once per run.
 fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("addr").port()
+    let mut handed_out = HANDED_OUT.lock().expect("port list poisoned");
+
+    loop {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let port = listener.local_addr().expect("addr").port();
+        drop(listener);
+
+        if !handed_out.contains(&port) {
+            handed_out.push(port);
+            return port;
+        }
+    }
 }
+
+/// Ports this test binary has already given out.
+static HANDED_OUT: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 
 /// A port plus the address the child will serve on.
 fn address() -> (u16, String) {
@@ -255,22 +275,25 @@ fn stop_shuts_down_a_foreground_instance_and_clears_the_pid() {
     let mut guard = started(home.path(), &address);
 
     let output = router(home.path()).arg("stop").output().expect("run stop");
-    assert!(
-        output.status.success(),
-        "stop failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+    let report = format!(
+        "stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout).trim(),
+        String::from_utf8_lossy(&output.stderr).trim()
     );
+    assert!(output.status.success(), "stop failed: {report}");
 
     // `stop` reached the instance this test spawned, not some other process.
-    assert!(guard.exited(), "the serving process should have exited");
     assert!(
-        pid_file(home.path()).is_none(),
-        "the pid file is removed on the way out"
+        guard.exited(),
+        "the serving process should have exited; {report}"
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("stopped"),
-        "stop should report success: {}",
-        String::from_utf8_lossy(&output.stdout)
+        pid_file(home.path()).is_none(),
+        "the pid file is removed on the way out; {report}"
+    );
+    assert!(
+        output.stdout.windows(7).any(|window| window == b"stopped"),
+        "stop should report success: {report}"
     );
 }
 
