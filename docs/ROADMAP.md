@@ -55,6 +55,7 @@ Working today, verified by the test suite and a live smoke test:
 - [x] Provider stack extracted to the `crates/alnair-llm` crate with a one-file seam
 - [x] Dashboard embedded in the binary and served at `/` (SPA fallback, `server.serve_dashboard`)
 - [x] Desktop tray icon (Windows/macOS): Open dashboard + Quit, graceful shutdown, `server.tray` / `--no-tray`, icon from `assets/alnair-white.ico`
+- [x] Background operation: `serve` detaches when launched from a terminal and logs to `$ALNAIR_ROUTER_HOME/logs/router.log`; `start`/`stop`/`restart`/`status` drive it through `router.pid` and a local `control.token` (graceful shutdown, no admin credential needed). `--foreground` / `ALNAIR_ROUTER_FOREGROUND=1` keep the old blocking behaviour, and a container (PID 1, no terminal) always serves in place
 - [x] Dashboard Settings page (`/api/settings`): runtime overrides for auth, routing, limits, rate limits and pricing; persisted in SQLite and hot-applied without a restart
 - [x] Dashboard backup/restore (`GET /api/backup`, `POST /api/restore`): streamed SQLite snapshots and validated transactional imports that leave runtime settings alone
 - [x] Dashboard model catalog (`GET /api/models`): every alias and combo tier with its provider and catalog price, copyable model ids

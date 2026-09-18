@@ -17,6 +17,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(handlers::admin::health))
         .route("/api/ready", get(handlers::admin::ready));
 
+    // Process control carries its own credential (the local control token)
+    // instead of the admin one, so `alnair-router stop` works before any
+    // password or admin token exists. It must stay out of the `admin` group
+    // below, which applies `require_admin_token`.
+    let control = Router::new().route(
+        "/api/admin/control/shutdown",
+        post(handlers::control::shutdown),
+    );
+
     // Read-only surfaces that identify the caller with a client key instead of
     // the admin token.
     let public = Router::new()
@@ -196,6 +205,7 @@ pub fn build_router(state: AppState) -> Router {
     let config = state.config_snapshot();
     let mut app = Router::new()
         .merge(probes)
+        .merge(control)
         .merge(public)
         .merge(admin)
         .merge(v1);

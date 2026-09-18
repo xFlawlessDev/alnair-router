@@ -429,7 +429,7 @@ pub async fn require_admin_token(
 /// Compares two secrets by hashing both sides and folding over every byte, so
 /// mismatches are not observable through response timing. `sha2` is already a
 /// dependency; no dedicated constant-time-compare crate is needed.
-fn tokens_match(provided: &str, expected: &str) -> bool {
+pub(crate) fn tokens_match(provided: &str, expected: &str) -> bool {
     use sha2::{Digest, Sha256};
 
     let provided = Sha256::digest(provided.as_bytes());

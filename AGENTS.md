@@ -12,11 +12,11 @@
 
 - `cargo fmt --all` then `cargo clippy --workspace --all-targets -- -D warnings` — CI fails on either; run both before finishing.
 - `cargo test --workspace` (~203 tests, ~35s). `cargo test -p alnair-llm` is the slow half (~23s); for fast loops use `cargo test -p alnair-router --lib` or `--test routes`.
-- `cargo run -p alnair-router` generates `$ALNAIR_ROUTER_HOME/secrets.key` on first run and prints a dashboard setup code; `ALNAIR_ROUTER__SECRETS__KEY` (64 hex or base64) overrides the generated key. Every config value overrides as `ALNAIR_ROUTER__SECTION__KEY`.
+- `cargo run -p alnair-router` generates `$ALNAIR_ROUTER_HOME/secrets.key` on first run and prints a dashboard setup code; `ALNAIR_ROUTER__SECRETS__KEY` (64 hex or base64) overrides the generated key. Every config value overrides as `ALNAIR_ROUTER__SECTION__KEY`. From a terminal it detaches into the background and returns (`--foreground`, or `ALNAIR_ROUTER_FOREGROUND=1`, serves inline instead); a container running it as PID 1 never detaches.
 - Real-provider e2e (opt-in, `#[ignore]`d): `ALNAIR_ROUTER_E2E_OPENAI_API_KEY=... cargo test -p alnair-router --test e2e_real -- --ignored`.
 - Web: in `apps/web` run `pnpm test` and `pnpm run check` (vue-tsc + build). Run `pnpm run build` before a release build so the embedded dashboard is current. Dependency changes must update `pnpm-lock.yaml`. (pnpm settings live in `apps/web/pnpm-workspace.yaml`.)
 - Release (root `npm install` once): `npm run release:dry` then `npm run release` — standard-version bumps, and the `postbump` hook syncs `crates/*/Cargo.toml`, `apps/web/package.json`, `npm/*/package.json`, and `Cargo.lock`. Pushing the `v*` tag triggers the release workflow (binaries, GHCR image, npm packages; the npm job needs the `NPM_TOKEN` secret); `npm run build:binary` builds a local release binary.
-- Install/auto-start: `alnair-router install|uninstall|status` (auto-launch crate); `install.sh` (curl | sh) and `install.ps1` (irm | iex) fetch/unpack the release binary first. `install` never overwrites an existing `config.toml`.
+- Install/auto-start: `alnair-router install|uninstall|status` (auto-launch crate); `install.sh` (curl | sh) and `install.ps1` (irm | iex) fetch/unpack the release binary first. `install` never overwrites an existing `config.toml`. `start|stop|restart` drive the background process through `router.pid` (PID + address) + `control.token` in `$ALNAIR_ROUTER_HOME`; `serve|start|restart` accept `--port <n>` as a one-run override, and `tests/cli_lifecycle.rs` covers that contract against the real binary.
 
 ## Hard rules
 

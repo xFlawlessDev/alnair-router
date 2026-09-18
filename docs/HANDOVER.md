@@ -114,6 +114,13 @@ crates/alnair-router/
 ├── src/
 │   ├── main.rs              # load config → cipher → connect DB → migrate → serve
 │   ├── lib.rs               # module tree + shallow re-exports
+│   ├── cli/
+│   │   ├── mod.rs           # argv parsing, help, status
+│   │   ├── autostart.rs     # install/uninstall via the auto-launch crate
+│   │   └── daemon/
+│   │       ├── mod.rs       # detach, spawn, logs, start/stop/restart
+│   │       ├── record.rs    # router.pid: pid + address, liveness, signals
+│   │       └── control.rs   # control.token, stop request, health probe
 │   ├── config.rs            # file + ALNAIR_ROUTER__SECTION__KEY env
 │   ├── crypto.rs            # AES-256-GCM credential encryption + key parsing
 │   ├── backup.rs            # VACUUM INTO snapshots + transactional restore
@@ -143,8 +150,8 @@ crates/alnair-router/
 │   │       └── fetch.rs    # /v1/web/fetch and its SSRF guard
 │   ├── protocol/            # OpenAI ⇄ Anthropic wire translation
 │   ├── token_saver/         # deterministic pipeline: slimmer, headroom, directives
-│   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, public, web, token_saver
-└── tests/                   # resolve, storage, fallback, routes, e2e_real
+│   └── handlers/            # chat, messages, responses, models, catalog, media, admin, backup, public, web, token_saver, control
+└── tests/                   # resolve, storage, fallback, routes, cli_lifecycle, e2e_real
 ```
 
 ### Request flow
@@ -464,10 +471,11 @@ suite should tell you.
     pop a terminal. `bind_parent_console` re-attaches stdio when the binary is
     invoked from a real terminal (`AttachConsole` + `CONOUT$`/`CONIN$`) so CLI
     output and logs stay visible; handles Windows already supplied — e.g.
-    `Start-Process -RedirectStandardOutput` — are left untouched. Without a
-    console and without inherited handles (the auto-start case) output is
-    discarded. The dashboard opener also spawns `cmd` with `CREATE_NO_WINDOW`,
-    otherwise `cmd` would allocate a console just to launch the browser.
+    `Start-Process -RedirectStandardOutput` — are left untouched. Output with
+    neither a console nor inherited handles goes nowhere, which is why a
+    background run is given the log file as its stdio (see 33). The dashboard
+    opener also spawns `cmd` with `CREATE_NO_WINDOW`, otherwise `cmd` would
+    allocate a console just to launch the browser.
 
 21. **Key rules are one policy, merged key-first.** `policy.rs` resolves an
     `ApiKey` plus its optional `KeyPlan` into a `KeyPolicy`: any field the key
@@ -659,6 +667,43 @@ suite should tell you.
     import dialog points the operator at manual alias entry. (`probe.rs`,
     `handlers/admin/mod.rs`, `apps/web/src/components/aliases/`)
 
+33. **`serve` detaches when a terminal is waiting, and stops through a local
+    control token.** The router used to block the shell that started it, so the
+    terminal had to stay open for the router's whole life. `serve_command` now
+    asks `daemon::should_detach(mode, console_attached)`: with a terminal it
+    re-executes itself as `serve --foreground` with stdio pointed at
+    `$ALNAIR_ROUTER_HOME/logs/router.log`, waits for `/api/health`, prints the
+    pid/url/log and returns. `--foreground` / `ALNAIR_ROUTER_FOREGROUND=1` keep
+    the old behaviour, `--detach` forces the hand-off, and a launch with no
+    console (auto-start, double-click, a container) serves in place — PID 1
+    never detaches, or the container would exit immediately. The tray is
+    unaffected: the detached child is a GUI process with no console, so the icon
+    appears and its Quit reaches the same signal as before. The serving process
+    writes `router.pid` — two lines, the PID then the `host:port` it serves on,
+    renamed into place so a reader never sees half a record — and a `PidFile`
+    guard removes it on every exit path. Recording the address is what lets
+    `stop`/`status` find the router however its port was chosen, including a
+    `--port` flag that never reached `config.toml` (`load_config` applies that
+    override in memory only, and `start` forwards it to the child). Liveness for
+    `stop`/`restart` is the PID alone, so a hung router is still stoppable with
+    `--force`; `status` additionally probes `/api/health` and says so when the
+    process exists but does not answer. The process also generates
+    `control.token`, a 32-byte secret that `stop`/`restart` send as
+    `x-alnair-control` to `POST /api/admin/control/shutdown`. That route
+    deliberately does **not** sit behind `require_admin_token`: it must work
+    before any password or admin token exists, and a browser cannot read the
+    token file, so loopback alone is not enough to stop the router. The handler
+    answers `202` after notifying; `with_graceful_shutdown` drains the in-flight
+    request, so the acknowledgement still reaches the caller. `stop` escalates to
+    SIGTERM and then `--force` (SIGKILL / `TerminateProcess`). Two platform
+    details are load-bearing: on Unix the child gets its own process group so
+    closing the terminal cannot deliver SIGHUP, and on Windows the parent first
+    clears `HANDLE_FLAG_INHERIT` on every handle it owns, because a shell hands
+    its output over as an inheritable handle and a leaked copy would keep
+    `alnair-router serve | more` from ever seeing end-of-input. (`cli/daemon/`,
+    `cli/mod.rs`, `handlers/control.rs`, `state.rs`,
+    `tests/cli_lifecycle.rs`)
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -711,6 +756,7 @@ cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
 # No config needed: secrets.key is generated under $ALNAIR_ROUTER_HOME on first
 # run and a dashboard setup code is printed; set/override values with
 # ALNAIR_ROUTER__SECTION__KEY when deploying (e.g. ALNAIR_ROUTER__SECRETS__KEY).
+# From a terminal this detaches (see 33) and returns; --foreground stays here.
 cargo test --workspace        # ~316 tests, ~35s (retry backoff + provider tests)
 cargo clippy --workspace --all-targets
 ```
@@ -718,7 +764,9 @@ cargo clippy --workspace --all-targets
 On Windows and macOS `serve` also shows a system tray icon (Open dashboard,
 Quit; left-click opens the dashboard on Windows) unless `server.tray = false`
 or `--no-tray`. The icon comes from `assets/alnair-white.ico` (`assets/
-alnair-white.svg` is the source artwork); Linux has no tray support.
+alnair-white.svg` is the source artwork); Linux has no tray support. A
+background run keeps its icon: the detached child is a normal GUI process, and
+Quit reaches the same `Notify` that `stop` does.
 
 **Dashboard** — built assets are embedded, so `http://127.0.0.1:7878/` serves the
 dashboard. For live development use Vite instead:
@@ -772,9 +820,17 @@ refuses to start without it. See `crates/alnair-router/router.example.toml`.
 
 ```bash
 alnair-router install     # config with a generated secrets key + auto-start
-alnair-router status      # auto-start state and paths
+alnair-router start       # start in the background (status reports the pid)
+alnair-router status      # process, auto-start state and paths
+alnair-router stop        # graceful stop; --force kills if it will not stop
+alnair-router restart     # stop, then start again
 alnair-router uninstall   # disable auto-start, keep data
 ```
+
+`serve`, `start` and `restart` also take `--port <n>`, which overrides
+`server.port` for that run only — nothing is written back to `config.toml`, and
+the detached child inherits the flag. `stop`/`status` take no port: they read the
+address the serving process recorded in `router.pid`.
 
 `install`/`uninstall`/`status` use the `auto-launch` crate (Windows Run key,
 macOS LaunchAgent, Linux XDG autostart). On Linux/macOS `install.sh` (also
@@ -787,7 +843,8 @@ verifies checksums, and installs it; on Windows `install.ps1` (also served as
 
 **State** — SQLite at `$ALNAIR_ROUTER_HOME/db/router.sqlite`, created and
 migrated on first boot. Credentials are encrypted on the way in; legacy
-plaintext rows are rewritten by `migrate_credentials`.
+plaintext rows are rewritten by `migrate_credentials`. `router.pid`,
+`logs/router.log` and `control.token` also live here; see item 21.
 
 ### Configuring a working setup
 
@@ -826,6 +883,7 @@ Response headers report the routing decision:
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/streaming.rs` (5) | SSE translation: streamed tool calls + `finish_reason`, reasoning, opt-in usage chunk, and the Anthropic `tool_use`/`thinking` block sequence |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
+| `tests/cli_lifecycle.rs` (10) | The real binary: `serve --foreground` writes its pid + control token, a `--port` override is used, recorded, and still stoppable without repeating the flag, the control route refuses anything but the local token (including an admin bearer), `stop` shuts a foreground instance down and clears the pid file, `stop`/`status` are safe when nothing runs, a stale pid file is cleaned up, conflicting flags are rejected, and detaching does not hold the caller's stdout open (the `| more` regression) |
 | `src/**` inline (49) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization, activity tracker |
 | `apps/web/src/**` | API client error/transport handling, formatters, route table (incl. the legacy-playground redirect), theme store, alias prefix helpers, confirm-dialog regression, topology layout, and the playground hub (page tab shell sharing overrides across tabs, the token-saver tab's run/measured-reduction/rejection/malformed-JSON/per-run toggles incl. the terse/caveman exclusion, the chat tab's streaming, error frame, system prompt and savings, and the SSE client's frame dispatch, split-frame reassembly, non-OK and in-band errors) |
 

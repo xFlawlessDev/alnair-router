@@ -81,9 +81,17 @@ scripts (`-Version`, `-Repo`, `-InstallDir`, `-NoAutoStart` on PowerShell).
 Manage it with:
 
 ```bash
-alnair-router status      # auto-start state and paths
+alnair-router status      # running? auto-start state and paths
+alnair-router start       # start it in the background
+alnair-router stop        # stop it gracefully
+alnair-router restart     # stop, then start again
 alnair-router uninstall   # disable auto-start (config and data are kept)
 ```
+
+Add `--port 9000` to `serve`/`start`/`restart` to listen somewhere else for that
+run; the config file is not touched. `status` and `stop` need no `--port` — they
+read the address the running router recorded (see
+[Running in the background](#running-in-the-background)).
 
 `install`/`uninstall`/`status` work on every platform (auto-launch writes a Run
 key, LaunchAgent, or XDG autostart entry); the install scripts only place the
@@ -119,8 +127,23 @@ first run and prints a dashboard setup code:
 
 ```bash
 cargo run -p alnair-router
-# alnair-router setup code: 8f3a-2b91-c4d7-e5f6
+# alnair-router started in the background (pid 12345) at http://127.0.0.1:7878
+#   log:  ~/.alnair-router/logs/router.log
+#   stop: alnair-router stop
 ```
+
+The router keeps running after the command returns, so the terminal is free and
+closing it does not stop the router. Read the setup code at `/login` from the
+dashboard itself, or from the log:
+
+```bash
+tail -f ~/.alnair-router/logs/router.log     # Get-Content -Wait on Windows
+```
+
+`alnair-router serve --foreground` (or `ALNAIR_ROUTER_FOREGROUND=1`) keeps the
+old behaviour: it serves in the terminal, printing logs there, until Ctrl+C.
+Launches with no terminal — auto-start, double-click, a container — also serve
+in place, because there is nothing to detach from.
 
 Open `http://127.0.0.1:7878/login`, paste the setup code and choose the
 dashboard password. To override the generated key (or any other value), use
@@ -238,11 +261,40 @@ Set `ALNAIR_ROUTER_URL` to point the dev proxy at a different router. See
 On Windows and macOS `alnair-router` runs with a tray icon: **Open dashboard**
 and **Quit** (graceful shutdown), and on Windows left-click opens the dashboard
 directly. Disable it with `--no-tray` or `server.tray = false`; Linux always
-serves headless.
+serves headless. The icon also appears for a background run, so the tray is how
+you stop the router when you have no terminal in front of you.
 
 Windows builds are GUI-subsystem binaries, so no console window appears on
 auto-start or double-click. Run the binary from a terminal and CLI output plus
-logs attach to that terminal as usual.
+logs attach to that terminal as usual; a background run logs to
+`$ALNAIR_ROUTER_HOME/logs/router.log` instead.
+
+### Running in the background
+
+`serve` detaches when it is launched from a terminal, so the shell prompt comes
+back as soon as the router is listening. Everything the background run needs
+lives in `$ALNAIR_ROUTER_HOME`:
+
+| File | Purpose |
+|---|---|
+| `router.pid` | PID of the serving process and the `host:port` it listens on |
+| `logs/router.log` | Appended stdout/stderr, rotated to `router.log.1` past ~5 MB |
+| `control.token` | 32-byte secret the CLI uses to request a graceful stop |
+
+`stop` posts to `POST /api/admin/control/shutdown` with that token and waits for
+the process to exit, so the router shuts down through the same graceful path as
+the tray's **Quit**. It falls back to `SIGTERM` where the platform has it, and
+`stop --force` is there for a process that will not stop. The route is guarded
+by the control token alone — not `server.admin_token` and not the dashboard
+password — so it keeps working before either of those is configured; a web page
+cannot read the token file, so a browser cannot forge the request.
+
+Because the address lives in `router.pid`, `status` and `stop` find the router
+however its port was chosen: `config.toml`, `ALNAIR_ROUTER__SERVER__PORT`, or a
+`--port` flag the config never saw.
+
+Use `--detach` to force a background start where the terminal cannot be
+detected (for example from a script), and `--foreground` for the opposite.
 
 ## Docker
 
@@ -262,6 +314,11 @@ cannot reach a loopback bind) and keeps `/v1` closed to anyone without a key.
 The first time, `docker compose logs` prints `alnair-router setup code: …`; use
 it at `/login` to create the dashboard password. See
 [Exposing beyond loopback](#exposing-beyond-loopback).
+
+The image sets `ALNAIR_ROUTER_FOREGROUND=1`: a container runs the router as PID
+1 with no terminal, and PID 1 must not detach, or the container would exit the
+moment it started. Any supervisor that wants the process to stay in the
+foreground should set the same variable (or pass `serve --foreground`).
 
 Pin a version with `image: ghcr.io/xflawlessdev/alnair-router:vX.Y.Z`, or build
 from source instead with `docker build -t alnair-router .`.
@@ -381,6 +438,7 @@ is set, requires `Authorization: Bearer <token>`:
 | Token saver | `/api/token-saver/playground`, `/api/token-saver/headroom/test` |
 | Playground | `/api/playground/chat` (admin-guarded SSE: streams a real completion, reports tier + savings) |
 | Settings & data | `/api/settings`, `/api/backup`, `/api/restore` |
+| Process control | `/api/admin/control/shutdown` — graceful stop for the CLI. Guarded by the local `control.token` instead of the admin credential, so `alnair-router stop` works before a password or admin token exists. |
 
 `/api/connections/{id}/accounts` manages extra API keys for one connection: the
 primary key and enabled accounts rotate round-robin per request, and a failing
@@ -733,6 +791,10 @@ The Rust suite covers pure resolution, repository behaviour against a real
 in-memory SQLite, fallback ordering against an in-process mock upstream, and
 endpoint shape/auth over the real Axum app. The web suite covers the API client,
 formatters, and routing.
+
+A local run backgrounds itself when it has a terminal, so use
+`cargo run -p alnair-router -- serve --foreground` to watch logs inline;
+`tests/cli_lifecycle.rs` drives the real binary for the start/stop contract.
 
 Opt-in tests against real providers live in `tests/e2e_real.rs` and are
 `#[ignore]`d:

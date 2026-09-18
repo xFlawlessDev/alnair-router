@@ -49,6 +49,9 @@ pub struct AppState {
     pub pricing_sync_trigger: Arc<Notify>,
     /// Wakes the serve loop to rebind when LAN access or the port changes.
     pub rebind: Arc<Notify>,
+    /// The serve loop's stop signal, once it has registered one. The tray "Quit"
+    /// item and the local control endpoint both notify through it.
+    shutdown: Arc<Mutex<Option<Arc<Notify>>>>,
     /// Whether the serve and pricing loops are running; see [`Self::start_loops`].
     loops_started: Arc<AtomicBool>,
     /// One-time code for the first dashboard password; `None` once set.
@@ -104,6 +107,7 @@ impl AppState {
             update_checker: crate::update::UpdateChecker::new(),
             pricing_sync_trigger: Arc::new(Notify::new()),
             rebind: Arc::new(Notify::new()),
+            shutdown: Arc::new(Mutex::new(None)),
             loops_started: Arc::new(AtomicBool::new(false)),
             setup_code: Arc::new(Mutex::new(None)),
             catalog_cache,
@@ -169,6 +173,36 @@ impl AppState {
     /// waits, so the listener would rebind (and log) for nothing.
     pub fn start_loops(&self) {
         self.loops_started.store(true, Ordering::SeqCst);
+    }
+
+    /// Registers the serve loop's stop signal and returns it.
+    ///
+    /// The loop needs the same `Notify` the tray "Quit" item holds, so the
+    /// shared one is handed back here instead of being created separately.
+    pub fn register_shutdown(&self, shutdown: Arc<Notify>) -> Arc<Notify> {
+        *self.shutdown.lock().expect("shutdown lock poisoned") = Some(shutdown.clone());
+        shutdown
+    }
+
+    /// Asks the serve loop to stop gracefully.
+    ///
+    /// `notify_one` stores a permit when no task is waiting yet, so a `stop`
+    /// that arrives while the server is still starting up is not lost; the
+    /// loop's first wait then sees it.
+    pub fn request_shutdown(&self) -> bool {
+        let shutdown = self
+            .shutdown
+            .lock()
+            .expect("shutdown lock poisoned")
+            .clone();
+
+        match shutdown {
+            Some(notify) => {
+                notify.notify_one();
+                true
+            }
+            None => false,
+        }
     }
 
     /// Dashboard password and sessions.

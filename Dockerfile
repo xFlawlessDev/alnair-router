@@ -31,6 +31,9 @@ RUN useradd --system --uid 10001 --create-home alnair \
 COPY --from=build /app/target/release/alnair-router /usr/local/bin/alnair-router
 
 ENV ALNAIR_ROUTER_HOME=/data
+# PID 1 in a container has no terminal, so `serve` must not detach: making it
+# explicit means a change to console detection can never stop the container.
+ENV ALNAIR_ROUTER_FOREGROUND=1
 USER alnair
 VOLUME ["/data"]
 EXPOSE 7878

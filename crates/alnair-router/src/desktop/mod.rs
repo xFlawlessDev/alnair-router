@@ -82,7 +82,9 @@ pub fn run(options: Options) -> Result<()> {
             if id.0 == MENU_OPEN {
                 open_dashboard(&address);
             } else if id.0 == MENU_QUIT {
-                shutdown.notify_waiters();
+                // `notify_one` rather than `notify_waiters`: a Quit pressed
+                // while the server is still binding must not be dropped.
+                shutdown.notify_one();
                 *control_flow = ControlFlow::Exit;
             }
         }

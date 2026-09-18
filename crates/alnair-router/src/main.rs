@@ -6,19 +6,28 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(unix)]
+use std::io::IsTerminal;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use alnair_router::config::RouterConfig;
-use alnair_router::{Db, Error, Result, build_router, cli, config, state::AppState};
+use alnair_router::{Db, Error, Result, build_router, cli, state::AppState};
 use tokio::sync::Notify;
 
 fn main() -> Result<()> {
     #[cfg(windows)]
-    bind_parent_console();
+    let console_attached = bind_parent_console();
+    #[cfg(unix)]
+    let console_attached = std::io::stdout().is_terminal();
 
     match cli::Command::parse(std::env::args())? {
-        cli::Command::Serve { tray } => serve_command(tray),
+        cli::Command::Serve { tray, mode, port } => {
+            serve_command(tray, mode, port, console_attached)
+        }
+        cli::Command::Start { tray, port } => cli::daemon::start(tray, port),
+        cli::Command::Stop { force } => cli::daemon::stop(force),
+        cli::Command::Restart { force, port } => cli::daemon::restart(force, port),
         cli::Command::Install => cli::install(),
         cli::Command::Uninstall => cli::uninstall(),
         cli::Command::Status => cli::status(),
@@ -39,8 +48,11 @@ fn main() -> Result<()> {
 /// when the binary is run from a shell. Attaching to the parent console (and
 /// reopening `CONOUT$`/`CONIN$`) restores them; handles Windows already
 /// provided — e.g. redirected output — are left alone.
+///
+/// Returns whether a console was attached, which is also how the caller knows a
+/// terminal is waiting: with one, `serve` detaches instead of blocking it.
 #[cfg(windows)]
-fn bind_parent_console() {
+fn bind_parent_console() -> bool {
     use std::ptr;
 
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
@@ -77,7 +89,7 @@ fn bind_parent_console() {
     }
 
     if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {
-        return;
+        return false;
     }
 
     if !has_handle(STD_OUTPUT_HANDLE) {
@@ -101,11 +113,29 @@ fn bind_parent_console() {
             STD_INPUT_HANDLE,
         );
     }
+
+    true
 }
-/// Loads the config, then serves with or without the tray icon.
-fn serve_command(tray: Option<bool>) -> Result<()> {
+
+/// Serves in this process, or detaches when a terminal is waiting.
+///
+/// `console_attached` reports whether the router was launched from a terminal.
+/// From one, serving here would block that terminal until the process exits, so
+/// the CLI hands off to a detached child and returns; auto-start, double-click
+/// and container launches have no terminal and keep serving in-process.
+fn serve_command(
+    tray: Option<bool>,
+    mode: cli::ServeMode,
+    port: Option<u16>,
+    console_attached: bool,
+) -> Result<()> {
+    // ALNAIR_ROUTER_FOREGROUND=1 is the scriptable form of `--foreground`.
+    if !cli::daemon::foreground_requested() && cli::daemon::should_detach(mode, console_attached) {
+        return cli::daemon::start(tray, port);
+    }
+
     init_tracing();
-    let config = config::load()?;
+    let config = cli::daemon::load_config(port)?;
 
     if tray_enabled(tray, &config) {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -202,6 +232,12 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
     }
 
     let state = AppState::new(config, db)?;
+    // The tray's Quit item and the local control endpoint notify the same
+    // signal, so both stop the server through one graceful path.
+    let shutdown = state.register_shutdown(shutdown);
+    // The CLI's stop/status need the control token; generating it here keeps
+    // this process the single writer.
+    cli::daemon::ensure_control_token()?;
 
     // Dashboard overrides win over file/env values and persist in the database.
     let overrides = state.settings().get().await?;
@@ -231,8 +267,17 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
     // would leave a permit the serving loop consumes immediately.
     state.start_loops();
 
+    // Record this process and the address it serves on, for `stop`/`status`.
+    // `browser_address` is the loopback-reachable form of the bind, which is
+    // where the CLI sends its control requests. The guard removes the file on
+    // every exit path, including a panic.
+    let address = state.config_snapshot().server.browser_address();
+    let _pid_file = cli::daemon::PidFile::write(&address)?;
+
     // The listener re-binds in place when LAN access or the port changes; the
-    // rest of the process keeps running.
+    // rest of the process keeps running. A `stop` that arrived before this
+    // point left a permit on `shutdown`, so the first wait stops immediately
+    // rather than serving on.
     loop {
         let effective = state.config_snapshot();
         let address = effective.server.listen_address();
@@ -254,12 +299,11 @@ async fn serve(config: RouterConfig, shutdown: Arc<Notify>) -> Result<()> {
             let rebind = state.rebind.clone();
             let stopping = stopping.clone();
             async move {
-                tokio::select! {
-                    _ = shutdown_signal(shutdown) => {}
-                    _ = rebind.notified() => {
-                        stopping.store(true, Ordering::SeqCst);
-                    }
+                if shutdown_signal(shutdown, rebind).await {
+                    return;
                 }
+                // A rebind, not a stop: tell the loop to bind again in place.
+                stopping.store(true, Ordering::SeqCst);
             }
         };
 
@@ -317,8 +361,12 @@ fn spawn_pricing_sync(state: &AppState) {
     });
 }
 
-/// Resolves on Ctrl+C, SIGTERM, or a tray "Quit".
-async fn shutdown_signal(shutdown: Arc<Notify>) {
+/// Resolves on Ctrl+C, SIGTERM, a tray "Quit", or a local control request.
+///
+/// The inner `select!` matters as much as the outer one: a rebind must not look
+/// like a stop, so the two outcomes are reported separately rather than both
+/// falling through to the same arm.
+async fn shutdown_signal(shutdown: Arc<Notify>, rebind: Arc<Notify>) -> bool {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -335,11 +383,23 @@ async fn shutdown_signal(shutdown: Arc<Notify>) {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-        _ = shutdown.notified() => {},
+    enum Triggered {
+        Stop,
+        Rebind,
     }
 
-    tracing::info!("shutdown signal received");
+    let triggered = tokio::select! {
+        _ = ctrl_c => Triggered::Stop,
+        _ = terminate => Triggered::Stop,
+        _ = shutdown.notified() => Triggered::Stop,
+        _ = rebind.notified() => Triggered::Rebind,
+    };
+
+    match triggered {
+        Triggered::Stop => {
+            tracing::info!("shutdown signal received");
+            true
+        }
+        Triggered::Rebind => false,
+    }
 }
