@@ -174,8 +174,8 @@ describe("ChangelogPage", () => {
     await settle();
 
     expect(container.textContent).toContain("OpenAI-compatible wire format");
-    // A bullet that does not match the term is dropped from the release.
-    expect(container.textContent).not.toContain("Bug Fixes");
+    // A bullet that does not match the term is dropped from its release.
+    expect(container.textContent).not.toContain("extended thinking");
 
     search().value = "zzz-no-such-change";
     search().dispatchEvent(new Event("input", { bubbles: true }));
