@@ -135,6 +135,7 @@ fn advance(state: &mut StreamState, chunk: crate::error::Result<StreamChunk>) ->
                 }),
             ));
         }
+        Ok(StreamChunk::ThinkingSignature(_)) | Ok(StreamChunk::RedactedThinking(_)) => {}
         Ok(StreamChunk::Text(text)) => {
             close_reasoning(state, &mut events);
             let (index, id) = ensure_text(state, &mut events);

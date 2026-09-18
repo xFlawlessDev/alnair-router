@@ -21,6 +21,7 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         connect_timeout_ms: None,
         idle_timeout_ms: None,
         pricing_model: None,
+        cache_retention: "none".to_string(),
         provider_id: None,
         extra_keys: Vec::new(),
         account_count: 0,
@@ -108,6 +109,16 @@ fn alias_resolves_model_from_reference() {
     assert_eq!(targets[0].model, "glm-5.1");
     assert_eq!(targets[0].primary_key(), Some("key-c1"));
     assert_eq!(targets[0].source, "alias:glm");
+}
+
+#[test]
+fn connection_cache_retention_reaches_the_target() {
+    let mut catalog = catalog();
+    catalog.connections[1].cache_retention = "long".to_string();
+
+    let targets = resolver(&catalog).resolve("kr/anything").expect("resolve");
+
+    assert_eq!(targets[0].cache_retention, "long");
 }
 
 #[test]

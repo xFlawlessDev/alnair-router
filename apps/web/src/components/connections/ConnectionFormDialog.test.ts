@@ -27,6 +27,7 @@ const connection: Connection = {
   connect_timeout_ms: null,
   idle_timeout_ms: null,
   pricing_model: null,
+  cache_retention: "none",
   provider_id: "openai",
   account_count: 0,
   created_at: new Date().toISOString(),

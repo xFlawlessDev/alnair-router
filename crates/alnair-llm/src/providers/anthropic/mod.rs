@@ -15,6 +15,14 @@ struct AnthropicRequest {
     model: String,
     max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<Vec<AnthropicSystemBlock>>,
     messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -22,6 +30,39 @@ struct AnthropicRequest {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<AnthropicThinking>,
+}
+
+impl AnthropicRequest {
+    /// Whether any cache breakpoint requests the 1-hour TTL, which needs the
+    /// `extended-cache-ttl-2025-04-11` beta header.
+    fn uses_extended_cache_ttl(&self) -> bool {
+        let system = self.system.iter().flatten().any(|block| {
+            block
+                .cache_control
+                .as_ref()
+                .is_some_and(AnthropicCacheControl::is_one_hour)
+        });
+        let messages = self
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .any(|block| match block {
+                AnthropicContentBlock::Text { cache_control, .. }
+                | AnthropicContentBlock::ToolResult { cache_control, .. }
+                | AnthropicContentBlock::Image { cache_control, .. } => cache_control
+                    .as_ref()
+                    .is_some_and(AnthropicCacheControl::is_one_hour),
+                AnthropicContentBlock::Thinking { .. }
+                | AnthropicContentBlock::RedactedThinking { .. }
+                | AnthropicContentBlock::ToolUse { .. } => false,
+            });
+        let tools = self.tools.iter().flatten().any(|tool| {
+            tool.cache_control
+                .as_ref()
+                .is_some_and(AnthropicCacheControl::is_one_hour)
+        });
+        system || messages || tools
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -37,6 +78,14 @@ struct AnthropicSystemBlock {
 struct AnthropicCacheControl {
     #[serde(rename = "type")]
     kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<String>,
+}
+
+impl AnthropicCacheControl {
+    fn is_one_hour(&self) -> bool {
+        self.ttl.as_deref() == Some("1h")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -59,6 +108,13 @@ enum AnthropicContentBlock {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<AnthropicCacheControl>,
+    },
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+    RedactedThinking {
+        data: String,
     },
     ToolUse {
         id: String,
@@ -128,6 +184,11 @@ enum AnthropicCompletionBlock {
     },
     Thinking {
         thinking: String,
+        #[serde(default)]
+        signature: Option<String>,
+    },
+    RedactedThinking {
+        data: String,
     },
     ToolUse {
         id: String,
@@ -172,6 +233,13 @@ pub(crate) fn convert_messages_to_anthropic(
         .filter(|text| !text.is_empty())
         .collect();
 
+    // Thinking blocks may only be replayed while thinking stays enabled; the
+    // API rejects them outright otherwise.
+    let thinking = supports_thinking
+        .then(|| anthropic_thinking_from_level(options.thinking_level))
+        .flatten();
+    let replay_thinking = thinking.is_some();
+
     let mut anthropic_messages = Vec::new();
 
     for message in messages {
@@ -202,13 +270,25 @@ pub(crate) fn convert_messages_to_anthropic(
             "assistant" => {
                 let mut content = Vec::new();
 
-                if message
-                    .thinking
-                    .as_ref()
-                    .is_some_and(|thinking| !thinking.trim().is_empty())
-                {
-                    // ponytail: prior Anthropic thinking replay needs signed thinking-block persistence;
-                    // strip history thinking until Message can store provider signatures.
+                // Thinking blocks from a prior turn (signed, unmodified) must be
+                // replayed first; Anthropic rejects a final assistant tool-use
+                // message that does not start with thinking when thinking is on.
+                if replay_thinking {
+                    if let Some(redacted) = &message.redacted_thinking {
+                        content.push(AnthropicContentBlock::RedactedThinking {
+                            data: redacted.clone(),
+                        });
+                    }
+                    if let (Some(thinking), Some(signature)) = (
+                        message.thinking.as_ref(),
+                        message.thinking_signature.as_ref(),
+                    ) && !thinking.trim().is_empty()
+                    {
+                        content.push(AnthropicContentBlock::Thinking {
+                            thinking: thinking.clone(),
+                            signature: signature.clone(),
+                        });
+                    }
                 }
 
                 content.extend(content_blocks_from_message_content(&message.content));
@@ -239,8 +319,8 @@ pub(crate) fn convert_messages_to_anthropic(
     let mark_cache =
         supports_cache_control && !matches!(options.cache_retention, CacheRetention::None);
     let mark_final_tool = mark_cache && system_parts.is_empty() && anthropic_messages.is_empty();
-    let thinking = supports_thinking
-        .then(|| anthropic_thinking_from_level(options.thinking_level))
+    let final_tool_marker = mark_final_tool
+        .then(|| anthropic_cache_control(supports_cache_control, options.cache_retention))
         .flatten();
     let mut max_tokens = options.max_tokens.unwrap_or(8192).max(1) as u32;
     if let Some(thinking) = &thinking
@@ -249,6 +329,7 @@ pub(crate) fn convert_messages_to_anthropic(
         max_tokens = thinking.budget_tokens + 1024;
     }
 
+    let anthropic_messages = merge_consecutive_anthropic_messages(anthropic_messages);
     let system = anthropic_system_blocks(
         system_parts,
         supports_cache_control,
@@ -264,16 +345,44 @@ pub(crate) fn convert_messages_to_anthropic(
         anthropic_messages
     };
 
+    // Extended thinking constrains sampling: Anthropic rejects `temperature`,
+    // `top_p`, and `top_k` alongside a thinking budget.
+    let (temperature, top_p, top_k) = if thinking.is_some() {
+        (None, None, None)
+    } else {
+        (options.temperature, options.top_p, options.top_k)
+    };
+
     AnthropicRequest {
         // Filled by provider stream() from ModelConfig.
         model: String::new(),
         max_tokens,
+        temperature,
+        top_p,
+        top_k,
+        stop_sequences: options.stop.clone(),
         system,
         messages,
-        tools: convert_tools_to_anthropic(tools, mark_final_tool),
+        tools: convert_tools_to_anthropic(tools, final_tool_marker),
         stream: true,
         thinking,
     }
+}
+
+/// Collapses consecutive same-role turns into one, concatenating their blocks.
+///
+/// Anthropic's API combines consecutive `user`/`assistant` turns, but
+/// Anthropic-compatible and Bedrock endpoints still reject them, and a `tool`
+/// message mapped to a `user` turn can land next to a real user turn.
+fn merge_consecutive_anthropic_messages(messages: Vec<AnthropicMessage>) -> Vec<AnthropicMessage> {
+    let mut merged: Vec<AnthropicMessage> = Vec::with_capacity(messages.len());
+    for message in messages {
+        match merged.last_mut() {
+            Some(last) if last.role == message.role => last.content.extend(message.content),
+            _ => merged.push(message),
+        }
+    }
+    merged
 }
 
 fn anthropic_thinking_from_level(level: Option<ThinkingLevel>) -> Option<AnthropicThinking> {
@@ -301,6 +410,9 @@ fn anthropic_cache_control(
     }
     Some(AnthropicCacheControl {
         kind: "ephemeral".to_string(),
+        // Long retention uses Anthropic's 1-hour cache TTL, which requires the
+        // `extended-cache-ttl-2025-04-11` beta header (sent when retention is Long).
+        ttl: matches!(cache_retention, CacheRetention::Long).then(|| "1h".to_string()),
     })
 }
 
@@ -348,7 +460,9 @@ fn apply_anthropic_cache_marker(
             | AnthropicContentBlock::Image { cache_control, .. } => {
                 *cache_control = Some(marker);
             }
-            AnthropicContentBlock::ToolUse { .. } => {}
+            AnthropicContentBlock::Thinking { .. }
+            | AnthropicContentBlock::RedactedThinking { .. }
+            | AnthropicContentBlock::ToolUse { .. } => {}
         }
     }
     messages
@@ -421,7 +535,7 @@ fn parse_base64_data_url(value: &str) -> Option<(String, String)> {
 
 fn convert_tools_to_anthropic(
     tools: Option<&[serde_json::Value]>,
-    mark_final_tool: bool,
+    final_tool_marker: Option<AnthropicCacheControl>,
 ) -> Option<Vec<AnthropicTool>> {
     let tools = tools?;
     if tools.is_empty() {
@@ -466,10 +580,10 @@ fn convert_tools_to_anthropic(
         });
     }
 
-    if mark_final_tool && let Some(tool) = anthropic_tools.last_mut() {
-        tool.cache_control = Some(AnthropicCacheControl {
-            kind: "ephemeral".to_string(),
-        });
+    if let Some(marker) = final_tool_marker
+        && let Some(tool) = anthropic_tools.last_mut()
+    {
+        tool.cache_control = Some(marker);
     }
 
     if anthropic_tools.is_empty() {
@@ -542,6 +656,7 @@ impl LlmProvider for AnthropicNativeProvider {
             let mut stream = response.bytes_stream();
             let mut line_buffer = SseLineBuffer::default();
             let mut pending_tool_uses: HashMap<usize, PendingToolUse> = HashMap::new();
+            let mut usage_totals = serde_json::Map::new();
             while let Some(chunk) = stream.next().await {
                 let bytes = match chunk {
                     Ok(bytes) => bytes,
@@ -552,7 +667,12 @@ impl LlmProvider for AnthropicNativeProvider {
                 };
 
                 for line in line_buffer.push(&bytes) {
-                    match handle_anthropic_sse_line(&line, &mut pending_tool_uses, rates.as_ref()) {
+                    match handle_anthropic_sse_line(
+                        &line,
+                        &mut pending_tool_uses,
+                        &mut usage_totals,
+                        rates.as_ref(),
+                    ) {
                         Ok((chunks, is_terminal)) => {
                             for chunk in chunks {
                                 yield Ok(chunk);
@@ -570,7 +690,12 @@ impl LlmProvider for AnthropicNativeProvider {
             }
 
             if let Some(line) = line_buffer.finish() {
-                match handle_anthropic_sse_line(&line, &mut pending_tool_uses, rates.as_ref()) {
+                match handle_anthropic_sse_line(
+                    &line,
+                    &mut pending_tool_uses,
+                    &mut usage_totals,
+                    rates.as_ref(),
+                ) {
                     Ok((chunks, _)) => {
                         for chunk in chunks {
                             yield Ok(chunk);

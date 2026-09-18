@@ -59,8 +59,19 @@ pub(super) fn anthropic_completion_chunks(
             AnthropicCompletionBlock::Text { text } if !text.is_empty() => {
                 chunks.push(LlmStreamChunk::Text(text));
             }
-            AnthropicCompletionBlock::Thinking { thinking } if !thinking.is_empty() => {
-                chunks.push(LlmStreamChunk::Thinking(thinking));
+            AnthropicCompletionBlock::Thinking {
+                thinking,
+                signature,
+            } => {
+                if !thinking.is_empty() {
+                    chunks.push(LlmStreamChunk::Thinking(thinking));
+                }
+                if let Some(signature) = signature {
+                    chunks.push(LlmStreamChunk::ThinkingSignature(signature));
+                }
+            }
+            AnthropicCompletionBlock::RedactedThinking { data } => {
+                chunks.push(LlmStreamChunk::RedactedThinking(data));
             }
             AnthropicCompletionBlock::ToolUse { id, name, input } => {
                 chunks.push(LlmStreamChunk::ToolCall {
@@ -83,6 +94,7 @@ pub(super) fn anthropic_completion_chunks(
 pub(super) fn handle_anthropic_sse_line(
     line: &str,
     pending_tool_uses: &mut HashMap<usize, PendingToolUse>,
+    usage_totals: &mut serde_json::Map<String, serde_json::Value>,
     rates: Option<&ModelCostRates>,
 ) -> Result<(Vec<LlmStreamChunk>, bool), ChatError> {
     let Some(data) = parse_data_line(line) else {
@@ -138,6 +150,13 @@ pub(super) fn handle_anthropic_sse_line(
                         chunks.push(LlmStreamChunk::Thinking(thinking.to_string()));
                     }
                 }
+                "signature_delta" => {
+                    if let Some(signature) = delta.get("signature").and_then(|value| value.as_str())
+                        && !signature.is_empty()
+                    {
+                        chunks.push(LlmStreamChunk::ThinkingSignature(signature.to_string()));
+                    }
+                }
                 "input_json_delta" => {
                     if let Some(partial_json) =
                         delta.get("partial_json").and_then(|value| value.as_str())
@@ -177,6 +196,11 @@ pub(super) fn handle_anthropic_sse_line(
                         input_json: String::new(),
                     },
                 );
+            } else if content_block.get("type").and_then(|value| value.as_str())
+                == Some("redacted_thinking")
+                && let Some(data) = content_block.get("data").and_then(|value| value.as_str())
+            {
+                chunks.push(LlmStreamChunk::RedactedThinking(data.to_string()));
             }
         }
         "content_block_stop" => {
@@ -198,7 +222,13 @@ pub(super) fn handle_anthropic_sse_line(
         }
         "message_delta" => {
             if let Some(usage) = payload.get("usage") {
-                chunks.push(anthropic_usage_chunk(usage, rates));
+                merge_usage_fields(usage_totals, usage);
+            }
+            if !usage_totals.is_empty() {
+                chunks.push(anthropic_usage_chunk(
+                    &serde_json::Value::Object(usage_totals.clone()),
+                    rates,
+                ));
             }
             if let Some(stop_reason) = payload
                 .get("delta")
@@ -211,7 +241,7 @@ pub(super) fn handle_anthropic_sse_line(
         }
         "message_start" => {
             if let Some(usage) = payload.get("message").and_then(|value| value.get("usage")) {
-                chunks.push(anthropic_usage_chunk(usage, rates));
+                merge_usage_fields(usage_totals, usage);
             }
         }
         "error" => {
@@ -229,6 +259,25 @@ pub(super) fn handle_anthropic_sse_line(
     Ok((chunks, false))
 }
 
+/// Accumulates usage fields across stream events.
+///
+/// Anthropic reports `input_tokens`/cache counts on `message_start` and the
+/// cumulative `output_tokens` on `message_delta`, so a later, non-null value
+/// wins while earlier fields are preserved.
+fn merge_usage_fields(
+    totals: &mut serde_json::Map<String, serde_json::Value>,
+    update: &serde_json::Value,
+) {
+    let Some(update) = update.as_object() else {
+        return;
+    };
+    for (key, value) in update {
+        if !value.is_null() {
+            totals.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 pub(super) async fn send_anthropic_request_with_retry(
     client: &reqwest::Client,
     endpoint: &str,
@@ -240,12 +289,15 @@ pub(super) async fn send_anthropic_request_with_retry(
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
     for attempt in 0..=max_retries {
-        let request = client
+        let mut request = client
             .post(endpoint)
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .json(request_body);
+            .header(reqwest::header::CONTENT_TYPE, "application/json");
+        if request_body.uses_extended_cache_ttl() {
+            request = request.header("anthropic-beta", "extended-cache-ttl-2025-04-11");
+        }
+        let request = request.json(request_body);
         let request = apply_custom_headers(request, custom_headers)?;
         match request.send().await {
             Ok(response) if is_retryable_status(response.status()) && attempt < max_retries => {

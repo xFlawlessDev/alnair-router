@@ -244,6 +244,7 @@ impl Executor {
                     tools.clone(),
                     target.custom_headers.clone(),
                     price,
+                    chat_backend::cache_retention_from_str(&target.cache_retention),
                 );
 
                 let stream = match built {

@@ -83,6 +83,8 @@ export interface Connection {
   idle_timeout_ms: number | null;
   /** Catalog model id used for price lookups; null uses the upstream id. */
   pricing_model: string | null;
+  /** Prompt-cache retention: "none", "short" (5m) or "long" (1h). */
+  cache_retention: string;
   /** Built-in provider preset this connection was created from. */
   provider_id: string | null;
   /** Enabled extra API keys rotating behind this connection. */
@@ -101,6 +103,8 @@ export interface ConnectionInput {
   connect_timeout_ms?: number | null;
   idle_timeout_ms?: number | null;
   pricing_model?: string | null;
+  /** Opt into Anthropic-style prompt caching for this connection. */
+  cache_retention?: string | null;
   /** Preset to derive the endpoint and wire family from. */
   provider_id?: string | null;
 }

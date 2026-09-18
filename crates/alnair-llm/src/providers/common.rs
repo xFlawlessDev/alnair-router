@@ -29,7 +29,8 @@ pub(crate) fn retry_after_delay(headers: &HeaderMap) -> Option<Duration> {
 }
 
 pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
-    matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504)
+    // 529 is Anthropic's `overloaded_error`; every other provider uses 503.
+    matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504 | 529)
 }
 
 /// Absolute ceiling for provider retries, used as the `LlmStreamOptions`

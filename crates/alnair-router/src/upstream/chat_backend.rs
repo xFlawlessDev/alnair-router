@@ -17,8 +17,9 @@ use futures::stream::{BoxStream, Stream};
 use crate::error::{Error, Result};
 use crate::pricing::Price;
 use alnair_llm::{
-    ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions, Message, MessageContent,
-    MessageToolCall, ModelConfig, ModelCostRates, ProviderType, TextContentPart,
+    CacheRetention, ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions, Message,
+    MessageContent, MessageToolCall, ModelConfig, ModelCostRates, ProviderType, TextContentPart,
+    ThinkingLevel,
 };
 
 /// Re-exported provider registry, so callers never name `alnair_llm` directly.
@@ -81,6 +82,8 @@ pub fn message_parts(role: impl Into<String>, parts: Vec<MessagePart>) -> Router
         role: role.into(),
         content: MessageContent::Parts(parts),
         thinking: None,
+        thinking_signature: None,
+        redacted_thinking: None,
         tool_call_id: None,
         tool_calls: None,
         cache_control: false,
@@ -96,6 +99,8 @@ pub fn message_assistant_tool_calls(
         role: "assistant".to_string(),
         content: MessageContent::Text(content.into()),
         thinking: None,
+        thinking_signature: None,
+        redacted_thinking: None,
         tool_call_id: None,
         tool_calls: Some(
             calls
@@ -120,6 +125,8 @@ pub fn message_tool_result(
         role: "tool".to_string(),
         content: MessageContent::Text(content.into()),
         thinking: None,
+        thinking_signature: None,
+        redacted_thinking: None,
         tool_call_id: Some(tool_call_id.into()),
         tool_calls: None,
         cache_control: false,
@@ -149,6 +156,11 @@ pub struct TokenUsage {
 pub enum StreamChunk {
     Text(String),
     Thinking(String),
+    /// Signature for the preceding thinking block, replayed to Anthropic on the
+    /// next turn.
+    ThinkingSignature(String),
+    /// Redacted thinking block payload, replayed verbatim.
+    RedactedThinking(String),
     ToolCall {
         id: String,
         name: String,
@@ -195,6 +207,12 @@ pub fn anthropic_stop_reason(reason: Option<&str>, has_tool_calls: bool) -> Stri
 #[derive(Debug, Clone, Default)]
 pub struct CompletionResponse {
     pub content: String,
+    /// Concatenated reasoning text, when the provider emits any.
+    pub thinking: Option<String>,
+    /// Anthropic signature for `thinking`, replayed on the next turn.
+    pub thinking_signature: Option<String>,
+    /// Anthropic `redacted_thinking` payload, replayed verbatim.
+    pub redacted_thinking: Option<String>,
     pub finish_reason: Option<String>,
     pub usage: Option<TokenUsage>,
     /// Tool calls the model requested, in arrival order.
@@ -211,6 +229,40 @@ pub struct GenerationOptions {
     pub seed: Option<i64>,
     pub presence_penalty: Option<f64>,
     pub frequency_penalty: Option<f64>,
+    /// Extended-thinking effort, one of `minimal|low|medium|high|max`.
+    pub thinking_level: Option<String>,
+}
+
+/// Parses a thinking effort string into the provider enum, ignoring unknowns.
+fn parse_thinking_level(value: Option<&str>) -> Option<ThinkingLevel> {
+    match value? {
+        "minimal" => Some(ThinkingLevel::Minimal),
+        "low" => Some(ThinkingLevel::Low),
+        "medium" => Some(ThinkingLevel::Medium),
+        "high" => Some(ThinkingLevel::High),
+        "max" => Some(ThinkingLevel::Max),
+        _ => None,
+    }
+}
+
+/// Maps an Anthropic `thinking.budget_tokens` value onto an effort level.
+pub fn thinking_level_from_budget(budget: u64) -> &'static str {
+    match budget {
+        0..=1024 => "minimal",
+        1025..=4096 => "low",
+        4097..=8192 => "medium",
+        8193..=16384 => "high",
+        _ => "max",
+    }
+}
+
+/// Maps a connection's stored cache-retention value onto the provider enum.
+pub fn cache_retention_from_str(value: &str) -> CacheRetention {
+    match value {
+        "short" => CacheRetention::Short,
+        "long" => CacheRetention::Long,
+        _ => CacheRetention::None,
+    }
 }
 
 /// Provider retry behaviour applied inside a single tier, before the executor
@@ -245,6 +297,7 @@ impl GenerationOptions {
             frequency_penalty: self.frequency_penalty,
             max_retries: retry.max_retries_per_tier,
             max_retry_delay_ms: retry.max_retry_delay_ms,
+            thinking_level: parse_thinking_level(self.thinking_level.as_deref()),
             ..Default::default()
         }
     }
@@ -280,8 +333,12 @@ fn model_config(
     api_key: Option<&str>,
     custom_headers: BTreeMap<String, String>,
     price: Option<Price>,
+    supports_cache_control: bool,
 ) -> ModelConfig {
-    let supports_thinking = matches!(provider_type, ProviderType::CodeBuddyIntl);
+    let supports_thinking = matches!(
+        provider_type,
+        ProviderType::CodeBuddyIntl | ProviderType::AnthropicNative
+    );
 
     ModelConfig {
         provider_type,
@@ -293,7 +350,9 @@ fn model_config(
         // Capability gates are opt-in: only providers with a known wire shape
         // enable thinking; CodeBuddy expects OpenAI reasoning parameters.
         supports_thinking,
-        supports_cache_control: false,
+        // Cache breakpoints are opt-in per connection because OpenAI-compatible
+        // endpoints may reject the extra field.
+        supports_cache_control,
         context_window: 0,
         cost_rates: price.map(cost_rates),
     }
@@ -328,6 +387,7 @@ pub fn stream(
     tools: Option<Vec<serde_json::Value>>,
     custom_headers: BTreeMap<String, String>,
     price: Option<Price>,
+    cache_retention: CacheRetention,
 ) -> Result<ChunkStream> {
     let provider_type = provider_type_from_str(provider_type)?;
 
@@ -344,8 +404,9 @@ pub fn stream(
         api_key,
         custom_headers,
         price,
+        !matches!(cache_retention, CacheRetention::None),
     );
-    let stream_options = stream_options(options, retry);
+    let stream_options = stream_options(options, retry, cache_retention);
 
     // The provider borrows `config` and `stream_options` for `'a`. Moving them
     // into the generator keeps the borrow valid for the stream's whole life
@@ -375,11 +436,18 @@ pub fn stream(
 
 /// Builds provider options, always applying the router's retry policy even
 /// when the request carried no generation options.
-fn stream_options(options: Option<&GenerationOptions>, retry: RetryPolicy) -> LlmStreamOptions {
-    match options {
+fn stream_options(
+    options: Option<&GenerationOptions>,
+    retry: RetryPolicy,
+    cache_retention: CacheRetention,
+) -> LlmStreamOptions {
+    let mut options = match options {
         Some(options) => options.to_stream_options(retry),
         None => GenerationOptions::default().to_stream_options(retry),
-    }
+    };
+    // Retention is a property of the target connection, not the request.
+    options.cache_retention = cache_retention;
+    options
 }
 
 /// Converts a vendored chunk into a router-owned chunk.
@@ -389,6 +457,10 @@ fn to_stream_chunk(
     match chunk {
         Ok(LlmStreamChunk::Text(text)) => Ok(StreamChunk::Text(text)),
         Ok(LlmStreamChunk::Thinking(text)) => Ok(StreamChunk::Thinking(text)),
+        Ok(LlmStreamChunk::ThinkingSignature(signature)) => {
+            Ok(StreamChunk::ThinkingSignature(signature))
+        }
+        Ok(LlmStreamChunk::RedactedThinking(data)) => Ok(StreamChunk::RedactedThinking(data)),
         Ok(LlmStreamChunk::ToolCall {
             id,
             name,
@@ -432,7 +504,18 @@ pub async fn collect(stream: ChunkStream) -> Result<CompletionResponse> {
     while let Some(chunk) = stream.next().await {
         match chunk? {
             StreamChunk::Text(text) => response.content.push_str(&text),
-            StreamChunk::Thinking(_) => {}
+            StreamChunk::Thinking(text) => {
+                response
+                    .thinking
+                    .get_or_insert_with(String::new)
+                    .push_str(&text);
+            }
+            StreamChunk::ThinkingSignature(signature) => {
+                response.thinking_signature = Some(signature);
+            }
+            StreamChunk::RedactedThinking(data) => {
+                response.redacted_thinking = Some(data);
+            }
             StreamChunk::ToolCall {
                 id,
                 name,
@@ -500,10 +583,25 @@ mod tests {
             max_retry_delay_ms: 456,
         };
 
-        let options = stream_options(None, policy);
+        let options = stream_options(None, policy, CacheRetention::None);
 
         assert_eq!(options.max_retries, 3);
         assert_eq!(options.max_retry_delay_ms, 456);
+    }
+
+    #[test]
+    fn cache_retention_maps_onto_the_provider_enum() {
+        assert_eq!(cache_retention_from_str("none"), CacheRetention::None);
+        assert_eq!(cache_retention_from_str("short"), CacheRetention::Short);
+        assert_eq!(cache_retention_from_str("long"), CacheRetention::Long);
+        assert_eq!(cache_retention_from_str("bogus"), CacheRetention::None);
+    }
+
+    #[test]
+    fn stream_options_carry_the_target_cache_retention() {
+        let options = stream_options(None, RetryPolicy::default(), CacheRetention::Long);
+
+        assert_eq!(options.cache_retention, CacheRetention::Long);
     }
 
     #[tokio::test]

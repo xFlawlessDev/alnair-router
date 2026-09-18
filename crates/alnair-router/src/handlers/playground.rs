@@ -205,6 +205,7 @@ fn frame_events(
             "type": "thinking",
             "text": text,
         })))],
+        Ok(StreamChunk::ThinkingSignature(_)) | Ok(StreamChunk::RedactedThinking(_)) => Vec::new(),
         Ok(StreamChunk::ToolCall {
             id,
             name,

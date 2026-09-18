@@ -263,6 +263,8 @@ fn stream_events(
             },
             None,
         ))],
+        // Anthropic-only block metadata has no OpenAI wire representation.
+        Ok(StreamChunk::ThinkingSignature(_)) | Ok(StreamChunk::RedactedThinking(_)) => Vec::new(),
         Ok(StreamChunk::ToolCall {
             id: call_id,
             name,

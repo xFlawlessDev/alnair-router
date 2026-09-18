@@ -34,6 +34,9 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub stream_options: Option<StreamOptions>,
+    /// OpenAI reasoning effort, e.g. `low`, `medium`, `high`.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 /// `stream_options` on a streaming request.
@@ -73,6 +76,15 @@ pub struct OpenAiMessage {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<OpenAiToolCall>>,
+    /// Assistant reasoning text, as DeepSeek/OpenRouter expose it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    /// Anthropic signature for `reasoning_content`, replayed during tool use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_signature: Option<String>,
+    /// Anthropic `redacted_thinking` payload, replayed verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacted_thinking: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +137,7 @@ impl ChatCompletionRequest {
             seed: self.seed,
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
+            thinking_level: self.reasoning_effort.clone(),
         }
     }
 
@@ -148,6 +161,10 @@ impl OpenAiMessage {
             return Err(Error::BadRequest("message role is required".to_string()));
         }
 
+        let reasoning_content = self.reasoning_content;
+        let thinking_signature = self.thinking_signature;
+        let redacted_thinking = self.redacted_thinking;
+
         // Assistant messages carrying tool calls are rebuilt as such, so the
         // provider layer can pair them with the following tool results.
         if let Some(calls) = self.tool_calls.filter(|calls| !calls.is_empty()) {
@@ -163,10 +180,14 @@ impl OpenAiMessage {
                 })
                 .collect();
 
-            return Ok(chat_backend::message_assistant_tool_calls(
+            let mut message = chat_backend::message_assistant_tool_calls(
                 self.content.map(content_to_text).unwrap_or_default(),
                 specs,
-            ));
+            );
+            message.thinking = reasoning_content;
+            message.thinking_signature = thinking_signature;
+            message.redacted_thinking = redacted_thinking;
+            return Ok(message);
         }
 
         if role == "tool" {
@@ -179,7 +200,7 @@ impl OpenAiMessage {
             ));
         }
 
-        match self.content {
+        let mut message = match self.content {
             Some(OpenAiContent::Parts(parts)) => {
                 let parts: Vec<MessagePart> = parts
                     .into_iter()
@@ -191,15 +212,21 @@ impl OpenAiMessage {
                     .collect();
 
                 if parts.is_empty() {
-                    return Ok(chat_backend::message_text(&role, String::new()));
+                    chat_backend::message_text(&role, String::new())
+                } else {
+                    chat_backend::message_parts(&role, parts)
                 }
-                Ok(chat_backend::message_parts(&role, parts))
             }
-            other => Ok(chat_backend::message_text(
-                &role,
-                other.map(content_to_text).unwrap_or_default(),
-            )),
+            other => {
+                chat_backend::message_text(&role, other.map(content_to_text).unwrap_or_default())
+            }
+        };
+        if role == "assistant" {
+            message.thinking = reasoning_content;
+            message.thinking_signature = thinking_signature;
+            message.redacted_thinking = redacted_thinking;
         }
+        Ok(message)
     }
 }
 

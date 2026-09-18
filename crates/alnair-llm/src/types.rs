@@ -203,6 +203,13 @@ pub struct Message {
     pub content: MessageContent,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    /// Anthropic's cryptographic signature for `thinking`, required when
+    /// replaying a thinking block back during tool use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_signature: Option<String>,
+    /// Base64 payload of an Anthropic `redacted_thinking` block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redacted_thinking: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,6 +224,8 @@ impl Message {
             role: role.into(),
             content: MessageContent::Text(content.into()),
             thinking: None,
+            thinking_signature: None,
+            redacted_thinking: None,
             tool_call_id: None,
             tool_calls: None,
             cache_control: false,
@@ -503,6 +512,11 @@ impl StreamEvent {
 pub enum LlmStreamChunk {
     Text(String),
     Thinking(String),
+    /// Anthropic signature for the thinking block that just streamed; replay it
+    /// verbatim alongside the thinking block on the next turn.
+    ThinkingSignature(String),
+    /// Anthropic `redacted_thinking` block payload, replayed verbatim.
+    RedactedThinking(String),
     ToolCall {
         id: String,
         name: String,

@@ -65,6 +65,7 @@ const enabled = ref(true);
 const connectTimeout = ref("");
 const idleTimeout = ref("");
 const pricingModel = ref("");
+const cacheRetention = ref("none");
 const saving = ref(false);
 
 /** Extra keys (only meaningful once the connection exists). */
@@ -109,6 +110,7 @@ watch(
         ? String(connection.idle_timeout_ms)
         : "";
     pricingModel.value = connection?.pricing_model ?? "";
+    cacheRetention.value = connection?.cache_retention ?? "none";
     newAccountLabel.value = "";
     newAccountKey.value = "";
     accounts.value = [];
@@ -251,6 +253,7 @@ async function save(): Promise<void> {
     connect_timeout_ms: parseTimeout(connectTimeout.value),
     idle_timeout_ms: parseTimeout(idleTimeout.value),
     pricing_model: pricingModel.value.trim() || null,
+    cache_retention: cacheRetention.value,
   };
 
   saving.value = true;
@@ -465,6 +468,26 @@ async function save(): Promise<void> {
             Catalog id used to price this connection's requests. Set it when the
             upstream model id differs from the catalog (e.g. relay paths like
             <code>ocg/openai/gpt-5.6-luna</code>).
+          </p>
+        </div>
+
+        <div class="grid gap-2">
+          <Label>Prompt caching</Label>
+          <Select v-model="cacheRetention">
+            <SelectTrigger id="connection-cache-retention" class="w-full">
+              <SelectValue placeholder="Off" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Off</SelectItem>
+              <SelectItem value="short">5 minutes (short)</SelectItem>
+              <SelectItem value="long">1 hour (long)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">
+            Marks stable prompt prefixes (system prompt, tools, history) with
+            Anthropic <code>cache_control</code> breakpoints. Leave off for
+            OpenAI-compatible endpoints that reject the extra field. The 1-hour
+            option sends the extended-cache-ttl beta header.
           </p>
         </div>
 

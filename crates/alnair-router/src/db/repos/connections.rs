@@ -34,6 +34,10 @@ pub struct Connection {
     /// Model id used for price lookups when the upstream id differs from the
     /// catalog (e.g. relay paths). NULL falls back to the upstream model id.
     pub pricing_model: Option<String>,
+    /// Prompt-cache retention sent to this upstream: `none`, `short` (5-minute
+    /// ephemeral cache) or `long` (1-hour cache). Opt-in because
+    /// OpenAI-compatible endpoints may reject the extra `cache_control` field.
+    pub cache_retention: String,
     /// Built-in preset this connection was created from, if any.
     pub provider_id: Option<String>,
     /// Enabled extra keys from `connection_accounts`; loaded by the catalog and
@@ -88,6 +92,9 @@ pub struct CreateConnection {
     pub idle_timeout_ms: Option<i64>,
     #[serde(default)]
     pub pricing_model: Option<String>,
+    /// Prompt-cache retention for this connection: `none`, `short` or `long`.
+    #[serde(default)]
+    pub cache_retention: Option<String>,
     /// Preset to derive `provider_type`, `base_url` and default headers from.
     /// Filled fields may still be overridden.
     #[serde(default)]
@@ -114,6 +121,9 @@ pub struct UpdateConnection {
     pub idle_timeout_ms: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub pricing_model: Option<Option<String>>,
+    /// Set or clear the prompt-cache retention (`none`/`short`/`long`).
+    #[serde(default)]
+    pub cache_retention: Option<String>,
     /// Set or clear the preset this connection is labelled with.
     #[serde(default)]
     pub provider_id: Option<String>,
@@ -252,9 +262,9 @@ impl ConnectionRepository {
         sqlx::query(
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
-                 connect_timeout_ms, idle_timeout_ms, pricing_model, provider_id,
-                 created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 connect_timeout_ms, idle_timeout_ms, pricing_model, cache_retention,
+                 provider_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -266,6 +276,9 @@ impl ConnectionRepository {
         .bind(normalized_timeout(input.connect_timeout_ms)?)
         .bind(normalized_timeout(input.idle_timeout_ms)?)
         .bind(normalized_model(input.pricing_model.as_deref()))
+        .bind(normalized_cache_retention(
+            input.cache_retention.as_deref(),
+        )?)
         .bind(&provider_id)
         .bind(now)
         .bind(now)
@@ -338,6 +351,10 @@ impl ConnectionRepository {
             Some(value) => normalized_model(value.as_deref()),
             None => existing.pricing_model.clone(),
         };
+        let cache_retention = match &input.cache_retention {
+            Some(value) => normalized_cache_retention(Some(value))?.to_string(),
+            None => existing.cache_retention.clone(),
+        };
         let provider_id = match input.provider_id.as_deref().map(str::trim) {
             Some("") => None,
             Some(id) => {
@@ -351,8 +368,8 @@ impl ConnectionRepository {
         sqlx::query(
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
-                 connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, provider_id = ?,
-                 updated_at = ?
+                 connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, cache_retention = ?,
+                 provider_id = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -364,6 +381,7 @@ impl ConnectionRepository {
         .bind(connect_timeout)
         .bind(idle_timeout)
         .bind(pricing_model)
+        .bind(&cache_retention)
         .bind(&provider_id)
         .bind(Utc::now())
         .bind(id)
@@ -419,5 +437,17 @@ fn normalized_timeout(value: Option<i64>) -> Result<Option<i64>> {
             "timeouts must be zero or positive milliseconds".to_string(),
         )),
         Some(value) => Ok(Some(value)),
+    }
+}
+
+/// Validates and defaults the prompt-cache retention value.
+fn normalized_cache_retention(value: Option<&str>) -> Result<&'static str> {
+    match value.map(str::trim) {
+        None | Some("") | Some("none") => Ok("none"),
+        Some("short") => Ok("short"),
+        Some("long") => Ok("long"),
+        Some(other) => Err(Error::BadRequest(format!(
+            "cache_retention must be none, short or long (got '{other}')"
+        ))),
     }
 }

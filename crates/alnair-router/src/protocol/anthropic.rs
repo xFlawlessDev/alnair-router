@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::protocol::openai::{
-    ChatCompletionRequest, OpenAiContent, OpenAiContentPart, OpenAiImageUrl, OpenAiMessage,
-    StopSequence,
+    ChatCompletionRequest, OpenAiContent, OpenAiContentPart, OpenAiFunctionCall, OpenAiImageUrl,
+    OpenAiMessage, OpenAiToolCall, StopSequence,
 };
 use crate::upstream::chat_backend::RouterMessage;
 
@@ -28,6 +28,17 @@ pub struct MessagesRequest {
     pub stop_sequences: Option<Vec<String>>,
     #[serde(default)]
     pub tools: Option<Vec<serde_json::Value>>,
+    /// Extended-thinking configuration; `budget_tokens` maps to an effort level.
+    #[serde(default)]
+    pub thinking: Option<AnthropicThinkingRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AnthropicThinkingRequest {
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub budget_tokens: Option<u64>,
 }
 
 /// `system` accepts either a plain string or content blocks.
@@ -59,6 +70,25 @@ pub struct AnthropicContentBlock {
     pub text: Option<String>,
     #[serde(default)]
     pub source: Option<AnthropicImageSource>,
+    /// `tool_use` id / `tool_result` target id.
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub input: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tool_use_id: Option<String>,
+    #[serde(default)]
+    pub content: Option<serde_json::Value>,
+    /// `thinking` text and its `signature`.
+    #[serde(default)]
+    pub thinking: Option<String>,
+    #[serde(default)]
+    pub signature: Option<String>,
+    /// `redacted_thinking` payload.
+    #[serde(default)]
+    pub data: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,12 +144,15 @@ impl MessagesRequest {
                     name: None,
                     tool_call_id: None,
                     tool_calls: None,
+                    reasoning_content: None,
+                    thinking_signature: None,
+                    redacted_thinking: None,
                 });
             }
         }
 
         for message in self.messages {
-            messages.push(message.into_openai()?);
+            messages.extend(message.into_openai()?);
         }
 
         Ok(ChatCompletionRequest {
@@ -137,12 +170,29 @@ impl MessagesRequest {
             tools: self.tools,
             // Anthropic clients read usage from `message_delta` instead.
             stream_options: None,
+            reasoning_effort: self.thinking.and_then(|thinking| {
+                // `type: "disabled"` (or any non-enabled type) keeps thinking off.
+                if thinking
+                    .kind
+                    .as_deref()
+                    .is_some_and(|kind| kind != "enabled")
+                {
+                    return None;
+                }
+                let budget = thinking.budget_tokens.unwrap_or(0);
+                Some(crate::upstream::chat_backend::thinking_level_from_budget(budget).to_string())
+            }),
         })
     }
 }
 
 impl AnthropicMessage {
-    fn into_openai(self) -> Result<OpenAiMessage> {
+    /// Converts one Anthropic message into one or more OpenAI-shaped messages.
+    ///
+    /// `tool_result` blocks become standalone `tool` messages, while `text`,
+    /// `image`, `tool_use` and thinking blocks stay on a single user/assistant
+    /// message so signatures and call pairings survive the round trip.
+    fn into_openai(self) -> Result<Vec<OpenAiMessage>> {
         let role = match self.role.trim().to_ascii_lowercase().as_str() {
             "assistant" => "assistant",
             "user" => "user",
@@ -153,44 +203,159 @@ impl AnthropicMessage {
             }
         };
 
-        let content = match self.content {
-            AnthropicContent::Text(text) => OpenAiContent::Text(text),
-            AnthropicContent::Blocks(blocks) => {
-                let mut parts = Vec::new();
-                for block in blocks {
-                    match block.block_type.as_str() {
-                        "text" => {
-                            if let Some(text) = block.text {
-                                parts.push(OpenAiContentPart {
-                                    part_type: "text".to_string(),
-                                    text: Some(text),
-                                    image_url: None,
-                                });
-                            }
-                        }
-                        "image" => {
-                            if let Some(source) = block.source.and_then(image_data_url) {
-                                parts.push(OpenAiContentPart {
-                                    part_type: "image_url".to_string(),
-                                    text: None,
-                                    image_url: Some(OpenAiImageUrl { url: source }),
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                OpenAiContent::Parts(parts)
+        let blocks = match self.content {
+            AnthropicContent::Text(text) => {
+                return Ok(vec![plain_message(role, OpenAiContent::Text(text))]);
             }
+            AnthropicContent::Blocks(blocks) => blocks,
         };
 
-        Ok(OpenAiMessage {
-            role: role.to_string(),
-            content: Some(content),
-            name: None,
-            tool_call_id: None,
-            tool_calls: None,
-        })
+        let mut out = Vec::new();
+        let mut parts = Vec::new();
+        // Assistant-only fields.
+        let mut tool_calls = Vec::new();
+        let mut thinking = None;
+        let mut signature = None;
+        let mut redacted = None;
+
+        for block in blocks {
+            match block.block_type.as_str() {
+                "text" => {
+                    if let Some(text) = block.text {
+                        parts.push(OpenAiContentPart {
+                            part_type: "text".to_string(),
+                            text: Some(text),
+                            image_url: None,
+                        });
+                    }
+                }
+                "image" => {
+                    if let Some(source) = block.source.and_then(image_data_url) {
+                        parts.push(OpenAiContentPart {
+                            part_type: "image_url".to_string(),
+                            text: None,
+                            image_url: Some(OpenAiImageUrl { url: source }),
+                        });
+                    }
+                }
+                "tool_use" => {
+                    if let Some(id) = block.id {
+                        let arguments = block
+                            .input
+                            .map(|input| input.to_string())
+                            .unwrap_or_else(|| "{}".to_string());
+                        tool_calls.push(OpenAiToolCall {
+                            id: Some(id),
+                            function: Some(OpenAiFunctionCall {
+                                name: block.name,
+                                arguments: Some(arguments),
+                            }),
+                        });
+                    }
+                }
+                "tool_result" => {
+                    // Each tool result is its own `tool` role message.
+                    if let Some(tool_use_id) = block.tool_use_id {
+                        out.push(OpenAiMessage {
+                            role: "tool".to_string(),
+                            content: Some(block_result_content(block.content)),
+                            name: None,
+                            tool_call_id: Some(tool_use_id),
+                            tool_calls: None,
+                            reasoning_content: None,
+                            thinking_signature: None,
+                            redacted_thinking: None,
+                        });
+                    }
+                }
+                "thinking" => {
+                    thinking = block.thinking;
+                    signature = block.signature;
+                }
+                "redacted_thinking" => {
+                    redacted = block.data;
+                }
+                _ => {}
+            }
+        }
+
+        let content = if parts.is_empty() {
+            None
+        } else {
+            Some(OpenAiContent::Parts(parts))
+        };
+
+        if role == "assistant" {
+            // Keep an assistant turn when it carries thinking or tool calls even
+            // with no text, so the next `tool_result` still has its pair.
+            if content.is_some()
+                || !tool_calls.is_empty()
+                || thinking.is_some()
+                || redacted.is_some()
+            {
+                out.push(OpenAiMessage {
+                    role: "assistant".to_string(),
+                    content,
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: if tool_calls.is_empty() {
+                        None
+                    } else {
+                        Some(tool_calls)
+                    },
+                    reasoning_content: thinking,
+                    thinking_signature: signature,
+                    redacted_thinking: redacted,
+                });
+            }
+        } else if content.is_some() {
+            out.push(OpenAiMessage {
+                role: "user".to_string(),
+                content,
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+                thinking_signature: None,
+                redacted_thinking: None,
+            });
+        }
+
+        Ok(out)
+    }
+}
+
+fn plain_message(role: &str, content: OpenAiContent) -> OpenAiMessage {
+    OpenAiMessage {
+        role: role.to_string(),
+        content: Some(content),
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+        thinking_signature: None,
+        redacted_thinking: None,
+    }
+}
+
+/// Flattens a `tool_result` content value (string or text-block array).
+fn block_result_content(content: Option<serde_json::Value>) -> OpenAiContent {
+    match content {
+        Some(serde_json::Value::String(text)) => OpenAiContent::Text(text),
+        Some(serde_json::Value::Array(blocks)) => {
+            let text = blocks
+                .into_iter()
+                .filter_map(|block| {
+                    block
+                        .get("text")
+                        .and_then(|text| text.as_str())
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            OpenAiContent::Text(text)
+        }
+        _ => OpenAiContent::Text(String::new()),
     }
 }
 
@@ -212,6 +377,13 @@ pub struct MessagesResponse {
 pub enum AnthropicResponseBlock {
     Text {
         text: String,
+    },
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+    RedactedThinking {
+        data: String,
     },
     ToolUse {
         id: String,
@@ -245,4 +417,109 @@ pub fn estimate_messages(messages: &[RouterMessage]) -> u64 {
         .map(|message| estimate_tokens(&message.content.as_text()))
         .sum::<u64>()
         .max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(body: serde_json::Value) -> ChatCompletionRequest {
+        let request: MessagesRequest = serde_json::from_value(body).expect("valid request");
+        request.into_chat_request().expect("converts")
+    }
+
+    #[test]
+    fn thinking_budget_maps_to_reasoning_effort() {
+        let chat = request(serde_json::json!({
+            "model": "claude",
+            "max_tokens": 1024,
+            "thinking": { "type": "enabled", "budget_tokens": 8192 },
+            "messages": [{ "role": "user", "content": "hi" }]
+        }));
+
+        assert_eq!(
+            chat.generation_options().thinking_level.as_deref(),
+            Some("medium")
+        );
+    }
+
+    #[test]
+    fn disabled_thinking_produces_no_reasoning_effort() {
+        let chat = request(serde_json::json!({
+            "model": "claude",
+            "max_tokens": 1024,
+            "thinking": { "type": "disabled" },
+            "messages": [{ "role": "user", "content": "hi" }]
+        }));
+
+        assert!(chat.generation_options().thinking_level.is_none());
+    }
+
+    #[test]
+    fn signed_thinking_and_tool_blocks_round_trip() {
+        let chat = request(serde_json::json!({
+            "model": "claude",
+            "max_tokens": 1024,
+            "messages": [
+                { "role": "user", "content": "hi" },
+                { "role": "assistant", "content": [
+                    { "type": "redacted_thinking", "data": "opaque" },
+                    { "type": "thinking", "thinking": "reasoning", "signature": "sig-1" },
+                    { "type": "tool_use", "id": "tc1", "name": "read", "input": { "path": "/tmp" } }
+                ]},
+                { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "tc1", "content": "file" }
+                ]}
+            ]
+        }));
+
+        let messages = chat.into_messages().expect("messages");
+
+        let assistant = messages
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("assistant turn");
+        assert_eq!(assistant.thinking.as_deref(), Some("reasoning"));
+        assert_eq!(assistant.thinking_signature.as_deref(), Some("sig-1"));
+        assert_eq!(assistant.redacted_thinking.as_deref(), Some("opaque"));
+        assert_eq!(
+            assistant
+                .tool_calls
+                .as_ref()
+                .and_then(|calls| calls.first())
+                .map(|call| call.id.as_str()),
+            Some("tc1")
+        );
+
+        let tool = messages
+            .iter()
+            .find(|message| message.role == "tool")
+            .expect("tool result turn");
+        assert_eq!(tool.tool_call_id.as_deref(), Some("tc1"));
+        assert_eq!(tool.content.as_text(), "file");
+    }
+
+    #[test]
+    fn tool_result_without_text_preserves_the_pairing() {
+        let chat = request(serde_json::json!({
+            "model": "claude",
+            "max_tokens": 1024,
+            "messages": [
+                { "role": "assistant", "content": [
+                    { "type": "tool_use", "id": "tc1", "name": "read", "input": {} }
+                ]},
+                { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "tc1" }
+                ]}
+            ]
+        }));
+
+        let messages = chat.into_messages().expect("messages");
+
+        // The empty assistant turn must survive so the tool_result still pairs.
+        assert!(messages.iter().any(|message| message.role == "assistant"));
+        assert!(messages.iter().any(
+            |message| message.role == "tool" && message.tool_call_id.as_deref() == Some("tc1")
+        ));
+    }
 }

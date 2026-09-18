@@ -44,6 +44,36 @@ data: [DONE]
 
 "#;
 
+/// An Anthropic-native Messages stream that emits a signed thinking block.
+const ANTHROPIC_THINKING_STREAM: &str = r#"event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":5,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pondering"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-abc"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}
+
+"#;
+
 /// Builds an app over a fresh in-memory database, without client auth.
 async fn app() -> axum::Router {
     let db = Db::connect_in_memory().await.expect("db");
@@ -57,6 +87,30 @@ async fn app() -> axum::Router {
 async fn spawn_sse_upstream(body: &'static str) -> String {
     let router = axum::Router::new().route(
         "/v1/chat/completions",
+        axum::routing::post(move || async move {
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/event-stream")],
+                body,
+            )
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}/v1")
+}
+
+/// Serves `body` as an SSE Messages response on the Anthropic-native path.
+async fn spawn_anthropic_upstream(body: &'static str) -> String {
+    let router = axum::Router::new().route(
+        "/v1/messages",
         axum::routing::post(move || async move {
             (
                 StatusCode::OK,
@@ -115,13 +169,17 @@ async fn json_request(
 
 /// Points a fresh alias at the mock upstream and returns its model reference.
 async fn route_model_to(app: &axum::Router, base_url: &str) -> String {
+    route_model_with_type(app, base_url, "openai-compatible").await
+}
+
+async fn route_model_with_type(app: &axum::Router, base_url: &str, provider_type: &str) -> String {
     let (status, connection) = json_request(
         app,
         "POST",
         "/api/connections",
         serde_json::json!({
             "name": "sse-upstream",
-            "provider_type": "openai-compatible",
+            "provider_type": provider_type,
             "base_url": base_url,
             "api_key": "sk-test"
         }),
@@ -605,4 +663,43 @@ async fn responses_non_streaming_returns_a_json_response_object() {
     assert_eq!(body["output"][0]["content"][0]["text"], "here you go");
     assert_eq!(body["usage"]["input_tokens"], 7);
     assert_eq!(body["usage"]["total_tokens"], 9);
+}
+
+#[tokio::test]
+async fn anthropic_native_streaming_forwards_signed_thinking() {
+    let app = app().await;
+    let base_url = spawn_anthropic_upstream(ANTHROPIC_THINKING_STREAM).await;
+    let model = route_model_with_type(&app, &base_url, "anthropic-native").await;
+
+    let (status, body, _) = post_stream(
+        &app,
+        "/v1/messages",
+        serde_json::json!({
+            "model": model,
+            "stream": true,
+            "max_tokens": 64,
+            "thinking": { "type": "enabled", "budget_tokens": 4096 },
+            "messages": [{ "role": "user", "content": "think" }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    let payloads = sse_payloads(&body);
+
+    let thinking = payloads
+        .iter()
+        .find(|payload| payload["delta"]["type"] == "thinking_delta")
+        .unwrap_or_else(|| panic!("thinking should stream: {body}"));
+    assert_eq!(thinking["delta"]["thinking"], "pondering");
+
+    let signature = payloads
+        .iter()
+        .find(|payload| payload["delta"]["type"] == "signature_delta")
+        .unwrap_or_else(|| panic!("the thinking signature must reach the client: {body}"));
+    assert_eq!(signature["delta"]["signature"], "sig-abc");
+    assert_eq!(
+        signature["index"], thinking["index"],
+        "the signature belongs to the open thinking block"
+    );
 }

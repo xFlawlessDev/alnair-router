@@ -134,7 +134,7 @@ pub enum ThinkingLevel {
     Max,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheRetention {
     #[default]

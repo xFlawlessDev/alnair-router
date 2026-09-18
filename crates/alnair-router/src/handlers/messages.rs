@@ -119,6 +119,19 @@ async fn complete_response(
     }
 
     let mut content = Vec::new();
+    if let Some(redacted) = &completion.redacted_thinking {
+        content.push(AnthropicResponseBlock::RedactedThinking {
+            data: redacted.clone(),
+        });
+    }
+    if let Some(thinking) = &completion.thinking
+        && !thinking.is_empty()
+    {
+        content.push(AnthropicResponseBlock::Thinking {
+            thinking: thinking.clone(),
+            signature: completion.thinking_signature.clone().unwrap_or_default(),
+        });
+    }
     if !completion.content.is_empty() {
         content.push(AnthropicResponseBlock::Text {
             text: completion.content.clone(),
@@ -328,6 +341,36 @@ fn message_events(
                     "delta": { "type": "thinking_delta", "thinking": text }
                 })
                 .to_string(),
+            )));
+        }
+        Ok(StreamChunk::ThinkingSignature(signature)) => {
+            // The signature closes out the open thinking block and must reach the
+            // client so it can be replayed verbatim on the next turn.
+            let index = ensure_block(state, &mut events, BlockKind::Thinking);
+            events.push(Ok(Event::default().event("content_block_delta").data(
+                json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": { "type": "signature_delta", "signature": signature }
+                })
+                .to_string(),
+            )));
+        }
+        Ok(StreamChunk::RedactedThinking(data)) => {
+            close_block(state, &mut events);
+
+            let index = state.next_index;
+            state.next_index += 1;
+            events.push(Ok(Event::default().event("content_block_start").data(
+                json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": { "type": "redacted_thinking", "data": data }
+                })
+                .to_string(),
+            )));
+            events.push(Ok(Event::default().event("content_block_stop").data(
+                json!({ "type": "content_block_stop", "index": index }).to_string(),
             )));
         }
         Ok(StreamChunk::ToolCall {

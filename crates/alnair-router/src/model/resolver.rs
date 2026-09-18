@@ -33,6 +33,8 @@ pub struct ResolvedTarget {
     /// Model id used for price lookups when the upstream id differs from the
     /// catalog; `None` uses `model`.
     pub pricing_model: Option<String>,
+    /// Prompt-cache retention sent upstream: `none`, `short` or `long`.
+    pub cache_retention: String,
     /// Provenance, e.g. `alias:glm` or `combo:free-forever#2`.
     pub source: String,
 }
@@ -285,6 +287,7 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         connect_timeout_ms: non_negative(connection.connect_timeout_ms),
         idle_timeout_ms: non_negative(connection.idle_timeout_ms),
         pricing_model: connection.pricing_model.clone(),
+        cache_retention: connection.cache_retention.clone(),
         source,
     }
 }

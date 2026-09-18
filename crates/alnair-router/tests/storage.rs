@@ -59,6 +59,7 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         connect_timeout_ms: None,
         idle_timeout_ms: None,
         pricing_model: None,
+        cache_retention: None,
         provider_id: None,
     }
 }
@@ -341,16 +342,22 @@ async fn provider_type_rebuild_keeps_children() {
     .expect("legacy schema");
 
     let repo = connection_repo(&db);
-    let seeded = repo
-        .create(connection("legacy", "openai-compatible"))
-        .await
-        .expect("seed connection");
+    // Seed through raw SQL because the legacy table predates the newer columns.
+    sqlx::query(
+        "INSERT INTO connections
+            (id, name, provider_type, base_url, api_key, custom_headers, enabled,
+             created_at, updated_at)
+         VALUES ('legacy-id', 'legacy', 'openai-compatible', 'https://api.example.com/v1',
+                 'sk-test', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&db.pool)
+    .await
+    .expect("seed connection");
 
     sqlx::query(
         "INSERT INTO aliases (id, prefix, connection_id, model_override, enabled, sort_order, created_at, updated_at)
-         VALUES ('a1', 'leg', ?, NULL, 1, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+         VALUES ('a1', 'leg', 'legacy-id', NULL, 1, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
     )
-    .bind(&seeded.id)
     .execute(&db.pool)
     .await
     .expect("seed alias");
@@ -359,6 +366,14 @@ async fn provider_type_rebuild_keeps_children() {
         .execute(&db.pool)
         .await
         .expect("rebuild migration");
+
+    // Later column-add migrations run against the rebuilt table.
+    sqlx::raw_sql(include_str!(
+        "../migrations/0021_connection_cache_control.sql"
+    ))
+    .execute(&db.pool)
+    .await
+    .expect("cache-control migration");
 
     let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
         .fetch_all(&db.pool)
@@ -379,7 +394,7 @@ async fn provider_type_rebuild_keeps_children() {
     assert!(matches!(error, Error::UnsupportedProviderType(_)));
     assert!(
         sqlx::query("SELECT id FROM connections WHERE id = ?")
-            .bind(&seeded.id)
+            .bind("legacy-id")
             .fetch_optional(&db.pool)
             .await
             .expect("legacy row survived")
@@ -1661,6 +1676,7 @@ async fn connections_round_trip_a_pricing_model_pin() {
             connect_timeout_ms: None,
             idle_timeout_ms: None,
             pricing_model: Some("gpt-5.6-luna".to_string()),
+            cache_retention: None,
             provider_id: None,
         })
         .await
@@ -1678,6 +1694,42 @@ async fn connections_round_trip_a_pricing_model_pin() {
         .await
         .expect("clear");
     assert!(cleared.pricing_model.is_none());
+}
+
+#[tokio::test]
+async fn connections_round_trip_the_cache_retention() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let defaulted = repo
+        .create(connection("plain", "openai-compatible"))
+        .await
+        .expect("create");
+    assert_eq!(defaulted.cache_retention, "none", "off by default");
+
+    let enabled = repo
+        .update(
+            &defaulted.id,
+            UpdateConnection {
+                cache_retention: Some("long".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("enable caching");
+    assert_eq!(enabled.cache_retention, "long");
+
+    let disabled = repo
+        .update(
+            &defaulted.id,
+            UpdateConnection {
+                cache_retention: Some("none".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("disable caching");
+    assert_eq!(disabled.cache_retention, "none");
 }
 
 #[tokio::test]

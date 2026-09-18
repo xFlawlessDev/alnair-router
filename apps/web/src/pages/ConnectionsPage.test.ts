@@ -46,6 +46,7 @@ const connection = (overrides: Partial<Connection>): Connection => ({
   connect_timeout_ms: null,
   idle_timeout_ms: null,
   pricing_model: null,
+  cache_retention: "none",
   provider_id: "openai",
   account_count: 0,
   created_at: "2026-01-01T00:00:00Z",
