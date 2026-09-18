@@ -49,7 +49,9 @@ execFileSync('cargo', ['update', '--offline', '-p', 'alnair-router', '-p', 'alna
   stdio: 'inherit',
 });
 
-// stage what we touched so the standard-version release commit includes it
+// stage what we touched so the release commit includes it: standard-version
+// only commits the files it bumped itself unless `--commit-all` is passed, and
+// the release scripts do exactly that.
 execFileSync('git', ['add', 'Cargo.lock', webPath, ...crates, ...npmPaths], { stdio: 'inherit' });
 
 console.log(`synced workspace manifests to v${version}`);

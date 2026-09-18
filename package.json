@@ -5,10 +5,10 @@
   "license": "MIT",
   "description": "Release tooling for the alnair-router workspace (bump, changelog, tag).",
   "scripts": {
-    "release": "standard-version",
-    "release:minor": "standard-version --release-as minor",
-    "release:major": "standard-version --release-as major",
-    "release:first": "standard-version --first-release",
+    "release": "standard-version --commit-all",
+    "release:minor": "standard-version --release-as minor --commit-all",
+    "release:major": "standard-version --release-as major --commit-all",
+    "release:first": "standard-version --first-release --commit-all",
     "release:dry": "standard-version --dry-run",
     "build:binary": "pnpm -C apps/web run build && cargo build --release --locked -p alnair-router"
   },
