@@ -37,11 +37,10 @@ const presets: ProviderPreset[] = [
     category: "api_key",
   }),
   preset({
-    id: "opencode-free",
-    label: "OpenCode Free",
-    base_url: "https://opencode.ai/zen/v1",
+    id: "openrouter",
+    label: "OpenRouter",
+    base_url: "https://openrouter.ai/api/v1",
     category: "free_tier",
-    auth: "none",
   }),
   preset({
     id: "ollama",
@@ -115,11 +114,11 @@ describe("ProviderPickerDialog", () => {
     expect(text).toContain("Free tier providers");
     expect(text).toContain("Local servers");
     expect(text).toContain("OpenAI");
-    expect(text).toContain("OpenCode Free");
+    expect(text).toContain("OpenRouter");
     expect(text).toContain("Ollama");
     expect(text).toContain("no key");
 
-    for (const label of ["OpenAI", "OpenCode Free", "Ollama"]) {
+    for (const label of ["OpenAI", "OpenRouter", "Ollama"]) {
       const card = [...document.querySelectorAll("button")].find((button) =>
         button.textContent?.includes(label),
       );
@@ -157,7 +156,7 @@ describe("ProviderPickerDialog", () => {
     const { selected, cleanup } = await mountPicker();
 
     const card = [...document.querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("OpenCode Free"),
+      button.textContent?.includes("OpenRouter"),
     );
     expect(card, "preset card should render").toBeTruthy();
 
@@ -165,7 +164,7 @@ describe("ProviderPickerDialog", () => {
     await nextTick();
 
     expect(selected).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "opencode-free" }),
+      expect.objectContaining({ id: "openrouter" }),
     );
 
     cleanup();

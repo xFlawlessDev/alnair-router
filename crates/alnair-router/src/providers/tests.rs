@@ -35,10 +35,7 @@ fn presets_are_unique_and_supported() {
 fn find_is_case_insensitive() {
     assert_eq!(find("OpenAI").expect("openai").id, "openai");
     assert_eq!(find("ollama").expect("ollama").auth, ProviderAuth::None);
-    assert_eq!(
-        find("opencode-free").expect("opencode-free").auth,
-        ProviderAuth::None
-    );
+    assert!(find("opencode-free").is_none());
     let codebuddy = find("CODEBUDDY-INTL").expect("codebuddy-intl");
     assert_eq!(codebuddy.provider_type, "codebuddy-intl");
     assert_eq!(codebuddy.base_url, "https://www.codebuddy.ai/v2");

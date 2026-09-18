@@ -137,26 +137,6 @@ fn free_tier(
     )
 }
 
-/// A free-tier preset reachable with no key at all.
-fn keyless(
-    id: &'static str,
-    label: &'static str,
-    provider_type: &'static str,
-    base_url: &'static str,
-    note: Option<&'static str>,
-) -> ProviderPreset {
-    provider(
-        id,
-        label,
-        provider_type,
-        base_url,
-        ProviderCategory::FreeTier,
-        ProviderAuth::None,
-        "",
-        note,
-    )
-}
-
 /// A server the user runs themselves; keyless and always OpenAI-compatible.
 fn local(id: &'static str, label: &'static str, base_url: &'static str) -> ProviderPreset {
     provider(

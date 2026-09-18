@@ -71,7 +71,6 @@ const ICONS = {
   ollama: "ollama",
   "ollama-cloud": "ollama",
   openai: "openai",
-  "opencode-free": "opencode",
   "opencode-go": "opencode",
   openrouter: "openrouter",
   perplexity: "perplexity",

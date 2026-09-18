@@ -7,7 +7,7 @@
 //! slash). Endpoints were cross-checked against 9Router's provider registry and,
 //! where one exists, the vendor's own documentation.
 
-use super::{ProviderPreset, api_key, free_tier, keyless, local};
+use super::{ProviderPreset, api_key, free_tier, local};
 
 /// Paid and pay-as-you-go endpoints behind an API key.
 pub(super) fn api_key_presets() -> Vec<ProviderPreset> {
@@ -366,7 +366,7 @@ pub(super) fn free_tier_presets() -> Vec<ProviderPreset> {
             "openai-compatible",
             "https://bazaarlink.ai/api/v1",
             "https://bazaarlink.ai",
-            Some("Free tier: 10 requests/min, 150/day."),
+            Some("Free tier: 10 requests/min, 50/day; doubles after any top-up."),
         ),
         free_tier(
             "byteplus",
@@ -425,13 +425,6 @@ pub(super) fn free_tier_presets() -> Vec<ProviderPreset> {
             Some(
                 "Hosted models over Ollama's OpenAI-compatible surface; the free tier runs one cloud model at a time. Model ids look like 'gemma4:31b'.",
             ),
-        ),
-        keyless(
-            "opencode-free",
-            "OpenCode Free",
-            "openai-compatible",
-            "https://opencode.ai/zen/v1",
-            Some("No key required; the free model list changes without notice."),
         ),
         free_tier(
             "openrouter",

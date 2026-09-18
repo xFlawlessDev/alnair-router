@@ -438,7 +438,7 @@ fn tree(text: &str) -> String {
         .lines()
         .filter(|line| {
             let trimmed = line.trim();
-            !trimmed.is_empty() && !(trimmed.contains("directories") && trimmed.contains("files"))
+            !(trimmed.is_empty() || trimmed.contains("directories") && trimmed.contains("files"))
         })
         .collect();
 
