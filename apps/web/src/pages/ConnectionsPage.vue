@@ -50,7 +50,7 @@ import {
   maskSecret,
   parseHeaders,
 } from "@/lib/format";
-import type { Connection, ProviderPreset } from "@/types/api";
+import type { Connection, ConnectionInput, ProviderPreset } from "@/types/api";
 
 const stored = loadViewPreferences();
 
@@ -60,6 +60,11 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
 const pickerOpen = ref(false);
+/**
+ * Where to return when the picker was opened from the form: the form is kept
+ * mounted underneath, so "Change provider" closes it and reopens the picker.
+ */
+const returnToForm = ref(false);
 const selectedPreset = ref<ProviderPreset | null>(null);
 const editing = ref<Connection | null>(null);
 const deleting = ref<Connection | null>(null);
@@ -95,20 +100,77 @@ async function load(): Promise<void> {
 }
 
 function openCreate(): void {
+  returnToForm.value = false;
   selectedPreset.value = null;
   editing.value = null;
-  formOpen.value = true;
+  pickerOpen.value = true;
 }
 
+/** Reopens the picker from the form; the form is restored if it is cancelled. */
 function openPicker(): void {
+  returnToForm.value = formOpen.value;
+  if (formOpen.value) formOpen.value = false;
   pickerOpen.value = true;
 }
 
 function onPresetSelected(preset: ProviderPreset): void {
   selectedPreset.value = preset;
   editing.value = null;
+  returnToForm.value = false;
   pickerOpen.value = false;
   formOpen.value = true;
+}
+
+/** The picker was dismissed; fall back to the form it was opened from. */
+function onPickerOpenChange(open: boolean): void {
+  pickerOpen.value = open;
+  if (!open && returnToForm.value) {
+    returnToForm.value = false;
+    formOpen.value = true;
+  }
+}
+
+function onPickerCustom(): void {
+  returnToForm.value = false;
+  pickerOpen.value = false;
+  selectedPreset.value = null;
+  editing.value = null;
+  formOpen.value = true;
+}
+
+/** Keyless or already-configured presets skip the form and save straight away. */
+async function onPresetQuickAdd(preset: ProviderPreset): Promise<void> {
+  returnToForm.value = false;
+  pickerOpen.value = false;
+  const source = connections.value.find(
+    (connection) => connection.provider_id === preset.id && connection.api_key,
+  );
+  const body: ConnectionInput = {
+    name: suggestName(preset),
+    provider_type: preset.provider_type,
+    base_url: source?.base_url ?? preset.base_url,
+    custom_headers: source
+      ? parseHeaders(source.custom_headers)
+      : preset.default_headers,
+    provider_id: preset.id,
+    ...(source?.api_key ? { api_key: source.api_key } : {}),
+  };
+
+  try {
+    await api.createConnection(body);
+    toast.success(
+      source
+        ? `Duplicated “${source.name}” as “${body.name}”`
+        : `Provider “${preset.label}” added`,
+    );
+    await load();
+  } catch (caught) {
+    toast.error(
+      caught instanceof ApiError
+        ? caught.message
+        : "Failed to add the provider",
+    );
+  }
 }
 
 function openEdit(connection: Connection): void {
@@ -241,10 +303,7 @@ onMounted(load);
         <Button variant="outline" :disabled="loading" @click="load">
           <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
         </Button>
-        <Button variant="outline" @click="openCreate"
-          ><Plus /> Add connection</Button
-        >
-        <Button @click="openPicker"><Plug /> Add provider</Button>
+        <Button @click="openCreate"><Plus /> Add provider</Button>
       </template>
     </PageHeader>
 
@@ -266,10 +325,7 @@ onMounted(load);
       <template #icon><Plug class="size-5" /></template>
       <template #action>
         <div class="flex flex-wrap items-center justify-center gap-2">
-          <Button @click="openPicker"><Plug /> Add provider</Button>
-          <Button variant="outline" @click="openCreate"
-            ><Plus /> Add connection</Button
-          >
+          <Button @click="openCreate"><Plus /> Add provider</Button>
         </div>
       </template>
     </EmptyState>
@@ -485,8 +541,11 @@ onMounted(load);
     </template>
 
     <ProviderPickerDialog
-      v-model:open="pickerOpen"
+      :open="pickerOpen"
       @select="onPresetSelected"
+      @quick-add="onPresetQuickAdd"
+      @custom="onPickerCustom"
+      @update:open="onPickerOpenChange"
     />
 
     <ConnectionFormDialog
@@ -495,6 +554,7 @@ onMounted(load);
       :preset="selectedPreset"
       :default-name="selectedPreset ? suggestName(selectedPreset) : ''"
       @saved="load"
+      @change-provider="openPicker"
     />
 
     <ConfirmDialog

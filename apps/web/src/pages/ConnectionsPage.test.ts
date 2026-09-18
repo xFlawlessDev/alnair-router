@@ -10,6 +10,7 @@ vi.mock("@/lib/api", () => ({
   api: {
     listConnections: vi.fn(),
     listProviders: vi.fn(),
+    createConnection: vi.fn(),
     updateConnection: vi.fn(),
     testConnection: vi.fn(),
     deleteConnection: vi.fn(),
@@ -150,6 +151,58 @@ describe("ConnectionsPage", () => {
       heading.textContent?.trim(),
     );
     expect(headings).toEqual(["Anthropic · 1", "OpenAI · 1"]);
+
+    unmount();
+  });
+
+  it("exposes a single Add provider entry point", async () => {
+    const { container, unmount } = await mount();
+
+    const labels = [...container.querySelectorAll("button")].map((candidate) =>
+      candidate.textContent?.trim(),
+    );
+    expect(labels).toContain("Add provider");
+    expect(labels).not.toContain("Add connection");
+
+    unmount();
+  });
+
+  it("quick-adds a keyless preset without opening the form", async () => {
+    vi.mocked(api.listProviders).mockResolvedValue({
+      object: "list",
+      data: [
+        preset({ id: "openai", label: "OpenAI" }),
+        preset({
+          id: "ollama",
+          label: "Ollama",
+          category: "local",
+          auth: "none",
+          base_url: "http://localhost:11434/v1",
+        }),
+      ],
+    });
+    vi.mocked(api.createConnection).mockResolvedValue(connection({}));
+
+    const { container, unmount } = await mount();
+
+    [...container.querySelectorAll("button")]
+      .find((candidate) => candidate.textContent?.includes("Add provider"))!
+      .click();
+    await settle();
+
+    document
+      .querySelector<HTMLButtonElement>(
+        'button[aria-label="Quick add Ollama"]',
+      )!
+      .click();
+    await settle();
+
+    expect(api.createConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider_id: "ollama",
+        base_url: "http://localhost:11434/v1",
+      }),
+    );
 
     unmount();
   });

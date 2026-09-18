@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Plus, Trash2, X } from "@lucide/vue";
+import { Plus, RefreshCw, Trash2, X } from "@lucide/vue";
 import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 
 import ProviderIcon from "@/components/ProviderIcon.vue";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,7 +43,12 @@ const props = defineProps<{
   /** Suggested name for a new connection (kept unique by the page). */
   defaultName?: string;
 }>();
-const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
+const emit = defineEmits<{
+  "update:open": [boolean];
+  saved: [];
+  /** Reopen the picker so the user can switch the preset behind this form. */
+  "change-provider": [];
+}>();
 
 interface HeaderRow {
   key: string;
@@ -292,24 +298,35 @@ async function save(): Promise<void> {
 
       <div
         v-if="!isEdit && preset"
-        class="rounded-md border bg-muted/40 p-3 text-xs"
+        class="flex flex-wrap items-start justify-between gap-3 rounded-md border bg-muted/40 p-3 text-xs"
       >
-        <p class="flex items-center gap-2 font-medium">
-          <ProviderIcon :id="preset.id" :label="preset.label" />
-          {{ preset.label }}
-        </p>
-        <p v-if="preset.note" class="mt-1 text-muted-foreground">
-          {{ preset.note }}
-        </p>
-        <a
-          v-if="preset.api_key_url"
-          :href="preset.api_key_url"
-          target="_blank"
-          rel="noreferrer"
-          class="mt-1 inline-block underline underline-offset-4"
+        <div class="min-w-0">
+          <p class="flex items-center gap-2 font-medium">
+            <ProviderIcon :id="preset.id" :label="preset.label" />
+            {{ preset.label }}
+            <Badge variant="outline">{{ preset.provider_type }}</Badge>
+          </p>
+          <p v-if="preset.note" class="mt-1 text-muted-foreground">
+            {{ preset.note }}
+          </p>
+          <a
+            v-if="preset.api_key_url"
+            :href="preset.api_key_url"
+            target="_blank"
+            rel="noreferrer"
+            class="mt-1 inline-block underline underline-offset-4"
+          >
+            Get an API key
+          </a>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          @click="emit('change-provider')"
         >
-          Get an API key
-        </a>
+          <RefreshCw /> Change provider
+        </Button>
       </div>
 
       <div class="grid gap-4">
