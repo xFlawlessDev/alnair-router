@@ -7,6 +7,7 @@ import {
   KeyRound,
   Layers,
   LayoutDashboard,
+  LogOut,
   Plug,
   ScrollText,
   Settings,
@@ -14,8 +15,9 @@ import {
   Tags,
   Terminal,
 } from "@lucide/vue";
-import type { Component } from "vue";
-import { RouterLink, useRoute } from "vue-router";
+import { computed, type Component } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
+import { toast } from "vue-sonner";
 
 import Logo from "@/components/Logo.vue";
 import {
@@ -30,7 +32,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  SidebarSeparator,
 } from "@/components/ui/sidebar";
+import { api } from "@/lib/api";
+import { clearAuthStatus } from "@/lib/authState";
+import { getSession, setSession } from "@/lib/session";
 
 interface NavItem {
   label: string;
@@ -56,7 +62,21 @@ const manageItems: NavItem[] = [
 ];
 
 const route = useRoute();
+const router = useRouter();
 const isActive = (path: string): boolean => route.path === path;
+const signedIn = computed(() => getSession() !== null);
+
+async function signOut(): Promise<void> {
+  try {
+    await api.logout();
+  } catch {
+    // The local session is dropped either way.
+  }
+  setSession(null);
+  clearAuthStatus();
+  toast.success("Signed out");
+  await router.replace({ name: "login" });
+}
 </script>
 
 <template>
@@ -147,6 +167,13 @@ const isActive = (path: string): boolean => route.path === path;
               <BookOpen />
               <span>API Guide</span>
             </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarSeparator />
+        <SidebarMenuItem v-if="signedIn">
+          <SidebarMenuButton tooltip="Sign out" @click="signOut">
+            <LogOut />
+            <span>Sign out</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
