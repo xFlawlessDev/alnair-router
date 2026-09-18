@@ -89,17 +89,16 @@ pub(super) fn live_process() -> Option<Record> {
     Some(record)
 }
 
-/// True while a process with this PID exists.
+/// True while a process with this PID exists and can still serve.
+///
+/// `kill -0` answers "does this PID exist", and on Unix a process that has
+/// exited but not been reaped yet stays in the table as a zombie answering the
+/// same way. A router that already stopped must not read as alive, or `stop`
+/// waits out its timeouts and tells the operator to retry with `--force`.
 pub(super) fn pid_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        // `kill -0` only tests for the process' existence.
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
+        signal_exists(pid) && !is_zombie(pid)
     }
     #[cfg(windows)]
     {
@@ -118,6 +117,43 @@ pub(super) fn pid_is_alive(pid: u32) -> bool {
 
         queried != 0 && code == STILL_ACTIVE as u32
     }
+}
+
+/// `kill -0` only tests for the process' existence.
+#[cfg(unix)]
+fn signal_exists(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// True for a process that has exited but not been reaped yet.
+#[cfg(target_os = "linux")]
+fn is_zombie(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .is_ok_and(|stat| stat_reports_zombie(&stat))
+}
+
+/// Reads the state field of a `/proc/<pid>/stat` line, where `Z` is a zombie.
+///
+/// The second field is the command name in parentheses and may contain spaces,
+/// so the state is the field after the *last* `)`.
+#[cfg(target_os = "linux")]
+fn stat_reports_zombie(stat: &str) -> bool {
+    stat.rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .is_some_and(|state| state == "Z")
+}
+
+/// Other Unix systems keep zombies too, but without `/proc` the only cheap
+/// signal is `kill -0`. The case is rare in practice: a detached router is
+/// reaped by init, not left to linger.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn is_zombie(_pid: u32) -> bool {
+    false
 }
 
 /// Blocks until the PID disappears, up to `timeout`.
@@ -162,5 +198,19 @@ mod tests {
     fn this_process_is_alive_and_an_impossible_pid_is_not() {
         assert!(pid_is_alive(std::process::id()));
         assert!(!pid_is_alive(4_294_967_290));
+    }
+
+    /// The fields are `pid (comm) state ...`; `comm` is unquoted, so a name
+    /// containing a bracket must not shift the state field.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn zombie_state_is_read_from_the_stat_line() {
+        assert!(stat_reports_zombie(
+            "42 (alnair-router) Z 1 42 42 0 -1 4194560"
+        ));
+        assert!(!stat_reports_zombie(
+            "42 (alnair-router) S 1 42 42 0 -1 4194560"
+        ));
+        assert!(!stat_reports_zombie("42 (weird (name) R 1 42 42 0 -1"));
     }
 }

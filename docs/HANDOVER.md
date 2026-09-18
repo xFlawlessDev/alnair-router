@@ -686,8 +686,11 @@ suite should tell you.
     `--port` flag that never reached `config.toml` (`load_config` applies that
     override in memory only, and `start` forwards it to the child). Liveness for
     `stop`/`restart` is the PID alone, so a hung router is still stoppable with
-    `--force`; `status` additionally probes `/api/health` and says so when the
-    process exists but does not answer. The process also generates
+    `--force`; on Linux that means `kill -0` *plus* a zombie check, because a
+    terminated process answers `kill -0` until its parent reaps it and `stop`
+    would otherwise wait out its timeouts and misreport a clean shutdown.
+    `status` additionally probes `/api/health` and says so when the process
+    exists but does not answer. The process also generates
     `control.token`, a 32-byte secret that `stop`/`restart` send as
     `x-alnair-control` to `POST /api/admin/control/shutdown`. That route
     deliberately does **not** sit behind `require_admin_token`: it must work

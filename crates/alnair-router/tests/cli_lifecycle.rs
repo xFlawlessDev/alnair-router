@@ -4,7 +4,9 @@
 //! property of the process and the files on disk — unit tests over the parser
 //! cannot see any of it.
 
-use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(windows)]
+use std::io::Read;
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -432,10 +434,13 @@ fn a_custom_port_is_used_recorded_and_stoppable() {
 
 /// Detaching must not leave the caller's stdout open.
 ///
-/// A shell marks its own output inheritable so its children can write there;
-/// that handle reaches the CLI as a plain inherited handle. If the background
-/// process keeps a copy, a pipeline such as `alnair-router serve | more` never
-/// sees end-of-input and the shell appears to hang after the CLI returned.
+/// Windows only: a shell marks its own output inheritable so its children can
+/// write there, and that handle reaches the CLI as a plain inherited handle. If
+/// the background process keeps a copy, a pipeline such as
+/// `alnair-router serve | more` never sees end-of-input and the shell appears to
+/// hang after the CLI returned. On Unix the child's file descriptors are
+/// replaced outright, so the case cannot arise.
+#[cfg(windows)]
 #[test]
 fn detaching_does_not_hold_the_callers_stdout_open() {
     let home = tempfile::tempdir().expect("tempdir");
