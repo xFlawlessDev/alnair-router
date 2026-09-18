@@ -1,6 +1,14 @@
 <script setup lang="ts">
-import { Layers, Pencil, Plus, RefreshCw, Trash2 } from "@lucide/vue";
-import { onMounted, ref } from "vue";
+import {
+  Check,
+  Copy,
+  Layers,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "@lucide/vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { toast } from "vue-sonner";
 
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
@@ -32,6 +40,8 @@ const formOpen = ref(false);
 const editing = ref<ComboWithEntries | null>(null);
 const deleting = ref<ComboWithEntries | null>(null);
 const deletingBusy = ref(false);
+const copiedId = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -59,6 +69,19 @@ function openCreate(): void {
 function openEdit(combo: ComboWithEntries): void {
   editing.value = combo;
   formOpen.value = true;
+}
+
+async function copyCombo(combo: ComboWithEntries): Promise<void> {
+  const value = combo.combo.name;
+  try {
+    await navigator.clipboard.writeText(value);
+    copiedId.value = combo.combo.id;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copiedId.value = null), 1500);
+    toast.success(`Copied “${value}”`);
+  } catch {
+    toast.error("Clipboard is unavailable");
+  }
 }
 
 async function toggleEnabled(combo: ComboWithEntries): Promise<void> {
@@ -95,6 +118,9 @@ async function confirmDelete(): Promise<void> {
 }
 
 onMounted(load);
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer);
+});
 </script>
 
 <template>
@@ -148,10 +174,30 @@ onMounted(load);
           <TableRow v-for="combo in combos" :key="combo.combo.id">
             <TableCell>
               <div class="flex flex-col gap-1">
-                <code class="text-sm font-medium">{{ combo.combo.name }}</code>
+                <div class="flex items-center gap-1">
+                  <code
+                    class="rounded bg-muted px-1.5 py-0.5 text-sm font-medium"
+                    :title="combo.combo.name"
+                    >{{ combo.combo.name }}</code
+                  >
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    :aria-label="`Copy ${combo.combo.name}`"
+                    :title="`Copy ${combo.combo.name}`"
+                    @click="copyCombo(combo)"
+                  >
+                    <Check
+                      v-if="copiedId === combo.combo.id"
+                      class="text-primary"
+                    />
+                    <Copy v-else />
+                  </Button>
+                </div>
                 <span
                   v-if="combo.combo.description"
-                  class="max-w-64 text-xs text-muted-foreground"
+                  class="max-w-64 truncate text-xs text-muted-foreground"
+                  :title="combo.combo.description"
                 >
                   {{ combo.combo.description }}
                 </span>
@@ -162,14 +208,19 @@ onMounted(load);
                 v-if="combo.entries.length"
                 class="flex flex-wrap items-center gap-1"
               >
-                <template
+                <Badge
                   v-for="(entry, index) in combo.entries"
                   :key="entry.id"
+                  variant="outline"
+                  class="gap-1.5 font-normal"
+                  :title="`Tier ${index + 1}: ${entry.model_ref}`"
                 >
-                  <Badge variant="secondary" class="font-mono text-xs">
-                    {{ index + 1 }} · {{ entry.model_ref }}
-                  </Badge>
-                </template>
+                  <span
+                    class="flex size-4 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums"
+                    >{{ index + 1 }}</span
+                  >
+                  <span class="font-mono text-xs">{{ entry.model_ref }}</span>
+                </Badge>
               </div>
               <span v-else class="text-xs text-muted-foreground">No tiers</span>
             </TableCell>

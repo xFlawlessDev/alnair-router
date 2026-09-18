@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
   Activity,
+  Check,
+  Copy,
   ListPlus,
   Loader2,
   MessageSquare,
@@ -10,7 +12,7 @@ import {
   Tags,
   Trash2,
 } from "@lucide/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { toast } from "vue-sonner";
 
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
@@ -47,6 +49,8 @@ const deletingBusy = ref(false);
 const testingId = ref<string | null>(null);
 const chatOpen = ref(false);
 const chatAlias = ref<Alias | null>(null);
+const copiedId = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
 
 const connectionNames = computed(() => {
   const names = new Map<string, string>();
@@ -120,6 +124,26 @@ function openChat(alias: Alias): void {
   chatOpen.value = true;
 }
 
+/** The reference a client would paste: `prefix/model`, or the bare prefix. */
+function aliasReference(alias: Alias): string {
+  return alias.model_override
+    ? `${alias.prefix}/${alias.model_override}`
+    : `${alias.prefix}/`;
+}
+
+async function copyAlias(alias: Alias): Promise<void> {
+  const value = aliasReference(alias);
+  try {
+    await navigator.clipboard.writeText(value);
+    copiedId.value = alias.id;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copiedId.value = null), 1500);
+    toast.success(`Copied “${value}”`);
+  } catch {
+    toast.error("Clipboard is unavailable");
+  }
+}
+
 async function runTest(alias: Alias): Promise<void> {
   testingId.value = alias.id;
   try {
@@ -136,6 +160,9 @@ async function runTest(alias: Alias): Promise<void> {
 }
 
 onMounted(load);
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer);
+});
 </script>
 
 <template>
@@ -203,9 +230,23 @@ onMounted(load);
         <TableBody>
           <TableRow v-for="alias in aliases" :key="alias.id">
             <TableCell>
-              <code class="rounded bg-muted px-1.5 py-0.5 text-xs"
-                >{{ alias.prefix }}/</code
-              >
+              <div class="flex items-center gap-1">
+                <code
+                  class="rounded bg-muted px-1.5 py-0.5 text-xs"
+                  :title="`Copy ${aliasReference(alias)}`"
+                  >{{ alias.prefix }}/</code
+                >
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :aria-label="`Copy ${aliasReference(alias)}`"
+                  :title="`Copy ${aliasReference(alias)}`"
+                  @click="copyAlias(alias)"
+                >
+                  <Check v-if="copiedId === alias.id" class="text-primary" />
+                  <Copy v-else />
+                </Button>
+              </div>
             </TableCell>
             <TableCell>
               {{

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowUp, Plus, X } from "@lucide/vue";
+import { ArrowDown, ArrowUp, Layers, Plus, X } from "@lucide/vue";
 import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -109,7 +110,10 @@ async function save(): Promise<void> {
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogScrollContent class="sm:max-w-2xl">
       <DialogHeader>
-        <DialogTitle>{{ isEdit ? "Edit combo" : "New combo" }}</DialogTitle>
+        <DialogTitle class="flex items-center gap-2">
+          <Layers class="size-4 text-muted-foreground" />
+          {{ isEdit ? "Edit combo" : "New combo" }}
+        </DialogTitle>
         <DialogDescription>
           Tiers are tried in order. When a tier fails before emitting content,
           the router moves to the next one.
@@ -117,95 +121,115 @@ async function save(): Promise<void> {
       </DialogHeader>
 
       <div class="grid gap-4">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="grid gap-2">
-            <Label for="combo-name">Name</Label>
-            <Input
-              id="combo-name"
-              v-model="name"
-              placeholder="free-forever"
-              autocapitalize="off"
-            />
-            <p class="text-xs text-muted-foreground">
-              Trimmed and lowercased by the router.
-            </p>
-          </div>
-          <div
-            class="flex items-end justify-between gap-4 rounded-md border p-3"
-          >
-            <div>
-              <Label for="combo-enabled">Enabled</Label>
+        <div class="grid gap-4 rounded-lg border bg-muted/30 p-4">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="grid gap-2">
+              <Label for="combo-name">Name</Label>
+              <Input
+                id="combo-name"
+                v-model="name"
+                placeholder="free-forever"
+                autocapitalize="off"
+                class="font-mono"
+              />
               <p class="text-xs text-muted-foreground">
-                Disabled combos error explicitly.
+                Trimmed and lowercased by the router.
               </p>
             </div>
-            <Switch id="combo-enabled" v-model="enabled" />
+            <div
+              class="flex items-start justify-between gap-4 rounded-md border bg-background p-3"
+            >
+              <div>
+                <Label for="combo-enabled">Enabled</Label>
+                <p class="text-xs text-muted-foreground">
+                  Disabled combos error explicitly.
+                </p>
+              </div>
+              <Switch id="combo-enabled" v-model="enabled" />
+            </div>
+          </div>
+
+          <div class="grid gap-2">
+            <Label for="combo-description">Description</Label>
+            <Textarea
+              id="combo-description"
+              v-model="description"
+              placeholder="Optional notes"
+            />
           </div>
         </div>
 
-        <div class="grid gap-2">
-          <Label for="combo-description">Description</Label>
-          <Textarea
-            id="combo-description"
-            v-model="description"
-            placeholder="Optional notes"
-          />
-        </div>
-
-        <div class="grid gap-2">
-          <div class="flex items-center justify-between">
-            <Label>Fallback tiers</Label>
+        <div class="grid gap-3 rounded-lg border p-4">
+          <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-2">
+              <Label>Fallback tiers</Label>
+              <Badge variant="outline" class="tabular-nums">
+                {{ entries.length }}
+              </Badge>
+            </div>
             <Button variant="outline" size="sm" type="button" @click="addEntry">
               <Plus /> Add tier
             </Button>
           </div>
-          <div
-            v-for="(entry, index) in entries"
-            :key="index"
-            class="flex items-center gap-2"
-          >
-            <span
-              class="w-6 shrink-0 text-center text-sm text-muted-foreground"
-              >{{ index + 1 }}</span
+
+          <div v-if="entries.length" class="grid gap-2">
+            <div
+              v-for="(entry, index) in entries"
+              :key="index"
+              class="flex items-center gap-2 rounded-md border bg-muted/30 p-2"
             >
-            <TierInput
-              v-model="entries[index]"
-              :aliases="aliases"
-              :combos="combos"
-              :taken="entries.filter((_, other) => other !== index)"
-              :exclude-combo-id="combo?.combo.id ?? null"
-              class="flex-1"
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              aria-label="Move tier up"
-              :disabled="index === 0"
-              @click="move(index, -1)"
-            >
-              <ArrowUp />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              aria-label="Move tier down"
-              :disabled="index === entries.length - 1"
-              @click="move(index, 1)"
-            >
-              <ArrowDown />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              aria-label="Remove tier"
-              @click="removeEntry(index)"
-            >
-              <X />
-            </Button>
+              <span
+                class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground tabular-nums"
+              >
+                {{ index + 1 }}
+              </span>
+              <TierInput
+                v-model="entries[index]"
+                :aliases="aliases"
+                :combos="combos"
+                :taken="entries.filter((_, other) => other !== index)"
+                :exclude-combo-id="combo?.combo.id ?? null"
+                class="flex-1"
+              />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                aria-label="Move tier up"
+                :disabled="index === 0"
+                @click="move(index, -1)"
+              >
+                <ArrowUp />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                aria-label="Move tier down"
+                :disabled="index === entries.length - 1"
+                @click="move(index, 1)"
+              >
+                <ArrowDown />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                type="button"
+                class="text-destructive hover:text-destructive"
+                aria-label="Remove tier"
+                @click="removeEntry(index)"
+              >
+                <X />
+              </Button>
+            </div>
           </div>
+          <p
+            v-else
+            class="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground"
+          >
+            No tiers yet — add one to start the chain.
+          </p>
+
           <p class="text-xs text-muted-foreground">
             Search and pick an alias or another combo, or type any reference —
             <code>prefix/model</code>, a bare model, or a combo name.
