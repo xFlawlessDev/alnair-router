@@ -5,7 +5,7 @@
 - Cargo workspace root owns `Cargo.lock` and profiles. Members: `crates/alnair-router` (router binary + lib) and `crates/alnair-llm` (provider stack, `publish = false`).
 - `apps/web` is the Vue 3 dashboard with its own guide (`apps/web/AGENTS.md`); its built `dist/` is embedded into the router binary.
 - `npm/` holds the published npm packages: the `@xflawlessdev/alnair-router` launcher plus one binary package per release target. Platform packages get their `bin/` injected by CI, never committed.
-- `Dockerfile` (source build recipe, used by CI) and `docker-compose.yml` (pulls the GHCR image).
+- `Dockerfile` is the self-contained source recipe for local `docker build .`; `Dockerfile.release` is the CI recipe that copies the prebuilt Linux binaries into a multi-arch image (no compiler). `docker-compose.yml` pulls the GHCR image.
 - Design docs: `docs/HANDOVER.md` (architecture, behaviours) and `docs/ROADMAP.md` (status).
 
 ## Commands

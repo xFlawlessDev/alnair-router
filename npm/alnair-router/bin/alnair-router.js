@@ -7,6 +7,7 @@ const path = require('node:path');
 const PLATFORM_PACKAGES = {
   'darwin-arm64': '@xflawlessdev/alnair-router-darwin-arm64',
   'linux-x64': '@xflawlessdev/alnair-router-linux-x64',
+  'linux-arm64': '@xflawlessdev/alnair-router-linux-arm64',
   'win32-x64': '@xflawlessdev/alnair-router-win32-x64',
 };
 

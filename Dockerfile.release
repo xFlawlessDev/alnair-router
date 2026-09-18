@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+
+# Prebuilt-binary image used by the release workflow.
+#
+# Unlike `Dockerfile` (the self-contained source recipe for local
+# `docker build .`), this file does no compilation: the release job has already
+# built the Linux binaries, and they are copied in from the build context as
+# `linux-amd64/alnair-router` and `linux-arm64/alnair-router`. Keeping the two
+# recipes separate is what lets the published image skip the Node + Rust
+# toolchains entirely.
+FROM ubuntu:24.04 AS runtime
+# Docker sets this to `amd64` or `arm64` from `platforms:` in the workflow.
+ARG TARGETARCH
+
+# `ubuntu:24.04` matches the glibc the release binaries link against, so no
+# newer symbol is missing at runtime. `libgcc-s1` backs Rust's unwinder,
+# `passwd` provides `useradd`, and `ca-certificates` is kept for any future
+# native-TLS path.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 passwd \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --create-home alnair \
+    && mkdir -p /data \
+    && chown -R alnair:alnair /data
+
+COPY --chmod=0755 linux-${TARGETARCH}/alnair-router /usr/local/bin/alnair-router
+
+ENV ALNAIR_ROUTER_HOME=/data
+# PID 1 in a container has no terminal, so `serve` must not detach: making it
+# explicit means a change to console detection can never stop the container.
+ENV ALNAIR_ROUTER_FOREGROUND=1
+USER alnair
+VOLUME ["/data"]
+EXPOSE 7878
+
+ENTRYPOINT ["alnair-router"]

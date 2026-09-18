@@ -2,6 +2,9 @@ target/
 data/
 node_modules/
 npm/alnair-router-*/bin/
+# Staging dirs for Dockerfile.release; the release workflow fills them.
+linux-amd64/
+linux-arm64/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

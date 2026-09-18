@@ -33,6 +33,7 @@ const npmPaths = [
   'npm/alnair-router/package.json',
   'npm/alnair-router-darwin-arm64/package.json',
   'npm/alnair-router-linux-x64/package.json',
+  'npm/alnair-router-linux-arm64/package.json',
   'npm/alnair-router-win32-x64/package.json',
 ];
 

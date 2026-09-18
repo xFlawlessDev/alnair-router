@@ -26,6 +26,7 @@
   "optionalDependencies": {
     "@xflawlessdev/alnair-router-darwin-arm64": "0.1.2",
     "@xflawlessdev/alnair-router-linux-x64": "0.1.2",
+    "@xflawlessdev/alnair-router-linux-arm64": "0.1.2",
     "@xflawlessdev/alnair-router-win32-x64": "0.1.2"
   }
 }

@@ -86,9 +86,12 @@ roadmap):
   is now a crate dependency guarded by the same test.
 - The dashboard is embedded in the binary (`rust-embed` + `build.rs`
   placeholder) and served at `/` unless `server.serve_dashboard = false`.
-- A multi-stage `Dockerfile` builds web + router and runs non-root with a
-  `/data` volume. Not built in this environment (no Docker CLI); verify on a
-  machine with Docker.
+- A multi-stage `Dockerfile` builds web + router from source for a local
+  `docker build`; the published image is produced by `Dockerfile.release`, which
+  copies the prebuilt Linux binaries into a multi-arch (amd64 + arm64) image with
+  no compiler. Both run non-root with a `/data` volume. Not built in this
+  environment (no Docker CLI); the release workflow smoke-tests the image on a
+  Docker-capable runner.
 - Opt-in real-provider tests live in `tests/e2e_real.rs` (`--ignored`).
 
 ---
@@ -99,7 +102,8 @@ roadmap):
 Cargo.toml                    # virtual workspace root (members, profiles)
 Cargo.lock                    # resolves entirely from crates.io
 LICENSE                       # MIT
-Dockerfile                    # web + router image, non-root, /data volume
+Dockerfile                    # source image recipe (web + router, non-root, /data)
+Dockerfile.release            # CI image: prebuilt Linux binaries, multi-arch
 .github/workflows/ci.yml      # fmt/clippy/test + web suite
 apps/web/                     # admin dashboard (Vue 3 + Vite + Tailwind, pnpm)
 crates/alnair-llm/            # provider stack crate (moved out of the router)
@@ -786,10 +790,14 @@ pnpm test                     # Vitest: api client, formatters, router
 `build.rs` drops a placeholder `apps/web/dist/index.html` when the dashboard has
 not been built, so `cargo build` never fails on a fresh clone.
 
-**Docker** — multi-stage image (web + router), non-root, `/data` volume:
+**Docker** — the published image is multi-arch (amd64 + arm64) and assembled
+from the release binaries by `Dockerfile.release`; `Dockerfile` is the
+self-contained source recipe for a local build. Both run non-root with a `/data`
+volume:
 
 ```bash
-docker build -t alnair-router .
+docker build -t alnair-router .                                        # from source
+docker build -f Dockerfile.release -t alnair-router .                  # prebuilt binaries staged as linux-amd64/ + linux-arm64/
 docker run --rm -p 7878:7878 -e ALNAIR_ROUTER__SECRETS__KEY=... -v alnair-data:/data alnair-router
 ```
 
@@ -898,7 +906,8 @@ Response headers report the routing decision:
 - [x] `LICENSE` (MIT) present; manifests declare it.
 - [x] `git init` done; `.gitignore` covers `target/`, `data/`, `*.sqlite*`.
 - [x] CI added (`.github/workflows/ci.yml`) — activate by pushing to GitHub.
-- [ ] Build the Docker image once on a machine with Docker and smoke-test it.
+- [x] The release workflow builds the multi-arch image, pushes it, and smoke-boots
+      the amd64 image against `/api/health`; a local build still needs Docker.
 - [ ] Re-run `cargo build --offline` from the repo root as a sanity check.
 
 **Nothing is coupled.** No absolute paths, no sibling-directory references, no

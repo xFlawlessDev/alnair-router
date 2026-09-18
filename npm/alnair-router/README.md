@@ -32,11 +32,11 @@ Or run it without installing:
 npx @xflawlessdev/alnair-router
 ```
 
-Prebuilt binaries ship for Linux x64 (glibc), macOS arm64 (Apple Silicon) and
-Windows x64 as optional platform packages, so nothing is downloaded at install
-time and nothing is fetched at runtime. Alpine/musl is not covered — use the
-[install script](https://github.com/xFlawlessDev/alnair-router#install) or build
-from source there.
+Prebuilt binaries ship for Linux x64/arm64 (glibc), macOS arm64 (Apple Silicon)
+and Windows x64 as optional platform packages, so nothing is downloaded at
+install time and nothing is fetched at runtime. Alpine/musl is not covered — use
+the [install script](https://github.com/xFlawlessDev/alnair-router#install) or
+build from source there.
 
 ## Quick start
 

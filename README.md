@@ -33,7 +33,7 @@ The binary doubles as its own installer: `install` creates a config with a
 generated `secrets.key` and registers auto-start, so an installed router comes
 back by itself after a reboot.
 
-**Linux / macOS** — Linux x86_64 or Apple Silicon:
+**Linux / macOS** — Linux x86_64/arm64 or Apple Silicon:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xFlawlessDev/alnair-router/main/install.sh | sh
@@ -61,8 +61,8 @@ npm install -g @xflawlessdev/alnair-router
 npx @xflawlessdev/alnair-router
 ```
 
-The wrapper ships prebuilt binaries for Linux x64 (glibc), Windows x64, and
-Apple Silicon through optional platform packages — no postinstall download,
+The wrapper ships prebuilt binaries for Linux x64/arm64 (glibc), Windows x64,
+and Apple Silicon through optional platform packages — no postinstall download,
 nothing is fetched at runtime. Alpine/musl is not covered; use the install
 script or build from source there.
 
@@ -323,7 +323,9 @@ moment it started. Any supervisor that wants the process to stay in the
 foreground should set the same variable (or pass `serve --foreground`).
 
 Pin a version with `image: ghcr.io/xflawlessdev/alnair-router:vX.Y.Z`, or build
-from source instead with `docker build -t alnair-router .`.
+from source instead with `docker build -t alnair-router .`. The published image
+is multi-arch (amd64 + arm64) and is assembled from the release binaries, so it
+needs no compiler; the source `Dockerfile` remains the recipe for a local build.
 
 The GHCR package starts private; make it public in the repository's package
 settings for anonymous pulls.
@@ -831,12 +833,14 @@ platform `optionalDependencies`), and `Cargo.lock` in lockstep and stages them
 so the release commit carries every manifest.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`: it builds the dashboard
-and the router for Linux x86_64, Windows x86_64, and macOS arm64, packages each
-target (`tar.gz`/`zip`), and attaches the archives plus `SHA256SUMS.txt` to the
-GitHub Release for the tag. The same run publishes the container image to GHCR
-and the npm wrapper (`@xflawlessdev/alnair-router` plus one binary package per
-platform) with provenance; the npm job needs an `NPM_TOKEN` repository secret
-with publish rights to the `@xflawlessdev` scope.
+and the router for Linux x86_64, Linux arm64, Windows x86_64, and macOS arm64,
+packages each target (`tar.gz`/`zip`), and attaches the archives plus
+`SHA256SUMS.txt` to the GitHub Release for the tag. The same run publishes the
+container image to GHCR — a multi-arch (`linux/amd64`, `linux/arm64`) image
+built from those prebuilt Linux binaries, not a compile — and the npm wrapper
+(`@xflawlessdev/alnair-router` plus one binary package per platform) with
+provenance; the npm job needs an `NPM_TOKEN` repository secret with publish
+rights to the `@xflawlessdev` scope.
 
 For a local release binary with the embedded dashboard:
 

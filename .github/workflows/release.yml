@@ -19,8 +19,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned to 24.04 so the glibc the binaries link against always
+          # matches the `ubuntu:24.04` container runtime; `ubuntu-latest` would
+          # eventually move past it.
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+          # Native arm64 runner (free for public repos), so the Linux arm64
+          # release is built without emulation.
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
           - os: macos-14
@@ -110,6 +117,24 @@ jobs:
         id: image
         run: echo "name=$REGISTRY/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+      # The `package` job already built the Linux binaries; this job only
+      # repackages them, so the published image never compiles Rust or Node.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Stage Linux binaries for the image context
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          mkdir -p linux-amd64 linux-arm64
+          tar -xzf "dist/alnair-router-${tag}-x86_64-unknown-linux-gnu.tar.gz" -C linux-amd64
+          tar -xzf "dist/alnair-router-${tag}-aarch64-unknown-linux-gnu.tar.gz" -C linux-arm64
+          chmod +x linux-amd64/alnair-router linux-arm64/alnair-router
+
+      - uses: docker/setup-qemu-action@v3
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -129,15 +154,46 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest
 
+      # Boot the amd64 image before pushing: a bad binary or a missing library
+      # must fail the release, not ship. Multi-arch `build` cannot `--load`, so
+      # this is a separate single-platform build. It only imports the GHA cache
+      # (the push step below is the sole exporter) to avoid a duplicate-scope
+      # conflict.
+      - name: Smoke-test the image
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --file Dockerfile.release \
+            --platform linux/amd64 \
+            --load \
+            --cache-from type=gha,scope=docker-release \
+            --tag alnair-router:smoke .
+          docker run --rm --detach --name alnair-smoke \
+            --publish 7878:7878 \
+            --volume alnair-smoke-data:/data \
+            --env ALNAIR_ROUTER__SECRETS__KEY=0000000000000000000000000000000000000000000000000000000000000000 \
+            --env ALNAIR_ROUTER__SERVER__LAN_ACCESS=true \
+            alnair-router:smoke
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:7878/api/health >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:7878/api/health
+          docker stop alnair-smoke
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=docker
-          cache-to: type=gha,mode=max,scope=docker
+          cache-from: type=gha,scope=docker-release
+          cache-to: type=gha,mode=max,scope=docker-release
 
   npm:
     name: Publish npm
@@ -162,7 +218,7 @@ jobs:
       - name: Verify tag matches manifests
         run: |
           expected="${GITHUB_REF_NAME#v}"
-          for dir in npm/alnair-router npm/alnair-router-darwin-arm64 npm/alnair-router-linux-x64 npm/alnair-router-win32-x64; do
+          for dir in npm/alnair-router npm/alnair-router-darwin-arm64 npm/alnair-router-linux-x64 npm/alnair-router-linux-arm64 npm/alnair-router-win32-x64; do
             actual=$(node -p "require('./$dir/package.json').version")
             if [ "$actual" != "$expected" ]; then
               echo "::error::$dir is at $actual but the tag is v$expected"
@@ -179,6 +235,10 @@ jobs:
           tar -xzf "dist/alnair-router-${tag}-x86_64-unknown-linux-gnu.tar.gz" -C npm/alnair-router-linux-x64/bin
           chmod +x npm/alnair-router-linux-x64/bin/alnair-router
 
+          mkdir -p npm/alnair-router-linux-arm64/bin
+          tar -xzf "dist/alnair-router-${tag}-aarch64-unknown-linux-gnu.tar.gz" -C npm/alnair-router-linux-arm64/bin
+          chmod +x npm/alnair-router-linux-arm64/bin/alnair-router
+
           mkdir -p npm/alnair-router-darwin-arm64/bin
           tar -xzf "dist/alnair-router-${tag}-aarch64-apple-darwin.tar.gz" -C npm/alnair-router-darwin-arm64/bin
           chmod +x npm/alnair-router-darwin-arm64/bin/alnair-router
@@ -191,7 +251,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          for dir in npm/alnair-router-linux-x64 npm/alnair-router-win32-x64 npm/alnair-router-darwin-arm64 npm/alnair-router; do
+          for dir in npm/alnair-router-linux-x64 npm/alnair-router-linux-arm64 npm/alnair-router-win32-x64 npm/alnair-router-darwin-arm64 npm/alnair-router; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then

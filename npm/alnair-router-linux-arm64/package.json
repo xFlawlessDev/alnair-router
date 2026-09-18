@@ -1,0 +1,26 @@
+{
+  "name": "@xflawlessdev/alnair-router-linux-arm64",
+  "version": "0.1.2",
+  "description": "alnair-router binary for Linux arm64 (glibc)",
+  "license": "MIT",
+  "homepage": "https://github.com/xFlawlessDev/alnair-router#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xFlawlessDev/alnair-router.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

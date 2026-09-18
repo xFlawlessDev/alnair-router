@@ -22,8 +22,7 @@ liveness/readiness split, and per-connection upstream timeouts.
 **P3 is closed** (2026-09-15): MIT LICENSE, GitHub Actions CI, the provider
 stack extracted to `crates/alnair-llm`, the dashboard embedded in the binary, a
 multi-stage Dockerfile, and opt-in real-provider e2e tests. Remaining follow-ups
-are tracked in the sections below (P3.3 publish decision, Docker smoke test in a
-Docker-capable environment, and the deferred P1.3).
+are tracked in the sections below (P3.3 publish decision and the deferred P1.3).
 
 ---
 
@@ -231,10 +230,12 @@ pick a single provider when there is a live account to test against.
       stack moved to the `crates/alnair-llm` workspace crate (`publish = false`).
       The seam guard now asserts only `upstream/chat_backend.rs` references
       `alnair_llm`. Follow-up: decide when/if to publish the crate.
-- [x] **P3.4 Container image.** Multi-stage `Dockerfile` (node → rust →
-      debian-slim), non-root user, `/data` volume, `ALNAIR_ROUTER_HOME=/data`.
-      Not built in this environment (no Docker CLI) — smoke-test once on a
-      Docker-capable machine.
+- [x] **P3.4 Container image.** `Dockerfile` is the source recipe (node → rust →
+      debian-slim), and `Dockerfile.release` assembles the published multi-arch
+      image (amd64 + arm64) from the prebuilt Linux binaries with no compiler.
+      Both run non-root with a `/data` volume and `ALNAIR_ROUTER_HOME=/data`. The
+      release workflow builds, pushes to GHCR, then smoke-boots the amd64 image
+      and hits `/api/health` so a broken image fails the release.
 - [x] **P3.5 Dashboard / admin UI.** `rust-embed` serves `apps/web/dist` at `/`
       with an SPA fallback and a real 404 for missing assets; `build.rs` drops a
       placeholder so a fresh clone still compiles; `server.serve_dashboard`
@@ -264,6 +265,5 @@ deliberate exclusions so the package stays small:
 Everything through P3 is closed. What remains:
 
 1. P1.3 — OAuth providers, only with a provider decision and a live account.
-2. Follow-ups: decide when to publish `alnair-llm` (P3.3), smoke-test the Docker
-   image on a Docker-capable machine, fold the budget spend rollup into the
-   catalog cache, and prune idle token buckets.
+2. Follow-ups: decide when to publish `alnair-llm` (P3.3), fold the budget spend
+   rollup into the catalog cache, and prune idle token buckets.
