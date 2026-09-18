@@ -53,6 +53,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2"
 uuid = { version = "1.18", features = ["serde", "v4"] }
 
+[build-dependencies]
+# Compiles the app icon and version block into the Windows executable; the
+# build script only invokes it when the target OS is Windows.
+winresource = { version = "0.1", default-features = false }
+
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 ico = "0.5"
 tao = "0.36"
