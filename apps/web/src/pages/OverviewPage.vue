@@ -496,18 +496,25 @@ onMounted(load);
           <div
             v-for="event in recentErrors"
             :key="event.seq"
-            class="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-md border p-2 text-xs"
+            class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 rounded-md border p-2 text-xs"
           >
             <Badge
+              class="shrink-0 whitespace-nowrap"
               :variant="event.level === 'error' ? 'destructive' : 'secondary'"
             >
               {{ event.status ?? event.level }}
             </Badge>
             <span class="font-medium">{{ event.kind }}</span>
-            <code v-if="event.model" class="text-muted-foreground">{{
-              event.model
-            }}</code>
-            <span v-if="event.connection" class="text-muted-foreground"
+            <code
+              v-if="event.model"
+              class="min-w-0 break-words text-muted-foreground"
+              :title="event.model"
+              >{{ event.model }}</code
+            >
+            <span
+              v-if="event.connection"
+              class="min-w-0 break-words text-muted-foreground"
+              :title="`via ${event.connection}`"
               >via {{ event.connection }}</span
             >
             <span class="min-w-0 flex-1 truncate" :title="event.message">{{
