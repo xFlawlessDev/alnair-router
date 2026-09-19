@@ -51,6 +51,12 @@ fn main() -> Result<()> {
 ///
 /// Returns whether a console was attached, which is also how the caller knows a
 /// terminal is waiting: with one, `serve` detaches instead of blocking it.
+///
+/// A process `start` spawned in the background is never re-attached. It was
+/// created `DETACHED_PROCESS` to outlive the terminal, and its parent — the CLI
+/// that launched it — still owns that terminal's console, so `AttachConsole`
+/// would succeed and quietly undo the detach. Closing the terminal would then
+/// take the router down with it, which is exactly what detaching prevents.
 #[cfg(windows)]
 fn bind_parent_console() -> bool {
     use std::ptr;
@@ -86,6 +92,10 @@ fn bind_parent_console() -> bool {
         if handle != INVALID_HANDLE_VALUE {
             unsafe { SetStdHandle(std, handle) };
         }
+    }
+
+    if cli::daemon::detached_requested() {
+        return false;
     }
 
     if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {

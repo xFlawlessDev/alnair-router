@@ -282,20 +282,20 @@ pub fn status() -> Result<()> {
     let exe = std::env::current_exe()
         .map_err(|error| Error::Config(format!("cannot resolve the executable path: {error}")))?;
 
-    let auto_start = match autostart::auto_launch(&exe).and_then(|launcher| {
-        launcher
-            .is_enabled()
-            .map_err(|error| Error::Config(error.to_string()))
-    }) {
-        Ok(true) => "enabled",
-        Ok(false) => "disabled",
-        Err(error) => {
-            tracing::warn!(%error, "cannot read auto-start state");
-            "unknown"
+    match autostart::registration(&exe) {
+        autostart::Registration::Current => println!("auto-start: enabled"),
+        autostart::Registration::Absent => println!("auto-start: disabled"),
+        autostart::Registration::Unknown => println!("auto-start: unknown"),
+        autostart::Registration::Other(registered) => {
+            // The registration exists but starts something else, so a restart
+            // will not bring this binary back. Name both so the mismatch is
+            // fixable without guessing.
+            println!("auto-start: enabled, but registered for another binary");
+            println!("registered: {registered}");
+            println!("run `alnair-router install` to point it at this binary");
         }
-    };
+    }
 
-    println!("auto-start: {auto_start}");
     println!("binary:     {}", exe.display());
     println!("config:     {}", home.join("config.toml").display());
     println!(

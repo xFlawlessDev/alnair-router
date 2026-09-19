@@ -100,6 +100,11 @@ To remove it completely: run `alnair-router uninstall`, then delete the install
 dir (`%LOCALAPPDATA%\alnair-router` or `~/.local/bin/alnair-router`), the router
 home (`~/.alnair-router`), and the PATH entry you added.
 
+The auto-start entry points at the binary that ran `install`, so install the
+copy you intend to keep — a registration made from a build tree keeps launching
+that build. `status` compares the entry with the binary you are running and says
+so when they differ; re-run `alnair-router install` to repoint it.
+
 ## What it does
 
 Point any OpenAI-compatible client at the router and use a model reference:

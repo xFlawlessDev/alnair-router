@@ -547,3 +547,94 @@ impl Drop for DetachedGuard {
             .status();
     }
 }
+
+/// Reports whether the target process owns a console.
+///
+/// It first detaches from whatever console it inherited, so that the only
+/// console it can end up on is the target's. Prints `HAS_CONSOLE` or
+/// `NO_CONSOLE`; the Win32 error code is printed otherwise (5 means the target
+/// exists but is not attached to any console).
+#[cfg(windows)]
+const CONSOLE_PROBE: &str = r#"
+param([Parameter(Mandatory = $true)][uint32] $TargetPid)
+
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class ConsoleProbe {
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool FreeConsole();
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool AttachConsole(uint pid);
+
+    public static int Probe(uint pid) {
+        FreeConsole();
+        if (AttachConsole(pid)) { FreeConsole(); return 0; }
+        return Marshal.GetLastWin32Error();
+    }
+}
+'@
+
+$result = [ConsoleProbe]::Probe($TargetPid)
+if ($result -eq 0) { 'HAS_CONSOLE' }
+elseif ($result -eq 6) { 'NO_CONSOLE' }
+elseif ($result -eq 5) { 'NO_CONSOLE' }
+else { "ERROR_$result" }
+"#;
+
+/// The detached router must not stay attached to the terminal's console.
+///
+/// `DETACHED_PROCESS` alone does not achieve that: the child's parent is the CLI
+/// that launched it, and that CLI still owns the terminal's console, so an
+/// unconditional `AttachConsole(ATTACH_PARENT_PROCESS)` in `main.rs` would
+/// succeed and quietly undo the detach. Closing the terminal would then deliver
+/// `CTRL_CLOSE_EVENT` to the router and kill it — the whole reason for
+/// detaching.
+///
+/// Only meaningful when the test itself has a console (a plain `cargo test`
+/// from a terminal). With no console anywhere the probe reports `NO_CONSOLE`
+/// whether or not the flag is honoured, so this cannot produce a false failure.
+#[cfg(windows)]
+#[test]
+fn a_detached_router_is_not_attached_to_the_console() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let (port, address) = address();
+    write_config(home.path(), port);
+
+    let probe = home.path().join("console-probe.ps1");
+    std::fs::write(&probe, CONSOLE_PROBE).expect("write the console probe");
+
+    let _cleanup = DetachedGuard(home.path().to_path_buf());
+    let output = router(home.path())
+        .args(["serve", "--detach"])
+        .output()
+        .expect("run serve --detach");
+    assert!(
+        output.status.success(),
+        "serve --detach failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        wait_until_ready(&address),
+        "the detached router never became ready"
+    );
+
+    let pid = pid_file(home.path()).expect("the detached router records its pid");
+    let probed = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&probe)
+        .args(["-TargetPid", &pid.to_string()])
+        .output()
+        .expect("run the console probe");
+    let verdict = String::from_utf8_lossy(&probed.stdout).trim().to_string();
+
+    assert_eq!(
+        verdict, "NO_CONSOLE",
+        "the background router (pid {pid}) is still attached to a console; \
+         closing the terminal would take it down with it"
+    );
+}

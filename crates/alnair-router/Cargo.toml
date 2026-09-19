@@ -70,6 +70,9 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Console",
   "Win32_System_Threading",
 ] }
+# Reads back the auto-start registration `auto-launch` writes, and clears the
+# Task Manager override it leaves behind. Same version `auto-launch` uses.
+winreg = "0.10"
 
 [dev-dependencies]
 http-body-util = "0.1"

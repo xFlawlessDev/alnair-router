@@ -28,6 +28,8 @@ use record::{live_process, pid_is_alive, read_record, remove_pid_file, wait_for_
 const LOG_FILE: &str = "logs/router.log";
 /// PID file name inside the router home.
 const PID_FILE: &str = "router.pid";
+/// Environment flag marking a process that [`start`] spawned in the background.
+pub const DETACHED_ENV: &str = "ALNAIR_ROUTER_DETACHED";
 /// Log files larger than this are rotated to `router.log.1` before a start.
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 /// How long `start` waits for the new process to answer `/api/health`.
@@ -46,6 +48,17 @@ pub fn pid_path() -> PathBuf {
 /// True when the environment asks for the old foreground behaviour.
 pub fn foreground_requested() -> bool {
     std::env::var("ALNAIR_ROUTER_FOREGROUND").is_ok_and(|value| is_truthy(&value))
+}
+
+/// True when this process was spawned by [`start`] to serve in the background.
+///
+/// The child is created `DETACHED_PROCESS` so it outlives the terminal, but on
+/// Windows that alone is not enough: [`crate::cli::daemon`] owns the flag, and
+/// `main.rs` must not re-attach the child to the console it was just detached
+/// from. Detaching and re-attaching cancelled out, so closing the terminal took
+/// the router down with it.
+pub fn detached_requested() -> bool {
+    std::env::var(DETACHED_ENV).is_ok_and(|value| is_truthy(&value))
 }
 
 /// Truthy spellings for the foreground environment flag.
@@ -130,7 +143,12 @@ pub fn start(tray: Option<bool>, port: Option<u16>) -> Result<()> {
         .stderr(Stdio::from(log));
     // An absolute home plus a matching working directory keeps a relative
     // `storage.url` meaning the same thing once the original terminal is gone.
-    command.current_dir(&home).env("ALNAIR_ROUTER_HOME", &home);
+    // `DETACHED_ENV` tells the child it was deliberately detached, so it does
+    // not re-attach to the terminal's console and die with it.
+    command
+        .current_dir(&home)
+        .env("ALNAIR_ROUTER_HOME", &home)
+        .env(DETACHED_ENV, "1");
 
     detach(&mut command);
 
@@ -432,6 +450,14 @@ mod tests {
         let home = crate::config::router_home();
         assert_eq!(pid_path(), home.join("router.pid"));
         assert_eq!(log_path(), home.join("logs").join("router.log"));
+    }
+
+    #[test]
+    fn the_detached_flag_name_is_stable() {
+        // `start` sets this on the child and `main.rs` reads it before touching
+        // the console; a rename on one side alone would silently bring back the
+        // terminal-close-kills-the-router bug, so pin the spelling.
+        assert_eq!(DETACHED_ENV, "ALNAIR_ROUTER_DETACHED");
     }
 
     #[test]

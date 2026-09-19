@@ -707,9 +707,15 @@ suite should tell you.
     closing the terminal cannot deliver SIGHUP, and on Windows the parent first
     clears `HANDLE_FLAG_INHERIT` on every handle it owns, because a shell hands
     its output over as an inheritable handle and a leaked copy would keep
-    `alnair-router serve | more` from ever seeing end-of-input. (`cli/daemon/`,
-    `cli/mod.rs`, `handlers/control.rs`, `state.rs`,
-    `tests/cli_lifecycle.rs`)
+    `alnair-router serve | more` from ever seeing end-of-input. A third Windows
+    detail matters as much: `DETACHED_PROCESS` alone does not survive the
+    terminal, because `bind_parent_console` would re-attach the child to the
+    console its own parent still owns and closing the terminal would then kill
+    it. `start` therefore sets `ALNAIR_ROUTER_DETACHED=1` on the child, and
+    `bind_parent_console` returns early when it sees that flag; the regression
+    test probes the real process for console ownership rather than trusting the
+    spawn flags. (`cli/daemon/`, `cli/mod.rs`, `main.rs`, `handlers/control.rs`,
+    `state.rs`, `tests/cli_lifecycle.rs`)
 
 ---
 
@@ -852,6 +858,14 @@ verifies checksums, and installs it; on Windows `install.ps1` (also served as
 `%LOCALAPPDATA%\alnair-router\bin`, adds that to the user PATH, and runs
 `install`. An existing config is never overwritten — a config without
 `secrets.key` makes `install` fail loudly instead of regenerating it.
+
+The registration names the binary that ran `install`, so `status` reads it back
+and compares it with the running executable: `is_enabled` alone answers only "is
+there an entry", which hides a registration left pointing at an older install or
+a moved build. `status` reports that mismatch by name and points at
+`alnair-router install`. On Windows `uninstall` also clears the Task Manager
+override the crate writes on `enable` but never removes on `disable`, which
+would otherwise leave a phantom startup row behind. (`cli/autostart.rs`)
 
 **State** — SQLite at `$ALNAIR_ROUTER_HOME/db/router.sqlite`, created and
 migrated on first boot. Credentials are encrypted on the way in; legacy
