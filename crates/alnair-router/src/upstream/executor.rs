@@ -108,6 +108,9 @@ pub struct ExecutorSettings {
     pub pricing: Option<Arc<crate::pricing::PricingCache>>,
     /// Chooses the first key to try when a connection has several.
     pub key_rotator: KeyRotator,
+    /// Access tokens for OAuth connections, resolved just in time per tier;
+    /// absent in unit tests.
+    pub oauth_tokens: Option<Arc<crate::oauth::OAuthTokenCache>>,
 }
 
 impl Default for ExecutorSettings {
@@ -120,6 +123,7 @@ impl Default for ExecutorSettings {
             telemetry: Arc::new(crate::telemetry::ActivityTracker::new()),
             pricing: None,
             key_rotator: KeyRotator::default(),
+            oauth_tokens: None,
         }
     }
 }
@@ -187,19 +191,67 @@ impl Executor {
         let mut last_error: Option<String> = None;
 
         for (index, target) in targets.iter().enumerate() {
-            // Several keys on one connection (primary + accounts) rotate
-            // round-robin; a request still falls over to the next key when the
-            // current one fails before the first byte.
-            let keys = &target.api_keys;
-            let offset = settings.key_rotator.next(&target.connection_id, keys.len());
-            let tries = keys.len().max(1);
+            // A connection authenticates either with static keys or with OAuth
+            // accounts; both rotate round-robin and both fall over to the next
+            // credential when the current one fails before the first byte.
+            let uses_oauth = !target.oauth_account_ids.is_empty();
+            let credentials = if uses_oauth {
+                target.oauth_account_ids.len()
+            } else {
+                target.api_keys.len()
+            };
+            let offset = settings
+                .key_rotator
+                .next(&target.connection_id, credentials);
+            let tries = credentials.max(1);
 
             for step in 0..tries {
                 let started = std::time::Instant::now();
-                let key = if keys.is_empty() {
+                let selected = (offset + step) % tries;
+
+                // The credential for this attempt. An OAuth connection resolves
+                // its access token here, just in time, so a rotation made by
+                // another request is picked up rather than served from the
+                // cached routing snapshot.
+                let credential = if uses_oauth {
+                    match &settings.oauth_tokens {
+                        Some(tokens) => {
+                            match tokens
+                                .access_token(&target.oauth_account_ids[selected])
+                                .await
+                            {
+                                Ok(token) => Some(token),
+                                Err(error) => {
+                                    // A refresh that fails is a fault of this
+                                    // tier alone: record it and walk on rather
+                                    // than failing the whole request.
+                                    tracing::warn!(
+                                        attempt = index + 1,
+                                        source = %target.source,
+                                        account = %target.oauth_account_ids[selected],
+                                        error = %error,
+                                        "oauth token unavailable; falling through"
+                                    );
+                                    last_error = Some(error.to_string());
+                                    attempts.push(failed_attempt(index, target, &error, started));
+                                    continue;
+                                }
+                            }
+                        }
+                        None => {
+                            let error = Error::Internal(
+                                "this connection authenticates with OAuth but no token service is configured"
+                                    .to_string(),
+                            );
+                            last_error = Some(error.to_string());
+                            attempts.push(failed_attempt(index, target, &error, started));
+                            continue;
+                        }
+                    }
+                } else if target.api_keys.is_empty() {
                     None
                 } else {
-                    Some(keys[(offset + step) % keys.len()].as_str())
+                    Some(target.api_keys[selected].clone())
                 };
 
                 // A concurrency slot is held for the life of the attempt; on
@@ -237,7 +289,7 @@ impl Executor {
                     &target.base_url,
                     &target.model,
                     messages.clone(),
-                    key,
+                    credential.as_deref(),
                     options,
                     settings.retry,
                     streaming,

@@ -437,7 +437,7 @@ is set, requires `Authorization: Bearer <token>`:
 | Group | Routes |
 |---|---|
 | Meta | `/api/version`, `/api/init`, `/api/providers` (built-in endpoint presets), `/api/metrics` (Prometheus counters), `/api/activity` (in-memory live feed: in-flight attempts, per-connection counters, recent events) |
-| Connections | `/api/connections`, `/api/connections/{id}`, `/{id}/models` (what the upstream offers), `/{id}/test` (connectivity), `/{id}/accounts` (extra API keys) |
+| Connections | `/api/connections`, `/api/connections/{id}`, `/{id}/models` (what the upstream offers), `/{id}/test` (connectivity), `/{id}/accounts` (extra API keys), `/{id}/oauth-accounts` (OAuth accounts) |
 | Aliases | `/api/aliases`, `/api/aliases/{id}`, `/{id}/test` (connection + model override), `/{id}/test-chat` (one real completion through the alias) |
 | Combos | `/api/combos`, `/api/combos/{id}` |
 | Keys | `/api/keys`, `/api/keys/{id}`, `/{id}/secret` (reveal), `/{id}/rotate` |
@@ -447,7 +447,12 @@ is set, requires `Authorization: Bearer <token>`:
 | Token saver | `/api/token-saver/playground`, `/api/token-saver/headroom/test` |
 | Playground | `/api/playground/chat` (admin-guarded SSE: streams a real completion, reports tier + savings) |
 | Settings & data | `/api/settings`, `/api/backup`, `/api/restore` |
+| OAuth | `/api/oauth/presets` (endpoint presets, no client identity), `/api/oauth/logins` (start a browser login), `/api/oauth/device-logins` (start a device-code login), `/api/oauth/logins/{id}` (poll state) |
 | Process control | `/api/admin/control/shutdown` — graceful stop for the CLI. Guarded by the local `control.token` instead of the admin credential, so `alnair-router stop` works before a password or admin token exists. |
+
+`GET /api/oauth/callback` is **public** — a browser redirect cannot carry an admin
+token — and is guarded by the PKCE `state` nonce instead. An empty `state` never
+matches, so a bare `?state=` cannot resolve to a pending login.
 
 `/api/connections/{id}/accounts` manages extra API keys for one connection: the
 primary key and enabled accounts rotate round-robin per request, and a failing
@@ -457,6 +462,16 @@ sent: `api_key` uses the family default — `x-api-key` for `anthropic-native`,
 `Authorization: Bearer` for `openai-compatible` — while `bearer` always sends
 `Authorization: Bearer`, which is what an OAuth or subscription session token
 needs on an Anthropic-shaped endpoint.
+
+`/api/connections/{id}/oauth-accounts` manages OAuth accounts instead of a static
+key. Bring your own OAuth application — client id, optional secret, endpoints and
+scopes are all yours; the router ships presets for endpoints only and no client
+identity. Two flows are supported: PKCE authorization code with a loopback
+callback, and device code (RFC 8628) with polling that runs server-side, so
+closing the dialog does not lose the login. Credentials are encrypted at rest like
+any other, and a token nearing expiry is refreshed just in time — single-flight
+per account, so concurrent requests trigger one refresh rather than a stampede.
+
 `PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit,
 daily/weekly/monthly/lifetime budgets, model allowlist, plan and expiry;
 `/api/plans` manages the reusable rule sets.

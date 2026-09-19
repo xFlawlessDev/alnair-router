@@ -4524,6 +4524,342 @@ async fn connection_accounts_round_trip_and_invalidate() {
 }
 
 #[tokio::test]
+async fn oauth_presets_ship_endpoints_but_no_borrowed_identity() {
+    let (app, _db) = app(false).await;
+
+    let (status, body) = get(&app, "/api/oauth/presets").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let presets = body["data"].as_array().expect("preset list");
+    assert!(
+        presets.iter().any(|preset| preset["id"] == "gitlab-duo"),
+        "the GitLab preset is the reference flow: {body}"
+    );
+    assert!(
+        presets.iter().any(|preset| preset["id"] == "generic"),
+        "the generic entry must always be offered: {body}"
+    );
+
+    // A preset may carry endpoints and scopes, but never a client id or secret:
+    // shipping one would mean impersonating a first-party application.
+    for preset in presets {
+        assert!(
+            preset.get("client_id").is_none(),
+            "a preset carried a client id: {preset}"
+        );
+        assert!(
+            preset.get("client_secret").is_none(),
+            "a preset carried a client secret: {preset}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn start_oauth_login_builds_a_pkce_authorize_url() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "gitlab-duo",
+            "provider_type": "anthropic-native",
+            "base_url": "https://gitlab.com/api/v4",
+            "auth_style": "bearer"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/oauth/logins",
+        serde_json::json!({
+            "connection_id": connection_id,
+            "label": "work",
+            "provider_key": "gitlab-duo",
+            "client_id": "client-abc",
+            "client_secret": "secret-abc",
+            "authorize_url": "https://gitlab.com/oauth/authorize",
+            "token_url": "https://gitlab.com/oauth/token",
+            "user_info_url": "https://gitlab.com/api/v4/user",
+            "scopes": "api read_user"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "start failed: {body}");
+
+    let login_id = body["login_id"].as_str().expect("login id");
+    let authorize = body["authorize_url"].as_str().expect("authorize url");
+
+    // The URL the browser is sent to must be a PKCE authorization request.
+    assert!(
+        authorize.starts_with("https://gitlab.com/oauth/authorize?"),
+        "{authorize}"
+    );
+    assert!(authorize.contains("client_id=client-abc"), "{authorize}");
+    assert!(authorize.contains("response_type=code"), "{authorize}");
+    assert!(
+        authorize.contains("code_challenge_method=S256"),
+        "{authorize}"
+    );
+    assert!(authorize.contains("code_challenge="), "{authorize}");
+    // The operator has to register exactly this redirect URI.
+    assert_eq!(
+        body["redirect_uri"],
+        "http://127.0.0.1:7878/api/oauth/callback"
+    );
+
+    // The login starts pending and is readable by id.
+    let (status, view) = get(&app, &format!("/api/oauth/logins/{login_id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(view["status"], "pending");
+    assert_eq!(view["label"], "work");
+
+    // Cancelling forgets it.
+    let response = raw_request_with_auth(
+        &app,
+        "DELETE",
+        &format!("/api/oauth/logins/{login_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let (status, _) = get(&app, &format!("/api/oauth/logins/{login_id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_browser_login_needs_an_authorize_url() {
+    let (app, _db) = app(false).await;
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "device-only",
+            "provider_type": "openai-compatible",
+            "base_url": "https://example.invalid/v1"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    // A device-only provider has no authorize URL; the browser flow must say so
+    // rather than mint an unusable authorize link.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/oauth/logins",
+        serde_json::json!({
+            "connection_id": connection_id,
+            "label": "work",
+            "client_id": "client-abc",
+            "authorize_url": "",
+            "token_url": "https://example.invalid/token",
+            "device_code_url": "https://example.invalid/device"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("device-code"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn an_oauth_login_rejects_a_bad_client_and_missing_connection() {
+    let (app, _db) = app(false).await;
+
+    // No client id: the operator must bring their own registration.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/oauth/logins",
+        serde_json::json!({
+            "connection_id": "any",
+            "label": "work",
+            "client_id": "  ",
+            "authorize_url": "https://example.invalid/authorize",
+            "token_url": "https://example.invalid/token"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("client_id"),
+        "{body}"
+    );
+
+    // A well-formed client but no such connection.
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/api/oauth/logins",
+        serde_json::json!({
+            "connection_id": "does-not-exist",
+            "label": "work",
+            "client_id": "client-abc",
+            "authorize_url": "https://example.invalid/authorize",
+            "token_url": "https://example.invalid/token"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn oauth_accounts_are_listed_renamed_and_deleted() {
+    let (app, db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "gitlab-duo",
+            "provider_type": "anthropic-native",
+            "base_url": "https://gitlab.com/api/v4",
+            "auth_style": "bearer"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    // Seed one account the way a completed login would.
+    let account = alnair_router::db::repos::oauth_accounts::OAuthAccountRepository::new(
+        db.pool.clone(),
+        test_cipher(),
+    )
+    .create(
+        connection_id,
+        alnair_router::db::repos::oauth_accounts::CreateOAuthAccount {
+            label: "work".to_string(),
+            provider_key: "gitlab-duo".to_string(),
+            credential: alnair_router::oauth::OAuthCredential {
+                access_token: "access-1".to_string(),
+                refresh_token: Some("refresh-1".to_string()),
+                expires_at: None,
+                token_type: Some("Bearer".to_string()),
+                scope: None,
+                endpoints: alnair_router::oauth::EndpointConfig {
+                    client_id: "client-abc".to_string(),
+                    client_secret: Some("secret-abc".to_string()),
+                    authorize_url: "https://gitlab.com/oauth/authorize".to_string(),
+                    token_url: "https://gitlab.com/oauth/token".to_string(),
+                    device_code_url: None,
+                    user_info_url: None,
+                    scopes: "api".to_string(),
+                },
+                account: None,
+            },
+            enabled: true,
+        },
+    )
+    .await
+    .expect("seed account");
+
+    let (status, list) = get(
+        &app,
+        &format!("/api/connections/{connection_id}/oauth-accounts"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let list = list.as_array().expect("account list");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["label"], "work");
+    assert_eq!(list[0]["provider_key"], "gitlab-duo");
+
+    // The credential is encrypted at rest and must never be serialized out.
+    assert!(
+        list[0].get("credential").is_none(),
+        "the credential must never leave the router: {}",
+        list[0]
+    );
+    assert!(
+        !list[0].to_string().contains("access-1"),
+        "the access token leaked into the response: {}",
+        list[0]
+    );
+    assert!(
+        !list[0].to_string().contains("secret-abc"),
+        "the client secret leaked into the response: {}",
+        list[0]
+    );
+
+    // Renaming is allowed; the credential is not replaceable by a PATCH.
+    let (status, updated) = json_request(
+        &app,
+        "PATCH",
+        &format!(
+            "/api/connections/{connection_id}/oauth-accounts/{}",
+            account.id
+        ),
+        serde_json::json!({ "label": "personal", "enabled": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["label"], "personal");
+    assert_eq!(updated["enabled"], 0);
+
+    let response = raw_request_with_auth(
+        &app,
+        "DELETE",
+        &format!(
+            "/api/connections/{connection_id}/oauth-accounts/{}",
+            account.id
+        ),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let (_, list) = get(
+        &app,
+        &format!("/api/connections/{connection_id}/oauth-accounts"),
+    )
+    .await;
+    assert!(list.as_array().expect("account list").is_empty());
+}
+
+#[tokio::test]
+async fn the_oauth_callback_is_public_and_guarded_by_the_state_nonce() {
+    let (app, _db) = app(true).await;
+
+    // A stray callback with no state resolves nothing. It is reachable without a
+    // client key because a browser redirect cannot carry one.
+    let response = raw_request_with_auth(
+        &app,
+        "GET",
+        "/api/oauth/callback?code=abc&state=not-a-real-nonce",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_text(response).await;
+    assert!(body.contains("no longer valid"), "{body}");
+
+    // An empty state must not match a device login, which carries none.
+    let response =
+        raw_request_with_auth(&app, "GET", "/api/oauth/callback?state=", None, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_text(response).await;
+    assert!(!body.contains("Connected"), "{body}");
+}
+
+#[tokio::test]
 async fn reveal_key_returns_the_secret() {
     let (app, db) = app(true).await;
     let secret = mint_key(&db, "revealable").await;

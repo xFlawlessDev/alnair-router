@@ -22,6 +22,7 @@ pub mod limits;
 pub mod metrics;
 pub mod middleware;
 pub mod model;
+pub mod oauth;
 pub mod policy;
 pub mod pricing;
 pub mod protocol;

@@ -11,9 +11,9 @@ without one unless explicitly overridden), `/v1/web/fetch` validates and pins
 every hop, the dead `[queue]` config is gone, and the retry contract is pinned
 and configurable.
 
-**P1 is closed except P1.3** (OAuth providers, deferred with a design note
-below): upstream concurrency caps, per-key rate limiting, monthly budgets,
-Anthropic non-streaming, and tool calls in non-streaming responses all shipped.
+**P1 is closed** (2026-09-19): upstream concurrency caps, per-key rate limiting,
+monthly budgets, Anthropic non-streaming, tool calls in non-streaming responses,
+and OAuth provider accounts all shipped.
 
 **P2 is closed** (2026-09-15): cached routing catalog with invalidation,
 provider files split under the LOC cap, Prometheus-style counters, a
@@ -73,7 +73,7 @@ Working today, verified by the test suite and a live smoke test:
       fallback to the CLI transport (`/alpha/generate`) when a plan has no API
       access, one entitlement probe per connection, and the reserve-tool / tool-pairing
       rules the endpoint requires
-- [ ] OAuth providers (Claude Code, Codex, GitHub Copilot, …): per-account credentials table, PKCE/device flows with loopback callback, cached dual-token exchange (Copilot) and automatic token refresh
+- [x] OAuth provider accounts: a BYO-client PKCE + device-code connector, per-account encrypted credentials, single-flight token refresh, and a dashboard to connect them. No first-party client identity is shipped.
 - [x] MIT license, CI, multi-stage Dockerfile, opt-in real-provider e2e tests
 
 ---
@@ -132,7 +132,11 @@ math, policy mapping, fallback timing.
 - [x] **P1.2 Rate limiting per client key.** Token bucket per API key id
       (`src/limits.rs`), default via `rate_limit.requests_per_minute`, per-key
       override on `api_keys.rate_limit_per_minute`; 429 with `Retry-After`.
-- [ ] **P1.3 OAuth subscription providers.** Deferred — design note below.
+- [x] **P1.3 OAuth provider accounts.** A generic BYO-client connector (PKCE
+      browser login and device code), an encrypted per-account credential blob, a
+      single-flight token refresh in the executor, and admin API + dashboard to
+      connect and manage accounts. Ships **no** first-party client identity —
+      details below.
 - [x] **P1.4 Streaming for the non-streaming Anthropic path.**
       `LlmProvider::complete` plus a real `stream: false` `/v1/messages` call for
       `AnthropicNativeProvider`, so non-streaming requests no longer pay SSE
@@ -158,30 +162,62 @@ math, policy mapping, fallback timing.
       usage chunk. Without this, a coding agent saw a clean `200` with an empty
       body and retried forever.
 
-### P1.3 design note — OAuth subscription providers (deferred)
+### P1.3 — OAuth provider accounts (shipped)
 
-Goal: route Claude Code / Codex / Copilot / Kiro subscription sessions as
-upstreams that are not API-key based.
+A connection can authenticate with an OAuth account instead of a static key.
+Two flows, both standard: **PKCE authorization code** with a loopback callback
+(the router serves the redirect itself), and **device code** (RFC 8628) for a
+router with no browser, where polling runs server-side so closing the dialog
+does not lose the session.
 
-Pieces required:
+**The decision that shapes this: no borrowed identity.** The router implements
+the flows and lets the operator bring their own OAuth application — client id,
+secret, endpoints and scopes all come from them. `gitlab.js` in the reference
+project works this way, and it is the only one of its OAuth providers not
+flagged risky.
 
-1. **Provider type + auth mode.** Either new `provider_type` values
-   (`anthropic-oauth`, `openai-codex`, `github-copilot`, `kiro`) or an
-   `auth_mode` column; `connections.api_key` stops being the only credential.
-2. **Login flows.** Device-code or PKCE per provider. Client ids/secrets are
-   provider-specific and some are extracted from first-party CLIs — that is a
-   ToS/legal decision before any code.
-3. **Token storage + refresh.** Reuse `CredentialCipher` for access/refresh
-   tokens (a JSON credential blob), plus a refresh task with rotation and
-   expiry handling.
-4. **Request signing.** Codex/Copilot add or exchange headers
-   (`ChatGPT-Account-Id`, Copilot token exchange); the seam is
-   `chat_backend.rs`, which already assembles per-connection headers.
-5. **Operations.** Admin API + dashboard for login/refresh state and
-   documented failure modes.
+The reference project's own registry is the argument:
 
-One provider end-to-end is a multi-day feature and cannot be verified offline;
-pick a single provider when there is a live account to test against.
+| Entry | Flag | Identity it ships |
+| --- | --- | --- |
+| `claude.js` | `deprecated: true`, `RISK_NOTICE` | own client id + `CLAUDE_CLI_SPOOF_HEADERS` |
+| `github.js` | `deprecated: true`, `RISK_NOTICE` | `Iv1.b507a08c87ecfe98` |
+| `gemini-cli.js` | `deprecated: true`, `RISK_NOTICE` | Google client secret in plaintext |
+| `gitlab.js` | **none** | `meta.clientId` **from the user** |
+
+So `claude`, `codex`, `github` and `kiro` are **not** ported. Nothing borrowed is
+compiled in, and the two provider presets (`gitlab-duo`, `google`) carry
+endpoints and scopes only — the Google one deliberately ships an empty client id
+for the same reason. `cursor` is not OAuth at all; it reads Cursor's own
+`state.vscdb`.
+
+What landed:
+
+1. **`connections.auth_style`** (migration `0022`, from the P1.3 groundwork) —
+   `api_key` or `bearer`. An OAuth connection sets `bearer`, and the provider
+   layer sends `Authorization: Bearer` instead of `x-api-key`.
+2. **`oauth_accounts`** (migration `0023`) — many accounts per connection, so
+   requests rotate across them. The whole credential document (access token,
+   refresh token, expiry, and the endpoints needed to renew them) is one JSON
+   blob encrypted by the existing `CredentialCipher`. Only
+   `OAuthAccountRepository` may touch that column.
+3. **`src/oauth/`** — `pkce`, `flows`, `token_cache`, `logins`, `presets`. The
+   executor resolves an access token just in time, next to the existing pricing
+   lookup, and a **per-account gate makes refresh single-flight**: N concurrent
+   requests cause one token POST, not N. A failed refresh fails only that tier
+   and falls through, and a rotated refresh token is written back before the
+   token is handed out.
+4. **Admin API + dashboard** — `POST /api/oauth/logins`,
+   `POST /api/oauth/device-logins`, `GET /api/oauth/logins/{id}`,
+   `GET /api/oauth/callback` (public: a browser redirect carries no admin token,
+   so the PKCE `state` nonce guards it), and
+   `/api/connections/{id}/oauth-accounts` for management. The Connections page
+   opens an "OAuth accounts" dialog that runs the whole flow.
+
+**Known limits.** `gitlab-duo` is useful for self-managed GitLab; the GitLab.com
+chat API is internal-only, so a GitLab.com account will not serve chat. A
+provider whose wire format is not OpenAI/Anthropic-shaped (Codex's responses
+API, Cursor's protobuf) still needs a new `provider_type` and is not covered.
 
 ---
 
@@ -264,6 +300,8 @@ deliberate exclusions so the package stays small:
 
 Everything through P3 is closed. What remains:
 
-1. P1.3 — OAuth providers, only with a provider decision and a live account.
-2. Follow-ups: decide when to publish `alnair-llm` (P3.3), fold the budget spend
+1. Follow-ups: decide when to publish `alnair-llm` (P3.3), fold the budget spend
    rollup into the catalog cache, and prune idle token buckets.
+2. Optional OAuth follow-ups: a `provider_type` for non-OpenAI/Anthropic wire
+   formats (Codex responses, Cursor protobuf), and provider-specific presets
+   once someone has an app registration worth shipping defaults for.

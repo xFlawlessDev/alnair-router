@@ -25,7 +25,9 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         auth_style: "api_key".to_string(),
         provider_id: None,
         extra_keys: Vec::new(),
+        oauth_account_ids: Vec::new(),
         account_count: 0,
+        oauth_account_count: 0,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }

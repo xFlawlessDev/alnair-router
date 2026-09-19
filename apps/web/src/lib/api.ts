@@ -31,6 +31,9 @@ import type {
   ModelPriceInput,
   ModelUsage,
   MyUsageResponse,
+  OAuthAccount,
+  OAuthLoginView,
+  OAuthPresetResponse,
   PlaygroundChatRequest,
   PlaygroundChatRouter,
   PlaygroundChatUsage,
@@ -44,6 +47,9 @@ import type {
   RevealedApiKey,
   SettingsPatch,
   SettingsResponse,
+  StartOAuthDeviceLoginResponse,
+  StartOAuthLoginInput,
+  StartOAuthLoginResponse,
   UpdateStatus,
   UpstreamModelsResponse,
   UsageBucket,
@@ -331,6 +337,35 @@ export const api = {
     ),
   deleteConnectionAccount: (id: ID, accountId: ID) =>
     request<void>("DELETE", `/api/connections/${id}/accounts/${accountId}`),
+
+  listOAuthPresets: () =>
+    request<OAuthPresetResponse>("GET", "/api/oauth/presets"),
+  /** Starts a PKCE browser login and returns the URL to open. */
+  startOAuthLogin: (body: StartOAuthLoginInput) =>
+    request<StartOAuthLoginResponse>("POST", "/api/oauth/logins", { body }),
+  /** Starts a device-code login; the router polls for the token itself. */
+  startOAuthDeviceLogin: (body: StartOAuthLoginInput) =>
+    request<StartOAuthDeviceLoginResponse>("POST", "/api/oauth/device-logins", {
+      body,
+    }),
+  oauthLoginStatus: (loginId: string) =>
+    request<OAuthLoginView>("GET", `/api/oauth/logins/${loginId}`),
+  cancelOAuthLogin: (loginId: string) =>
+    request<void>("DELETE", `/api/oauth/logins/${loginId}`),
+  listOAuthAccounts: (id: ID) =>
+    request<OAuthAccount[]>("GET", `/api/connections/${id}/oauth-accounts`),
+  updateOAuthAccount: (
+    id: ID,
+    accountId: ID,
+    body: { label?: string; enabled?: boolean },
+  ) =>
+    request<OAuthAccount>(
+      "PATCH",
+      `/api/connections/${id}/oauth-accounts/${accountId}`,
+      { body },
+    ),
+  deleteOAuthAccount: (id: ID, accountId: ID) =>
+    request<void>("DELETE", `/api/connections/${id}/oauth-accounts/${accountId}`),
 
   listAliases: () => request<Alias[]>("GET", "/api/aliases"),
   createAlias: (body: AliasInput) =>

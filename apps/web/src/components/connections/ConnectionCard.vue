@@ -4,6 +4,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  KeyRound,
   Loader2,
   Pencil,
   Trash2,
@@ -35,6 +36,7 @@ const emit = defineEmits<{
   toggle: [];
   reveal: [];
   copy: [];
+  oauth: [];
 }>();
 </script>
 
@@ -137,6 +139,15 @@ const emit = defineEmits<{
           @click="emit('edit')"
         >
           <Pencil />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          :aria-label="`OAuth accounts for ${connection.name}`"
+          title="Connect OAuth accounts that authenticate with a bearer token"
+          @click="emit('oauth')"
+        >
+          <KeyRound />
         </Button>
         <Button
           variant="ghost"

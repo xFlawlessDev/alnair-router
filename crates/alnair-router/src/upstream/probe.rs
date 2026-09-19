@@ -334,7 +334,9 @@ mod tests {
             auth_style: auth_style.to_string(),
             provider_id: None,
             extra_keys: Vec::new(),
+            oauth_account_ids: Vec::new(),
             account_count: 0,
+            oauth_account_count: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

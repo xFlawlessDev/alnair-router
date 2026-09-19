@@ -35,7 +35,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/status", get(handlers::auth::status))
         .route("/api/auth/setup", post(handlers::auth::setup))
         .route("/api/auth/login", post(handlers::auth::login))
-        .route("/api/auth/refresh", post(handlers::auth::refresh));
+        .route("/api/auth/refresh", post(handlers::auth::refresh))
+        // The OAuth callback is a browser redirect from the provider, which
+        // cannot carry an admin token; the PKCE `state` nonce guards it.
+        .route("/api/oauth/callback", get(handlers::oauth::callback));
 
     // Admin and management routes are unauthenticated on loopback; when
     // `server.admin_token` is configured the token is enforced on all of them.
@@ -63,6 +66,24 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/connections/{id}/accounts/{account_id}",
             delete(handlers::accounts::delete_account).patch(handlers::accounts::update_account),
+        )
+        .route("/api/oauth/presets", get(handlers::oauth::list_presets))
+        .route("/api/oauth/logins", post(handlers::oauth::start_login))
+        .route(
+            "/api/oauth/logins/{login_id}",
+            get(handlers::oauth::login_status).delete(handlers::oauth::cancel_login),
+        )
+        .route(
+            "/api/oauth/device-logins",
+            post(handlers::oauth::start_device_login),
+        )
+        .route(
+            "/api/connections/{id}/oauth-accounts",
+            get(handlers::oauth::list_accounts),
+        )
+        .route(
+            "/api/connections/{id}/oauth-accounts/{account_id}",
+            delete(handlers::oauth::delete_account).patch(handlers::oauth::update_account),
         )
         .route(
             "/api/connections/{id}/test",

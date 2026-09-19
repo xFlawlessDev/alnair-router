@@ -49,9 +49,18 @@ pub struct Connection {
     #[sqlx(skip)]
     #[serde(skip_serializing, default)]
     pub extra_keys: Vec<String>,
+    /// Enabled OAuth accounts backing this connection, loaded by the catalog.
+    /// Only ids are carried, so no short-lived token reaches the cache. Never
+    /// serialized.
+    #[sqlx(skip)]
+    #[serde(skip_serializing, default)]
+    pub oauth_account_ids: Vec<String>,
     /// Enabled extra-key count for the dashboard; `0` when none.
     #[sqlx(default)]
     pub account_count: i64,
+    /// Enabled OAuth-account count for the dashboard; `0` when none.
+    #[sqlx(default)]
+    pub oauth_account_count: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -172,7 +181,9 @@ impl ConnectionRepository {
         let rows = sqlx::query_as::<_, Connection>(
             "SELECT c.*,
                     (SELECT COUNT(*) FROM connection_accounts a
-                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count
+                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count,
+                    (SELECT COUNT(*) FROM oauth_accounts o
+                     WHERE o.connection_id = c.id AND o.enabled = 1) AS oauth_account_count
              FROM connections c ORDER BY c.name ASC",
         )
         .fetch_all(&self.pool)
@@ -185,7 +196,9 @@ impl ConnectionRepository {
         let row = sqlx::query_as::<_, Connection>(
             "SELECT c.*,
                     (SELECT COUNT(*) FROM connection_accounts a
-                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count
+                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count,
+                    (SELECT COUNT(*) FROM oauth_accounts o
+                     WHERE o.connection_id = c.id AND o.enabled = 1) AS oauth_account_count
              FROM connections c WHERE c.id = ?",
         )
         .bind(id)
@@ -199,7 +212,9 @@ impl ConnectionRepository {
         let row = sqlx::query_as::<_, Connection>(
             "SELECT c.*,
                     (SELECT COUNT(*) FROM connection_accounts a
-                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count
+                     WHERE a.connection_id = c.id AND a.enabled = 1) AS account_count,
+                    (SELECT COUNT(*) FROM oauth_accounts o
+                     WHERE o.connection_id = c.id AND o.enabled = 1) AS oauth_account_count
              FROM connections c WHERE c.name = ?",
         )
         .bind(name)

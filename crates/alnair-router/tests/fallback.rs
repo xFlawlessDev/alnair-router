@@ -371,6 +371,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
             pricing: None,
             key_rotator: KeyRotator::default(),
+            oauth_tokens: None,
         },
     );
 
@@ -441,6 +442,7 @@ async fn idle_streams_error_after_the_timeout() {
             telemetry: Arc::new(alnair_router::telemetry::ActivityTracker::new()),
             pricing: None,
             key_rotator: KeyRotator::default(),
+            oauth_tokens: None,
         },
     );
 

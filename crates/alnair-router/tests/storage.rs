@@ -81,6 +81,7 @@ async fn migrations_create_all_tables() {
         "combo_entries",
         "combos",
         "connections",
+        "oauth_accounts",
         "usage_records",
     ] {
         assert!(
@@ -380,6 +381,11 @@ async fn provider_type_rebuild_keeps_children() {
         .execute(&db.pool)
         .await
         .expect("auth-style migration");
+
+    sqlx::raw_sql(include_str!("../migrations/0023_oauth_accounts.sql"))
+        .execute(&db.pool)
+        .await
+        .expect("oauth-accounts migration");
 
     let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
         .fetch_all(&db.pool)

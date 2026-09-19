@@ -27,7 +27,7 @@ The tiered-combo design is modelled on
 
 ## 2. Status right now
 
-- **Builds and tests standalone.** 223 tests green, `cargo clippy --workspace --all-targets` clean.
+- **Builds and tests standalone.** 590 tests green, `cargo clippy --workspace --all-targets` clean.
 - **Self-contained by construction:** no path dependencies anywhere in the
   workspace. `Cargo.lock` resolves entirely from crates.io, so `target/` can be
   deleted and `cargo build --offline` still succeeds.
@@ -51,8 +51,7 @@ Still not production-ready in the "hardened service" sense: the admin API is
 open on loopback by default and the dashboard is not yet served by the binary
 (P3.5).
 
-**P1 is done except OAuth providers** (P1.3, deferred with a design note in the
-roadmap):
+**P1 is done:**
 
 - `limits.max_concurrent` / `max_concurrent_per_connection` cap upstream calls;
   permits live as long as the stream.
@@ -244,13 +243,12 @@ Two rules keep the catalog honest:
   time, not at the first request. `only_templated_presets_contain_placeholders`
   keeps the placeholder list to exactly those two.
 
-OAuth providers (Claude Code, Codex, GitHub Copilot, …) are the next phase:
-credentials will live in a dedicated table keyed per account (many accounts per
-provider for rotation), with per-request refresh inside `chat_backend` and
-reuse detection; Copilot keeps its dual GitHub→Copilot token exchange cached
-until expiry. The credential *presentation* half of that already exists —
-migration `0022` added `connections.auth_style` and `AuthStyle` in the provider
-layer, so an OAuth session token can ride the existing key rotation unchanged.
+An **OAuth account** replaces the static key on a connection: `oauth_accounts`
+(migration `0023`) is keyed per account, so a connection can hold several for
+rotation, and each row's credential document — access token, refresh token,
+expiry, and the endpoints needed to renew them — is one JSON blob encrypted by
+`CredentialCipher`. Only `OAuthAccountRepository` touches that column. See
+"OAuth accounts" below for the flows and the refresh contract.
 
 ### Credential header (`auth_style`)
 
@@ -265,9 +263,41 @@ does the only conversion. `chat_backend::model_config` carries it into
 `ModelConfig::auth_style`, which the Anthropic provider reads to pick the header;
 media proxying gets the same treatment in `media.rs::upstream_headers`.
 
-This is what OAuth needs: Claude Code, Codex and Copilot return session tokens
-that an Anthropic-shaped endpoint rejects in `x-api-key`. Setting `bearer` on the
-connection is enough for the token to authenticate, with no further plumbing.
+An OAuth connection sets `bearer`, because a session token that an
+Anthropic-shaped endpoint rejects in `x-api-key` authenticates fine in
+`Authorization`. That is also why `auth_style` is a first-class connection
+setting rather than an OAuth detail: any Anthropic-compatible relay that only
+accepts `Bearer` needs it too.
+
+### OAuth accounts
+
+`src/oauth/` holds the whole feature. Two standard flows:
+
+- **PKCE authorization code** with a loopback callback — the router serves
+  `GET /api/oauth/callback` itself, so no external listener is needed.
+- **Device code** (RFC 8628), with polling driven **server-side** so closing the
+  dialog does not abandon the login.
+
+`logins.rs` is the in-memory session registry (`LoginState`/`LoginView`, 10-min
+TTL). The callback route is public — a browser redirect cannot carry an admin
+token — so the PKCE `state` nonce is the guard, and `by_state` refuses an empty
+nonce so a stray `?state=` cannot resolve to a device login. `pkce.rs` is the
+verifier/challenge pair (unpadded S256). `presets.rs` prefills endpoints for a
+provider; presets carry endpoints and scopes only, never a client identity.
+
+Tokens are resolved just in time in the executor, next to the pricing lookup,
+via `token_cache.rs`. Refresh is **single-flight per account**: a per-account
+gate means N concurrent requests cause one token POST, not N. A rotated refresh
+token is persisted before the new token is served, and a failed refresh fails
+only that tier and falls through to the next — it does not fail the request.
+
+**No first-party client identity is shipped.** The operator supplies their own
+OAuth application (client id, secret, endpoints, scopes); client id is required,
+authorize URL is required only for a browser login, token URL always. The
+reference project's own registry marks its borrowed-identity providers
+(`claude`, `github`, `gemini-cli`) `deprecated: true` with a `RISK_NOTICE`,
+while its `gitlab.js` takes the client id from the user and is not flagged —
+this feature follows the unflagged one.
 
 ### Extra keys per connection
 
@@ -803,7 +833,7 @@ cargo run -p alnair-router    # 127.0.0.1:7878 (from repo root)
 # run and a dashboard setup code is printed; set/override values with
 # ALNAIR_ROUTER__SECTION__KEY when deploying (e.g. ALNAIR_ROUTER__SECRETS__KEY).
 # From a terminal this detaches (see 33) and returns; --foreground stays here.
-cargo test --workspace        # ~316 tests, ~35s (retry backoff + provider tests)
+cargo test --workspace        # ~590 tests, ~35s (retry backoff + provider tests)
 cargo clippy --workspace --all-targets
 ```
 
@@ -938,12 +968,12 @@ Response headers report the routing decision:
 | `crates/alnair-llm/src/**` (115) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff, and the Anthropic credential header (`x-api-key` vs `Bearer`) |
 | `tests/resolve.rs` (27) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names, `auth_style` reaching the target and defaulting to `api_key` |
 | `tests/storage.rs` (48) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups, and `auth_style` round-trip/validation |
-| `tests/routes.rs` | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard, Headroom probe, usage savings block, the token-saver playground (measured shrinkage, idle pipeline, directive cost, output-estimate opt-in, override validation, Headroom fail-open), and the playground chat stream (router/delta/usage frames, unknown-model error frame, override validation, admin guard) |
+| `tests/routes.rs` | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard, Headroom probe, usage savings block, the token-saver playground (measured shrinkage, idle pipeline, directive cost, output-estimate opt-in, override validation, Headroom fail-open), the playground chat stream (router/delta/usage frames, unknown-model error frame, override validation, admin guard), and OAuth (preset identity guard, PKCE authorize URL, browser login needing an authorize URL, callback guarded by the state nonce, account list/rename/delete, credential storage on a completed login) |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/streaming.rs` (5) | SSE translation: streamed tool calls + `finish_reason`, reasoning, opt-in usage chunk, and the Anthropic `tool_use`/`thinking` block sequence |
 | `tests/e2e_real.rs` (3, `--ignored`) | Opt-in round trips against real OpenAI/Anthropic endpoints |
 | `tests/cli_lifecycle.rs` (10) | The real binary: `serve --foreground` writes its pid + control token, a `--port` override is used, recorded, and still stoppable without repeating the flag, the control route refuses anything but the local token (including an admin bearer), `stop` shuts a foreground instance down and clears the pid file, `stop`/`status` are safe when nothing runs, a stale pid file is cleaned up, conflicting flags are rejected, and detaching does not hold the caller's stdout open (the `| more` regression) |
-| `src/**` inline (49) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization, activity tracker |
+| `src/**` inline (49) | Crypto round-trips, retry policy, SSRF address checks, limiters, tool-call aggregation, catalog cache, metrics, upstream model matching, error-body summarization, activity tracker, and OAuth (PKCE verifier/challenge, login registry lookup incl. the empty-nonce rejection, client-input validation, token cache lead/gates, single-flight refresh) |
 | `apps/web/src/**` | API client error/transport handling, formatters, route table (incl. the legacy-playground redirect), theme store, alias prefix helpers, confirm-dialog regression, topology layout, and the playground hub (page tab shell sharing overrides across tabs, the token-saver tab's run/measured-reduction/rejection/malformed-JSON/per-run toggles incl. the terse/caveman exclusion, the chat tab's streaming, error frame, system prompt and savings, and the SSE client's frame dispatch, split-frame reassembly, non-OK and in-band errors) |
 
 ---

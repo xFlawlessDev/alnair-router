@@ -10,6 +10,7 @@ pub mod control;
 pub mod media;
 pub mod messages;
 pub mod models;
+pub mod oauth;
 pub mod playground;
 pub mod providers;
 pub mod public;

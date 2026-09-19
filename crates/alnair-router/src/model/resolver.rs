@@ -38,6 +38,11 @@ pub struct ResolvedTarget {
     /// How the credential is presented: `api_key` (provider default) or
     /// `bearer`. OAuth/subscription session tokens require `bearer`.
     pub auth_style: String,
+    /// OAuth accounts backing this target, in rotation order, when the
+    /// connection authenticates with OAuth instead of a static key. Only ids
+    /// travel here; the executor resolves each token just in time so the cached
+    /// catalog never holds a short-lived secret.
+    pub oauth_account_ids: Vec<String>,
     /// Provenance, e.g. `alias:glm` or `combo:free-forever#2`.
     pub source: String,
 }
@@ -292,6 +297,7 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         pricing_model: connection.pricing_model.clone(),
         cache_retention: connection.cache_retention.clone(),
         auth_style: connection.auth_style.clone(),
+        oauth_account_ids: connection.oauth_account_ids.clone(),
         source,
     }
 }

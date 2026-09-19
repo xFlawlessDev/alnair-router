@@ -42,6 +42,24 @@ impl Catalog {
             connection.extra_keys = extra.remove(&connection.id).unwrap_or_default();
         }
 
+        // Enabled OAuth accounts join the connection's rotation list as ids
+        // only; the executor resolves each token just in time.
+        let oauth = sqlx::query_as::<_, (String, String)>(
+            "SELECT connection_id, id FROM oauth_accounts
+             WHERE enabled = 1 ORDER BY created_at ASC",
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let mut oauth_ids: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (connection_id, account_id) in oauth {
+            oauth_ids.entry(connection_id).or_default().push(account_id);
+        }
+        for connection in &mut connections {
+            connection.oauth_account_ids = oauth_ids.remove(&connection.id).unwrap_or_default();
+        }
+
         let aliases =
             sqlx::query_as::<_, crate::db::repos::aliases::Alias>("SELECT * FROM aliases")
                 .fetch_all(pool)

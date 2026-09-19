@@ -4,6 +4,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  KeyRound,
   Loader2,
   Pencil,
   Plug,
@@ -22,6 +23,7 @@ import StatusBadge from "@/components/StatusBadge.vue";
 import ConnectionCard from "@/components/connections/ConnectionCard.vue";
 import ConnectionFormDialog from "@/components/connections/ConnectionFormDialog.vue";
 import ConnectionsToolbar from "@/components/connections/ConnectionsToolbar.vue";
+import OAuthAccountsDialog from "@/components/connections/OAuthAccountsDialog.vue";
 import ProviderPickerDialog from "@/components/connections/ProviderPickerDialog.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -177,6 +179,13 @@ function openEdit(connection: Connection): void {
   selectedPreset.value = null;
   editing.value = connection;
   formOpen.value = true;
+}
+
+/** The connection whose OAuth accounts are being managed, if any. */
+const oauthConnection = ref<Connection | null>(null);
+
+function openOAuth(connection: Connection): void {
+  oauthConnection.value = connection;
 }
 
 function providerLabel(connection: Connection): string {
@@ -382,6 +391,7 @@ onMounted(load);
               @delete="deleting = connection"
               @reveal="toggleReveal(connection.id)"
               @copy="copySecret(connection.api_key ?? '')"
+              @oauth="openOAuth(connection)"
             />
           </div>
 
@@ -524,6 +534,15 @@ onMounted(load);
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        :aria-label="`OAuth accounts for ${connection.name}`"
+                        title="Connect OAuth accounts that authenticate with a bearer token"
+                        @click="openOAuth(connection)"
+                      >
+                        <KeyRound />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         class="text-destructive hover:text-destructive"
                         :aria-label="`Delete ${connection.name}`"
                         @click="deleting = connection"
@@ -555,6 +574,14 @@ onMounted(load);
       :default-name="selectedPreset ? suggestName(selectedPreset) : ''"
       @saved="load"
       @change-provider="openPicker"
+    />
+
+    <OAuthAccountsDialog
+      v-if="oauthConnection"
+      :open="oauthConnection !== null"
+      :connection="oauthConnection"
+      @update:open="oauthConnection = $event ? oauthConnection : null"
+      @saved="load"
     />
 
     <ConfirmDialog

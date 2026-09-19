@@ -160,6 +160,96 @@ export interface ConnectionAccountInput {
   enabled?: boolean;
 }
 
+/**
+ * A preset fills in endpoints and scopes only. It deliberately carries no
+ * client id or secret — the operator registers their own OAuth application.
+ */
+export interface OAuthPreset {
+  id: string;
+  label: string;
+  authorize_url: string;
+  token_url: string;
+  device_code_url: string | null;
+  user_info_url: string | null;
+  scopes: string;
+  /** True when the provider issues tokens without a client secret. */
+  public_client: boolean;
+  docs_url: string | null;
+  note: string | null;
+}
+
+export interface OAuthPresetResponse {
+  object: "list";
+  data: OAuthPreset[];
+}
+
+/** An OAuth account on a connection. The credential never leaves the router. */
+export interface OAuthAccount {
+  id: ID;
+  connection_id: ID;
+  label: string;
+  /** Preset the login used: "gitlab-duo", "google" or "generic". */
+  provider_key: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The operator's own OAuth client registration, plus the endpoints to use. */
+export interface OAuthClientInput {
+  client_id: string;
+  client_secret?: string | null;
+  authorize_url: string;
+  token_url: string;
+  device_code_url?: string | null;
+  user_info_url?: string | null;
+  scopes?: string;
+}
+
+export interface StartOAuthLoginInput extends OAuthClientInput {
+  connection_id: ID;
+  label: string;
+  provider_key?: string;
+}
+
+export interface StartOAuthLoginResponse {
+  login_id: string;
+  authorize_url: string;
+  /** The URI that must be registered with the provider. */
+  redirect_uri: string;
+  device: boolean;
+}
+
+/** A device-code challenge the operator completes in a browser. */
+export interface OAuthDeviceChallenge {
+  user_code: string;
+  verification_uri: string | null;
+  expires_in: number | null;
+}
+
+export interface StartOAuthDeviceLoginResponse {
+  login_id: string;
+  user_code: string;
+  verification_uri: string | null;
+  expires_in: number | null;
+  interval: number | null;
+}
+
+/** How an in-flight login is going. */
+export type OAuthLoginState = "pending" | "completed" | "failed";
+
+export interface OAuthLoginView {
+  id: string;
+  status: OAuthLoginState;
+  provider_key: string;
+  label: string;
+  /** Present on a completed login. */
+  account_id?: string;
+  /** Present on a failed login. */
+  error?: string;
+  device: OAuthDeviceChallenge | null;
+}
+
 /** Rate shape returned by the pricing match tool. */
 export interface PriceQuote {
   input_per_million_usd: number;

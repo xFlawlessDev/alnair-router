@@ -16,10 +16,12 @@ use crate::db::repos::combos::ComboRepository;
 use crate::db::repos::connection_accounts::ConnectionAccountRepository;
 use crate::db::repos::connections::ConnectionRepository;
 use crate::db::repos::key_plans::KeyPlanRepository;
+use crate::db::repos::oauth_accounts::OAuthAccountRepository;
 use crate::db::repos::usage::UsageRepository;
 use crate::error::Result;
 use crate::limits::{RateLimiter, UpstreamLimiter};
 use crate::metrics::Metrics;
+use crate::oauth::{LoginRegistry, OAuthTokenCache};
 use crate::pricing::{PricingCache, PricingRepository};
 use crate::settings::{SettingsOverrides, SettingsRepository};
 use crate::telemetry::ActivityTracker;
@@ -57,6 +59,10 @@ pub struct AppState {
     /// One-time code for the first dashboard password; `None` once set.
     setup_code: Arc<Mutex<Option<String>>>,
     catalog_cache: Arc<crate::model::CatalogCache>,
+    /// Access tokens for OAuth connections, refreshed just in time.
+    pub oauth_tokens: Arc<OAuthTokenCache>,
+    /// Logins waiting on a browser redirect or a device-code approval.
+    pub oauth_logins: Arc<LoginRegistry>,
 }
 
 impl AppState {
@@ -81,6 +87,7 @@ impl AppState {
             cipher.clone(),
         ));
         let pricing_cache = Arc::new(PricingCache::new(db.pool.clone()));
+        let oauth_tokens = Arc::new(OAuthTokenCache::new(db.pool.clone(), cipher.clone()));
 
         Ok(Self {
             config: Arc::new(RwLock::new(config.clone())),
@@ -97,6 +104,7 @@ impl AppState {
                     telemetry: telemetry.clone(),
                     pricing: Some(pricing_cache.clone()),
                     key_rotator: KeyRotator::default(),
+                    oauth_tokens: Some(oauth_tokens.clone()),
                 },
             ),
             limiter,
@@ -111,6 +119,8 @@ impl AppState {
             loops_started: Arc::new(AtomicBool::new(false)),
             setup_code: Arc::new(Mutex::new(None)),
             catalog_cache,
+            oauth_tokens,
+            oauth_logins: LoginRegistry::new(),
         })
     }
 
@@ -237,6 +247,11 @@ impl AppState {
     /// Extra API keys attached to connections.
     pub fn connection_accounts(&self) -> ConnectionAccountRepository {
         ConnectionAccountRepository::new(self.pool.clone(), self.cipher.clone())
+    }
+
+    /// OAuth accounts backing connections.
+    pub fn oauth_accounts(&self) -> OAuthAccountRepository {
+        OAuthAccountRepository::new(self.pool.clone(), self.cipher.clone())
     }
 
     pub fn aliases(&self) -> AliasRepository {
