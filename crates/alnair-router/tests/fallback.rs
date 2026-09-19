@@ -155,6 +155,7 @@ async fn combo_falls_through_to_the_second_tier() {
             idle_timeout_ms: None,
             pricing_model: None,
             cache_retention: None,
+            auth_style: None,
             provider_id: None,
         })
         .await
@@ -175,6 +176,7 @@ async fn combo_falls_through_to_the_second_tier() {
             idle_timeout_ms: None,
             pricing_model: None,
             cache_retention: None,
+            auth_style: None,
             provider_id: None,
         })
         .await
@@ -270,6 +272,7 @@ async fn all_tiers_failing_reports_the_last_error() {
             idle_timeout_ms: None,
             pricing_model: None,
             cache_retention: None,
+            auth_style: None,
             provider_id: None,
         })
         .await
@@ -330,6 +333,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             idle_timeout_ms: None,
             pricing_model: None,
             cache_retention: None,
+            auth_style: None,
             provider_id: None,
         })
         .await
@@ -411,6 +415,7 @@ async fn idle_streams_error_after_the_timeout() {
             idle_timeout_ms: Some(50),
             pricing_model: None,
             cache_retention: None,
+            auth_style: None,
             provider_id: None,
         })
         .await

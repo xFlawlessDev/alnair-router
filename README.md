@@ -451,7 +451,12 @@ is set, requires `Authorization: Bearer <token>`:
 
 `/api/connections/{id}/accounts` manages extra API keys for one connection: the
 primary key and enabled accounts rotate round-robin per request, and a failing
-key falls through to the next before the tier is abandoned.
+key falls through to the next before the tier is abandoned. A connection's
+`auth_style` (`api_key`, the default, or `bearer`) picks how that credential is
+sent: `api_key` uses the family default — `x-api-key` for `anthropic-native`,
+`Authorization: Bearer` for `openai-compatible` — while `bearer` always sends
+`Authorization: Bearer`, which is what an OAuth or subscription session token
+needs on an Anthropic-shaped endpoint.
 `PATCH /api/keys/{id}` edits a key's name, enabled state, rate limit,
 daily/weekly/monthly/lifetime budgets, model allowlist, plan and expiry;
 `/api/plans` manages the reusable rule sets.

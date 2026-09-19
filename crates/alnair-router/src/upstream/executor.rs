@@ -245,6 +245,7 @@ impl Executor {
                     target.custom_headers.clone(),
                     price,
                     chat_backend::cache_retention_from_str(&target.cache_retention),
+                    chat_backend::auth_style_from_str(&target.auth_style),
                 );
 
                 let stream = match built {

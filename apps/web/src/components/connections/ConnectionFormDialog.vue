@@ -66,6 +66,7 @@ const connectTimeout = ref("");
 const idleTimeout = ref("");
 const pricingModel = ref("");
 const cacheRetention = ref("none");
+const authStyle = ref("api_key");
 const saving = ref(false);
 
 /** Extra keys (only meaningful once the connection exists). */
@@ -111,6 +112,7 @@ watch(
         : "";
     pricingModel.value = connection?.pricing_model ?? "";
     cacheRetention.value = connection?.cache_retention ?? "none";
+    authStyle.value = connection?.auth_style ?? "api_key";
     newAccountLabel.value = "";
     newAccountKey.value = "";
     accounts.value = [];
@@ -254,6 +256,7 @@ async function save(): Promise<void> {
     idle_timeout_ms: parseTimeout(idleTimeout.value),
     pricing_model: pricingModel.value.trim() || null,
     cache_retention: cacheRetention.value,
+    auth_style: authStyle.value,
   };
 
   saving.value = true;
@@ -488,6 +491,26 @@ async function save(): Promise<void> {
             Anthropic <code>cache_control</code> breakpoints. Leave off for
             OpenAI-compatible endpoints that reject the extra field. The 1-hour
             option sends the extended-cache-ttl beta header.
+          </p>
+        </div>
+
+        <div class="grid gap-2">
+          <Label>Credential header</Label>
+          <Select v-model="authStyle">
+            <SelectTrigger id="connection-auth-style" class="w-full">
+              <SelectValue placeholder="Provider default" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="api_key">Provider default (x-api-key)</SelectItem>
+              <SelectItem value="bearer">Bearer token</SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">
+            How the key above is sent. Anthropic-compatible endpoints expect
+            <code>x-api-key</code>, but an OAuth or subscription session token
+            (Claude Code, Codex) must be sent as
+            <code>Authorization: Bearer</code>. OpenAI-compatible endpoints
+            always use a bearer token.
           </p>
         </div>
 

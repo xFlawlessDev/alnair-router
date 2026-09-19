@@ -252,6 +252,7 @@ mod tests {
                 idle_timeout_ms: None,
                 pricing_model: None,
                 cache_retention: None,
+                auth_style: None,
                 provider_id: None,
             })
             .await

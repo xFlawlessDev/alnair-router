@@ -1,7 +1,21 @@
 use super::*;
-use crate::model_config::ThinkingLevel;
+use crate::model_config::{AuthStyle, ThinkingLevel};
 use crate::types::{Message, MessageToolCall};
 use futures::StreamExt;
+
+#[test]
+fn api_key_style_sends_x_api_key() {
+    let (name, value) = anthropic_auth_header("sk-ant-123", AuthStyle::ApiKey);
+    assert_eq!(name, "x-api-key");
+    assert_eq!(value, "sk-ant-123");
+}
+
+#[test]
+fn bearer_style_sends_authorization_header() {
+    let (name, value) = anthropic_auth_header("sk-ant-oat-123", AuthStyle::Bearer);
+    assert_eq!(name, "authorization");
+    assert_eq!(value, "Bearer sk-ant-oat-123");
+}
 
 fn convert_for_test(messages: &[Message], options: &LlmStreamOptions) -> AnthropicRequest {
     convert_messages_to_anthropic(messages, None, options, true, true)

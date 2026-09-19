@@ -613,6 +613,7 @@ impl LlmProvider for AnthropicNativeProvider {
 
         let endpoint = format!("{}/messages", normalize_base_url(&config.base_url));
         let api_key = config.api_key.clone();
+        let auth_style = config.auth_style;
         let custom_headers = config.custom_headers.clone();
 
         Box::pin(async_stream::stream! {
@@ -625,6 +626,7 @@ impl LlmProvider for AnthropicNativeProvider {
                 &self.client,
                 &endpoint,
                 api_key,
+                auth_style,
                 &custom_headers,
                 &request,
                 options.max_retry_delay_ms,
@@ -727,6 +729,7 @@ impl LlmProvider for AnthropicNativeProvider {
 
         let endpoint = format!("{}/messages", normalize_base_url(&config.base_url));
         let api_key = config.api_key.clone();
+        let auth_style = config.auth_style;
         let custom_headers = config.custom_headers.clone();
         let rates = config.effective_cost_rates();
 
@@ -740,6 +743,7 @@ impl LlmProvider for AnthropicNativeProvider {
                 &self.client,
                 &endpoint,
                 api_key,
+                auth_style,
                 &custom_headers,
                 &request,
                 options.max_retry_delay_ms,

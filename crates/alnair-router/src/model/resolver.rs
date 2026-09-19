@@ -35,6 +35,9 @@ pub struct ResolvedTarget {
     pub pricing_model: Option<String>,
     /// Prompt-cache retention sent upstream: `none`, `short` or `long`.
     pub cache_retention: String,
+    /// How the credential is presented: `api_key` (provider default) or
+    /// `bearer`. OAuth/subscription session tokens require `bearer`.
+    pub auth_style: String,
     /// Provenance, e.g. `alias:glm` or `combo:free-forever#2`.
     pub source: String,
 }
@@ -288,6 +291,7 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         idle_timeout_ms: non_negative(connection.idle_timeout_ms),
         pricing_model: connection.pricing_model.clone(),
         cache_retention: connection.cache_retention.clone(),
+        auth_style: connection.auth_style.clone(),
         source,
     }
 }

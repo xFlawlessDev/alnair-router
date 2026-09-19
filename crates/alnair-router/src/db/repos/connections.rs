@@ -38,6 +38,10 @@ pub struct Connection {
     /// ephemeral cache) or `long` (1-hour cache). Opt-in because
     /// OpenAI-compatible endpoints may reject the extra `cache_control` field.
     pub cache_retention: String,
+    /// How the credential is presented: `api_key` (provider default) or
+    /// `bearer` (always `Authorization: Bearer`). OAuth/subscription session
+    /// tokens need `bearer`; Anthropic-native upstreams otherwise reject them.
+    pub auth_style: String,
     /// Built-in preset this connection was created from, if any.
     pub provider_id: Option<String>,
     /// Enabled extra keys from `connection_accounts`; loaded by the catalog and
@@ -95,6 +99,9 @@ pub struct CreateConnection {
     /// Prompt-cache retention for this connection: `none`, `short` or `long`.
     #[serde(default)]
     pub cache_retention: Option<String>,
+    /// Credential presentation: `api_key` (default) or `bearer`.
+    #[serde(default)]
+    pub auth_style: Option<String>,
     /// Preset to derive `provider_type`, `base_url` and default headers from.
     /// Filled fields may still be overridden.
     #[serde(default)]
@@ -124,6 +131,9 @@ pub struct UpdateConnection {
     /// Set or clear the prompt-cache retention (`none`/`short`/`long`).
     #[serde(default)]
     pub cache_retention: Option<String>,
+    /// Set the credential presentation (`api_key`/`bearer`).
+    #[serde(default)]
+    pub auth_style: Option<String>,
     /// Set or clear the preset this connection is labelled with.
     #[serde(default)]
     pub provider_id: Option<String>,
@@ -263,8 +273,8 @@ impl ConnectionRepository {
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
                  connect_timeout_ms, idle_timeout_ms, pricing_model, cache_retention,
-                 provider_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 auth_style, provider_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -279,6 +289,7 @@ impl ConnectionRepository {
         .bind(normalized_cache_retention(
             input.cache_retention.as_deref(),
         )?)
+        .bind(normalized_auth_style(input.auth_style.as_deref())?)
         .bind(&provider_id)
         .bind(now)
         .bind(now)
@@ -355,6 +366,10 @@ impl ConnectionRepository {
             Some(value) => normalized_cache_retention(Some(value))?.to_string(),
             None => existing.cache_retention.clone(),
         };
+        let auth_style = match &input.auth_style {
+            Some(value) => normalized_auth_style(Some(value))?.to_string(),
+            None => existing.auth_style.clone(),
+        };
         let provider_id = match input.provider_id.as_deref().map(str::trim) {
             Some("") => None,
             Some(id) => {
@@ -369,7 +384,7 @@ impl ConnectionRepository {
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
                  connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, cache_retention = ?,
-                 provider_id = ?, updated_at = ?
+                 auth_style = ?, provider_id = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -382,6 +397,7 @@ impl ConnectionRepository {
         .bind(idle_timeout)
         .bind(pricing_model)
         .bind(&cache_retention)
+        .bind(&auth_style)
         .bind(&provider_id)
         .bind(Utc::now())
         .bind(id)
@@ -448,6 +464,17 @@ fn normalized_cache_retention(value: Option<&str>) -> Result<&'static str> {
         Some("long") => Ok("long"),
         Some(other) => Err(Error::BadRequest(format!(
             "cache_retention must be none, short or long (got '{other}')"
+        ))),
+    }
+}
+
+/// Validates and defaults the credential presentation.
+fn normalized_auth_style(value: Option<&str>) -> Result<&'static str> {
+    match value.map(str::trim) {
+        None | Some("") | Some("api_key") => Ok("api_key"),
+        Some("bearer") => Ok("bearer"),
+        Some(other) => Err(Error::BadRequest(format!(
+            "auth_style must be api_key or bearer (got '{other}')"
         ))),
     }
 }

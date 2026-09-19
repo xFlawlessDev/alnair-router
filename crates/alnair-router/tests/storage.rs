@@ -60,6 +60,7 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         idle_timeout_ms: None,
         pricing_model: None,
         cache_retention: None,
+        auth_style: None,
         provider_id: None,
     }
 }
@@ -374,6 +375,11 @@ async fn provider_type_rebuild_keeps_children() {
     .execute(&db.pool)
     .await
     .expect("cache-control migration");
+
+    sqlx::raw_sql(include_str!("../migrations/0022_connection_auth_style.sql"))
+        .execute(&db.pool)
+        .await
+        .expect("auth-style migration");
 
     let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
         .fetch_all(&db.pool)
@@ -1677,6 +1683,7 @@ async fn connections_round_trip_a_pricing_model_pin() {
             idle_timeout_ms: None,
             pricing_model: Some("gpt-5.6-luna".to_string()),
             cache_retention: None,
+            auth_style: None,
             provider_id: None,
         })
         .await
@@ -1730,6 +1737,66 @@ async fn connections_round_trip_the_cache_retention() {
         .await
         .expect("disable caching");
     assert_eq!(disabled.cache_retention, "none");
+}
+
+#[tokio::test]
+async fn connections_round_trip_the_auth_style() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let defaulted = repo
+        .create(connection("plain", "anthropic-native"))
+        .await
+        .expect("create");
+    assert_eq!(defaulted.auth_style, "api_key", "off by default");
+
+    let bearer = repo
+        .update(
+            &defaulted.id,
+            UpdateConnection {
+                auth_style: Some("bearer".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("switch to bearer");
+    assert_eq!(bearer.auth_style, "bearer");
+
+    // A blank value falls back to the default rather than persisting garbage.
+    let reset = repo
+        .update(
+            &defaulted.id,
+            UpdateConnection {
+                auth_style: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("reset");
+    assert_eq!(reset.auth_style, "api_key");
+}
+
+#[tokio::test]
+async fn unknown_auth_style_is_rejected() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let created = repo
+        .create(connection("plain", "anthropic-native"))
+        .await
+        .expect("create");
+
+    let result = repo
+        .update(
+            &created.id,
+            UpdateConnection {
+                auth_style: Some("bogus".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_err(), "an unknown auth_style must be rejected");
 }
 
 #[tokio::test]

@@ -22,6 +22,7 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         idle_timeout_ms: None,
         pricing_model: None,
         cache_retention: "none".to_string(),
+        auth_style: "api_key".to_string(),
         provider_id: None,
         extra_keys: Vec::new(),
         account_count: 0,
@@ -119,6 +120,25 @@ fn connection_cache_retention_reaches_the_target() {
     let targets = resolver(&catalog).resolve("kr/anything").expect("resolve");
 
     assert_eq!(targets[0].cache_retention, "long");
+}
+
+#[test]
+fn connection_auth_style_reaches_the_target() {
+    let mut catalog = catalog();
+    catalog.connections[1].auth_style = "bearer".to_string();
+
+    let targets = resolver(&catalog).resolve("kr/anything").expect("resolve");
+
+    assert_eq!(targets[0].auth_style, "bearer");
+}
+
+#[test]
+fn auth_style_defaults_to_api_key() {
+    let catalog = catalog();
+
+    let targets = resolver(&catalog).resolve("kr/anything").expect("resolve");
+
+    assert_eq!(targets[0].auth_style, "api_key");
 }
 
 #[test]

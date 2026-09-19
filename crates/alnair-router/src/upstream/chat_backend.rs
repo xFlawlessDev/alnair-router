@@ -17,9 +17,9 @@ use futures::stream::{BoxStream, Stream};
 use crate::error::{Error, Result};
 use crate::pricing::Price;
 use alnair_llm::{
-    CacheRetention, ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions, Message,
-    MessageContent, MessageToolCall, ModelConfig, ModelCostRates, ProviderType, TextContentPart,
-    ThinkingLevel,
+    AuthStyle, CacheRetention, ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions,
+    Message, MessageContent, MessageToolCall, ModelConfig, ModelCostRates, ProviderType,
+    TextContentPart, ThinkingLevel,
 };
 
 /// Re-exported provider registry, so callers never name `alnair_llm` directly.
@@ -265,6 +265,18 @@ pub fn cache_retention_from_str(value: &str) -> CacheRetention {
     }
 }
 
+/// Maps a connection's stored auth-style value onto the provider enum.
+///
+/// Anything unrecognised falls back to the provider default (`x-api-key` for
+/// Anthropic-native), so a bad value degrades to today's behaviour rather than
+/// silently switching the header.
+pub fn auth_style_from_str(value: &str) -> AuthStyle {
+    match value {
+        "bearer" => AuthStyle::Bearer,
+        _ => AuthStyle::ApiKey,
+    }
+}
+
 /// Provider retry behaviour applied inside a single tier, before the executor
 /// fails over to the next one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,11 +338,13 @@ pub fn default_registry() -> ProviderRegistry {
 pub type ChunkStream = BoxStream<'static, Result<StreamChunk>>;
 
 /// Builds the model config handed to the provider layer.
+#[allow(clippy::too_many_arguments)]
 fn model_config(
     provider_type: ProviderType,
     base_url: &str,
     model: &str,
     api_key: Option<&str>,
+    auth_style: AuthStyle,
     custom_headers: BTreeMap<String, String>,
     price: Option<Price>,
     supports_cache_control: bool,
@@ -345,6 +359,7 @@ fn model_config(
         base_url: base_url.to_string(),
         model_id: model.to_string(),
         api_key: api_key.map(str::to_string),
+        auth_style,
         custom_headers,
         supports_vision: false,
         // Capability gates are opt-in: only providers with a known wire shape
@@ -388,6 +403,7 @@ pub fn stream(
     custom_headers: BTreeMap<String, String>,
     price: Option<Price>,
     cache_retention: CacheRetention,
+    auth_style: AuthStyle,
 ) -> Result<ChunkStream> {
     let provider_type = provider_type_from_str(provider_type)?;
 
@@ -402,6 +418,7 @@ pub fn stream(
         base_url,
         model,
         api_key,
+        auth_style,
         custom_headers,
         price,
         !matches!(cache_retention, CacheRetention::None),
@@ -602,6 +619,16 @@ mod tests {
         let options = stream_options(None, RetryPolicy::default(), CacheRetention::Long);
 
         assert_eq!(options.cache_retention, CacheRetention::Long);
+    }
+
+    #[test]
+    fn auth_style_maps_onto_the_provider_enum() {
+        assert_eq!(auth_style_from_str("api_key"), AuthStyle::ApiKey);
+        assert_eq!(auth_style_from_str("bearer"), AuthStyle::Bearer);
+        // An unrecognised value must degrade to today's behaviour, never
+        // silently move the credential into a different header.
+        assert_eq!(auth_style_from_str("bogus"), AuthStyle::ApiKey);
+        assert_eq!(auth_style_from_str(""), AuthStyle::ApiKey);
     }
 
     #[tokio::test]

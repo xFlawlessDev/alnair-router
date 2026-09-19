@@ -81,23 +81,26 @@ pub async fn fetch_models(connection: &Connection) -> Result<ProbeOutcome> {
     }
 }
 
-/// Probes one URL and parses a models envelope.
-async fn probe_url(connection: &Connection, url: &str) -> Result<ProbeOutcome> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(PROBE_CONNECT_TIMEOUT)
-        .timeout(PROBE_TIMEOUT)
-        .build()
-        .map_err(|error| Error::Internal(error.to_string()))?;
-
-    let mut request = client.get(url);
-
+/// Applies the connection's credential plus the Anthropic version and custom
+/// headers to an outgoing probe request.
+///
+/// Mirrors `media.rs::upstream_headers`: an Anthropic-native upstream takes
+/// `x-api-key` unless the connection is flagged `bearer`, which is how an
+/// OAuth/subscription session token authenticates. A probe that ignored
+/// `auth_style` would report a working `bearer` connection as broken.
+fn apply_auth(
+    mut request: reqwest::RequestBuilder,
+    connection: &Connection,
+) -> reqwest::RequestBuilder {
     if let Some(api_key) = connection
         .api_key
         .as_deref()
         .map(str::trim)
         .filter(|key| !key.is_empty())
     {
-        request = if connection.provider_type == "anthropic-native" {
+        request = if connection.provider_type == "anthropic-native"
+            && connection.auth_style != "bearer"
+        {
             request.header("x-api-key", api_key)
         } else {
             request.bearer_auth(api_key)
@@ -109,6 +112,18 @@ async fn probe_url(connection: &Connection, url: &str) -> Result<ProbeOutcome> {
     for (name, value) in connection.headers() {
         request = request.header(name, value);
     }
+    request
+}
+
+/// Probes one URL and parses a models envelope.
+async fn probe_url(connection: &Connection, url: &str) -> Result<ProbeOutcome> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(PROBE_CONNECT_TIMEOUT)
+        .timeout(PROBE_TIMEOUT)
+        .build()
+        .map_err(|error| Error::Internal(error.to_string()))?;
+
+    let request = apply_auth(client.get(url), connection);
 
     let started = Instant::now();
     let response = request
@@ -211,24 +226,7 @@ async fn chat_liveness_probe(
         "stream": false,
     }));
 
-    if let Some(api_key) = connection
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-    {
-        request = if connection.provider_type == "anthropic-native" {
-            request.header("x-api-key", api_key)
-        } else {
-            request.bearer_auth(api_key)
-        };
-    }
-    if connection.provider_type == "anthropic-native" {
-        request = request.header("anthropic-version", "2023-06-01");
-    }
-    for (name, value) in connection.headers() {
-        request = request.header(name, value);
-    }
+    request = apply_auth(request, connection);
 
     let started = Instant::now();
     let response = request.send().await.ok()?;
@@ -318,5 +316,55 @@ mod tests {
         );
 
         assert!(summarize_body("   ").contains("empty"));
+    }
+
+    fn connection(provider_type: &str, auth_style: &str) -> Connection {
+        Connection {
+            id: "c1".to_string(),
+            name: "test".to_string(),
+            provider_type: provider_type.to_string(),
+            base_url: "https://api.example.com/v1".to_string(),
+            api_key: Some("secret-key".to_string()),
+            custom_headers: "{}".to_string(),
+            enabled: 1,
+            connect_timeout_ms: None,
+            idle_timeout_ms: None,
+            pricing_model: None,
+            cache_retention: "none".to_string(),
+            auth_style: auth_style.to_string(),
+            provider_id: None,
+            extra_keys: Vec::new(),
+            account_count: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Builds the request so the real header map can be inspected.
+    fn headers_of(provider_type: &str, auth_style: &str) -> reqwest::header::HeaderMap {
+        apply_auth(
+            reqwest::Client::new().get("https://api.example.com/v1/models"),
+            &connection(provider_type, auth_style),
+        )
+        .build()
+        .expect("buildable request")
+        .headers()
+        .clone()
+    }
+
+    #[test]
+    fn probe_uses_x_api_key_for_anthropic_native() {
+        let headers = headers_of("anthropic-native", "api_key");
+
+        assert_eq!(headers.get("x-api-key").unwrap(), "secret-key");
+        assert!(headers.get("authorization").is_none());
+    }
+
+    #[test]
+    fn probe_honours_the_bearer_auth_style() {
+        let headers = headers_of("anthropic-native", "bearer");
+
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer secret-key");
+        assert!(headers.get("x-api-key").is_none());
     }
 }

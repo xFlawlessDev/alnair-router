@@ -5,12 +5,29 @@ use serde::{Deserialize, Serialize};
 use crate::providers::PROVIDER_MAX_RETRIES;
 use crate::types::{ChatError, GenerationOptions, ProviderType};
 
+/// How a credential is presented to the upstream.
+///
+/// The distinction matters for Anthropic-shaped endpoints: an API key travels
+/// in `x-api-key`, while an OAuth/subscription session token travels in
+/// `Authorization: Bearer`. Sending the wrong one 401s every request.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthStyle {
+    /// Provider default: `x-api-key` for Anthropic, bearer for OpenAI.
+    #[default]
+    ApiKey,
+    /// Always `Authorization: Bearer`, regardless of provider family.
+    Bearer,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {
     pub provider_type: ProviderType,
     pub base_url: String,
     pub model_id: String,
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub auth_style: AuthStyle,
     #[serde(default)]
     pub custom_headers: BTreeMap<String, String>,
     #[serde(default)]
@@ -158,6 +175,7 @@ impl ModelConfig {
             base_url: base_url.into(),
             model_id: model_id.into(),
             api_key,
+            auth_style: AuthStyle::default(),
             custom_headers: BTreeMap::new(),
             supports_vision: false,
             supports_thinking: false,
@@ -177,6 +195,7 @@ impl ModelConfig {
             base_url: base_url.into(),
             model_id: model_id.into(),
             api_key,
+            auth_style: AuthStyle::default(),
             custom_headers: BTreeMap::new(),
             supports_vision: false,
             supports_thinking: false,

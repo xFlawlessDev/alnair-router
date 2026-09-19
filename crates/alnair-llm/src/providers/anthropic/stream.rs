@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::model_config::AuthStyle;
 use crate::model_config::ModelCostRates;
 use crate::model_config::apply_custom_headers;
 use crate::providers::common::{
@@ -278,20 +279,37 @@ fn merge_usage_fields(
     }
 }
 
+/// Header name and value carrying the Anthropic credential.
+///
+/// An API key travels in `x-api-key`; a subscription/OAuth session token must
+/// travel in `Authorization: Bearer`. Sending the wrong one 401s the request.
+pub(super) fn anthropic_auth_header(
+    api_key: &str,
+    auth_style: AuthStyle,
+) -> (&'static str, String) {
+    match auth_style {
+        AuthStyle::ApiKey => ("x-api-key", api_key.to_string()),
+        AuthStyle::Bearer => ("authorization", format!("Bearer {api_key}")),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn send_anthropic_request_with_retry(
     client: &reqwest::Client,
     endpoint: &str,
     api_key: &str,
+    auth_style: AuthStyle,
     custom_headers: &std::collections::BTreeMap<String, String>,
     request_body: &AnthropicRequest,
     max_retry_delay_ms: u64,
     max_retries: usize,
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
+    let (auth_name, auth_value) = anthropic_auth_header(api_key, auth_style);
     for attempt in 0..=max_retries {
         let mut request = client
             .post(endpoint)
-            .header("x-api-key", api_key)
+            .header(auth_name, auth_value.clone())
             .header("anthropic-version", "2023-06-01")
             .header(reqwest::header::CONTENT_TYPE, "application/json");
         if request_body.uses_extended_cache_ttl() {

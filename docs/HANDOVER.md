@@ -248,7 +248,26 @@ OAuth providers (Claude Code, Codex, GitHub Copilot, …) are the next phase:
 credentials will live in a dedicated table keyed per account (many accounts per
 provider for rotation), with per-request refresh inside `chat_backend` and
 reuse detection; Copilot keeps its dual GitHub→Copilot token exchange cached
-until expiry.
+until expiry. The credential *presentation* half of that already exists —
+migration `0022` added `connections.auth_style` and `AuthStyle` in the provider
+layer, so an OAuth session token can ride the existing key rotation unchanged.
+
+### Credential header (`auth_style`)
+
+An upstream key is sent either as the provider's native style (`x-api-key` for
+Anthropic-native, `Authorization: Bearer` for OpenAI-compatible) or forced to
+`Bearer` regardless of family. `connections.auth_style` (migration `0022`,
+default `api_key`) selects which; `normalized_auth_style` validates it at the
+repository boundary and an unknown value is a 400. The value travels as a plain
+`String` on `ResolvedTarget` — like `cache_retention` and `provider_type` — so
+`model/` never names a provider-layer type, and `chat_backend::auth_style_from_str`
+does the only conversion. `chat_backend::model_config` carries it into
+`ModelConfig::auth_style`, which the Anthropic provider reads to pick the header;
+media proxying gets the same treatment in `media.rs::upstream_headers`.
+
+This is what OAuth needs: Claude Code, Codex and Copilot return session tokens
+that an Anthropic-shaped endpoint rejects in `x-api-key`. Setting `bearer` on the
+connection is enough for the token to authenticate, with no further plumbing.
 
 ### Extra keys per connection
 
@@ -717,6 +736,20 @@ suite should tell you.
     spawn flags. (`cli/daemon/`, `cli/mod.rs`, `main.rs`, `handlers/control.rs`,
     `state.rs`, `tests/cli_lifecycle.rs`)
 
+34. **The credential header is a per-connection choice, not a provider one.**
+    `connections.auth_style` (migration `0022`) is `api_key` (the family default:
+    `x-api-key` for Anthropic-native, bearer for OpenAI-compatible) or `bearer`
+    (always `Authorization: Bearer`). The repository validates it — an unknown
+    value is a `400`, a blank one falls back to `api_key` — and it rides
+    `ResolvedTarget` as a `String` so `model/` stays free of provider-layer
+    types, exactly like `cache_retention`. `chat_backend::auth_style_from_str`
+    is the sole conversion, `ModelConfig::auth_style` carries it into the
+    provider layer, and `media.rs::upstream_headers` applies the same rule for
+    proxied media. Unknown strings degrade to the provider default rather than
+    moving a credential into an unexpected header. This is the seam OAuth needs:
+    Claude Code, Codex and Copilot session tokens are rejected by an
+    Anthropic-shaped endpoint when sent as `x-api-key`.
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
@@ -902,9 +935,9 @@ Response headers report the routing decision:
 
 | File | Covers |
 |---|---|
-| `crates/alnair-llm/src/**` (81) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff |
-| `tests/resolve.rs` (24) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names |
-| `tests/storage.rs` (24) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups |
+| `crates/alnair-llm/src/**` (115) | Provider internals: OpenAI/Anthropic conversion, SSE parsing, tool-call repair, retry/backoff, and the Anthropic credential header (`x-api-key` vs `Bearer`) |
+| `tests/resolve.rs` (27) | Prefix/alias/combo resolution, cycle detection, depth cap, disabled entries, tier numbering, bare alias-with-override names, `auth_style` reaching the target and defaulting to `api_key` |
+| `tests/storage.rs` (48) | Repository behaviour against real in-memory SQLite, cascade deletes, key hashing, Ollama rejection, credential encryption + boot migration, key limits/budget, spend rollups, and `auth_style` round-trip/validation |
 | `tests/routes.rs` | Endpoint shapes, `/v1` and `/api` auth enforcement, 404 vs 400, multi-megabyte bodies, SSRF guard, scheme rejection, probes, cache write-through, rate limit 429, budget 402/warn, key PATCH, metrics text, dashboard serving, upstream models/test probes (incl. HTML/missing-`/v1` diagnostics), alias chat probe, activity feed, the seam guard, Headroom probe, usage savings block, the token-saver playground (measured shrinkage, idle pipeline, directive cost, output-estimate opt-in, override validation, Headroom fail-open), and the playground chat stream (router/delta/usage frames, unknown-model error frame, override validation, admin guard) |
 | `tests/fallback.rs` (4) | Failover ordering against an in-process mock upstream, connect/idle timeouts |
 | `tests/streaming.rs` (5) | SSE translation: streamed tool calls + `finish_reason`, reasoning, opt-in usage chunk, and the Anthropic `tool_use`/`thinking` block sequence |

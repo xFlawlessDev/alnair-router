@@ -108,13 +108,16 @@ fn upstream_headers(target: &ResolvedTarget) -> Result<HeaderMap> {
     if let Some(api_key) = target.primary_key()
         && !api_key.trim().is_empty()
     {
-        // Anthropic-native upstreams expect `x-api-key`; OpenAI-compatible ones
-        // expect a bearer token. Sending the wrong one would 401 every request.
-        let (name, value) = if target.provider_type == "anthropic-native" {
-            ("x-api-key", api_key.to_string())
-        } else {
-            ("authorization", format!("Bearer {api_key}"))
-        };
+        // An Anthropic-native upstream defaults to `x-api-key`, but a connection
+        // flagged `bearer` (OAuth/subscription session token) must send that
+        // token in the Authorization header instead. OpenAI-compatible ones
+        // always take a bearer token. Sending the wrong one would 401.
+        let (name, value) =
+            if target.provider_type == "anthropic-native" && target.auth_style != "bearer" {
+                ("x-api-key", api_key.to_string())
+            } else {
+                ("authorization", format!("Bearer {api_key}"))
+            };
 
         headers.insert(
             reqwest::header::HeaderName::from_bytes(name.as_bytes())
@@ -156,6 +159,24 @@ fn join_url(base_url: &str, path: &str) -> String {
 mod tests {
     use super::*;
 
+    fn target(provider_type: &str, auth_style: &str) -> ResolvedTarget {
+        ResolvedTarget {
+            connection_id: "c1".to_string(),
+            connection_name: "test".to_string(),
+            provider_type: provider_type.to_string(),
+            base_url: "https://api.example.com/v1".to_string(),
+            model: "some-model".to_string(),
+            api_keys: vec!["secret-key".to_string()],
+            custom_headers: Default::default(),
+            connect_timeout_ms: None,
+            idle_timeout_ms: None,
+            pricing_model: None,
+            cache_retention: "none".to_string(),
+            auth_style: auth_style.to_string(),
+            source: "alias:test".to_string(),
+        }
+    }
+
     #[test]
     fn join_url_handles_separators() {
         assert_eq!(
@@ -166,5 +187,29 @@ mod tests {
             join_url("https://api.example.com/v1/", "embeddings"),
             "https://api.example.com/v1/embeddings"
         );
+    }
+
+    #[test]
+    fn anthropic_native_sends_x_api_key_by_default() {
+        let headers = upstream_headers(&target("anthropic-native", "api_key")).expect("headers");
+
+        assert_eq!(headers.get("x-api-key").unwrap(), "secret-key");
+        assert!(headers.get("authorization").is_none());
+    }
+
+    #[test]
+    fn anthropic_native_bearer_style_moves_the_credential() {
+        let headers = upstream_headers(&target("anthropic-native", "bearer")).expect("headers");
+
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer secret-key");
+        assert!(headers.get("x-api-key").is_none());
+    }
+
+    #[test]
+    fn openai_compatible_always_uses_bearer() {
+        let headers = upstream_headers(&target("openai-compatible", "api_key")).expect("headers");
+
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer secret-key");
+        assert!(headers.get("x-api-key").is_none());
     }
 }

@@ -85,6 +85,8 @@ export interface Connection {
   pricing_model: string | null;
   /** Prompt-cache retention: "none", "short" (5m) or "long" (1h). */
   cache_retention: string;
+  /** Credential presentation: "api_key" (provider default) or "bearer". */
+  auth_style: string;
   /** Built-in provider preset this connection was created from. */
   provider_id: string | null;
   /** Enabled extra API keys rotating behind this connection. */
@@ -105,6 +107,8 @@ export interface ConnectionInput {
   pricing_model?: string | null;
   /** Opt into Anthropic-style prompt caching for this connection. */
   cache_retention?: string | null;
+  /** Send the credential as Authorization: Bearer instead of x-api-key. */
+  auth_style?: string | null;
   /** Preset to derive the endpoint and wire family from. */
   provider_id?: string | null;
 }
