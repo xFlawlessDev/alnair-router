@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 <img src="assets/logo-tile.svg" alt="alnair-router logo" width="120" height="120" />
@@ -812,6 +814,7 @@ cargo test --workspace
 
 # Dashboard
 cd apps/web
+pnpm install
 pnpm run check     # vue-tsc + production build
 pnpm test
 ```
