@@ -1,6 +1,6 @@
 {
   "name": "@xflawlessdev/alnair-router-linux-arm64",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "alnair-router binary for Linux arm64 (glibc)",
   "license": "MIT",
   "homepage": "https://github.com/xFlawlessDev/alnair-router#readme",

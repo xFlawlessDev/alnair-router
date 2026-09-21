@@ -1,6 +1,6 @@
 {
   "name": "alnair-router",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "license": "MIT",
   "description": "Release tooling for the alnair-router workspace (bump, changelog, tag).",
