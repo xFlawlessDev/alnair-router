@@ -207,8 +207,8 @@ function presetName(preset: ProviderPreset | null): string | null {
     .replace(/^-|-$/g, "");
 }
 
-function parseTimeout(value: string): number | null {
-  const trimmed = value.trim();
+function parseTimeout(value: string | number): number | null {
+  const trimmed = String(value).trim();
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
@@ -235,13 +235,16 @@ async function save(): Promise<void> {
   }
 
   if (
-    connectTimeout.value.trim() &&
+    String(connectTimeout.value).trim() &&
     parseTimeout(connectTimeout.value) === null
   ) {
     toast.error("Connect timeout must be zero or more milliseconds");
     return;
   }
-  if (idleTimeout.value.trim() && parseTimeout(idleTimeout.value) === null) {
+  if (
+    String(idleTimeout.value).trim() &&
+    parseTimeout(idleTimeout.value) === null
+  ) {
     toast.error("Idle timeout must be zero or more milliseconds");
     return;
   }
@@ -501,7 +504,9 @@ async function save(): Promise<void> {
               <SelectValue placeholder="Provider default" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="api_key">Provider default (x-api-key)</SelectItem>
+              <SelectItem value="api_key"
+                >Provider default (x-api-key)</SelectItem
+              >
               <SelectItem value="bearer">Bearer token</SelectItem>
             </SelectContent>
           </Select>

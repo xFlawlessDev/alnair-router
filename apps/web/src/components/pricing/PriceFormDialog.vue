@@ -53,8 +53,8 @@ watch(
 );
 
 /** Rate input: blank clears the field, anything else must be a non-negative number. */
-function parseRate(value: string): number | null {
-  const trimmed = value.trim();
+function parseRate(value: string | number): number | null {
+  const trimmed = String(value).trim();
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : Number.NaN;
