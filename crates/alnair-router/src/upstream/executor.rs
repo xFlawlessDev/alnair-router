@@ -267,7 +267,7 @@ impl Executor {
                     }
                 };
 
-                let attempt_token = settings.telemetry.begin_attempt(
+                let attempt_guard = settings.telemetry.begin_attempt(
                     &target.connection_id,
                     &target.connection_name,
                     &target.model,
@@ -303,9 +303,7 @@ impl Executor {
                 let stream = match built {
                     Ok(stream) => stream,
                     Err(error) => {
-                        settings
-                            .telemetry
-                            .finish_attempt(attempt_token, false, &error.to_string());
+                        attempt_guard.finish(false, &error.to_string());
                         // A malformed provider type is a configuration fault, not a
                         // transient upstream failure: fail loudly instead of
                         // silently walking the rest of the chain.
@@ -332,9 +330,7 @@ impl Executor {
                         let error = Error::Upstream(format!(
                             "upstream did not respond within {connect_timeout_ms} ms"
                         ));
-                        settings
-                            .telemetry
-                            .finish_attempt(attempt_token, false, &error.to_string());
+                        attempt_guard.finish(false, &error.to_string());
                         tracing::warn!(
                             attempt = index + 1,
                             source = %target.source,
@@ -350,9 +346,7 @@ impl Executor {
 
                 match first {
                     Some(Err(error)) => {
-                        settings
-                            .telemetry
-                            .finish_attempt(attempt_token, false, &error.to_string());
+                        attempt_guard.finish(false, &error.to_string());
                         tracing::warn!(
                             attempt = index + 1,
                             source = %target.source,
@@ -364,9 +358,7 @@ impl Executor {
                         attempts.push(failed_attempt(index, target, &error, started));
                     }
                     first => {
-                        settings
-                            .telemetry
-                            .finish_attempt(attempt_token, true, "first chunk ready");
+                        attempt_guard.finish(true, "first chunk ready");
                         let latency_ms = started.elapsed().as_millis() as u64;
                         attempts.push(Attempt {
                             index: index + 1,

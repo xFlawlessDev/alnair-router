@@ -5,7 +5,7 @@
 //! everything, and nothing here is persisted (usage rows are the durable log).
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use chrono::{DateTime, Utc};
@@ -112,15 +112,19 @@ impl ActivityTracker {
         }
     }
 
-    /// Starts an upstream attempt and returns a token to finish it with.
+    /// Starts an upstream attempt and returns a guard that finishes it.
+    ///
+    /// The returned [`AttemptGuard`] drains the in-flight gauge on drop, so an
+    /// attempt whose task is cancelled (client disconnect, proxy timeout) before
+    /// the first chunk no longer leaks as a permanently active entry.
     pub fn begin_attempt(
-        &self,
+        self: &Arc<Self>,
         connection_id: &str,
         connection: &str,
         model: &str,
         source: &str,
         tier: usize,
-    ) -> u64 {
+    ) -> AttemptGuard {
         let mut inner = self.inner.lock().expect("activity tracker poisoned");
         inner.seq += 1;
         let token = inner.seq;
@@ -159,7 +163,11 @@ impl ActivityTracker {
             None,
         );
 
-        token
+        AttemptGuard {
+            tracker: Arc::clone(self),
+            token,
+            finished: false,
+        }
     }
 
     /// Finishes an attempt started with [`Self::begin_attempt`].
@@ -290,6 +298,34 @@ impl ActivityTracker {
     }
 }
 
+/// Owns one in-flight attempt. [`ActivityTracker::begin_attempt`] returns this;
+/// calling [`AttemptGuard::finish`] closes the attempt explicitly, and dropping
+/// it without finishing drains the gauge as a cancelled attempt. That covers the
+/// client-disconnect / proxy-timeout case where the request future is dropped at
+/// an await point before the first chunk ever arrives.
+pub struct AttemptGuard {
+    tracker: Arc<ActivityTracker>,
+    token: u64,
+    finished: bool,
+}
+
+impl AttemptGuard {
+    /// Finishes the attempt with its first-chunk outcome (`ok`) and a detail.
+    pub fn finish(mut self, ok: bool, detail: &str) {
+        self.finished = true;
+        self.tracker.finish_attempt(self.token, ok, detail);
+    }
+}
+
+impl Drop for AttemptGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.tracker
+                .finish_attempt(self.token, false, "request cancelled");
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_event(
     inner: &mut Inner,
@@ -322,15 +358,18 @@ fn push_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn attempts_update_counters_and_events() {
-        let tracker = ActivityTracker::new();
-        let token = tracker.begin_attempt("c1", "9router", "deepseek", "alias:9r", 1);
-        tracker.finish_attempt(token, true, "first chunk ready");
+        let tracker = Arc::new(ActivityTracker::new());
+        tracker
+            .begin_attempt("c1", "9router", "deepseek", "alias:9r", 1)
+            .finish(true, "first chunk ready");
 
-        let failed = tracker.begin_attempt("c1", "9router", "deepseek", "alias:9r", 2);
-        tracker.finish_attempt(failed, false, "boom");
+        tracker
+            .begin_attempt("c1", "9router", "deepseek", "alias:9r", 2)
+            .finish(false, "boom");
 
         let snapshot = tracker.snapshot(50);
         assert!(snapshot.active.is_empty());
@@ -359,15 +398,30 @@ mod tests {
 
     #[test]
     fn in_flight_is_visible_until_finished() {
-        let tracker = ActivityTracker::new();
-        let token = tracker.begin_attempt("c1", "9router", "m", "default:9router", 1);
+        let tracker = Arc::new(ActivityTracker::new());
+        let guard = tracker.begin_attempt("c1", "9router", "m", "default:9router", 1);
 
         let snapshot = tracker.snapshot(10);
         assert_eq!(snapshot.active.len(), 1);
         assert_eq!(snapshot.connections[0].in_flight, 1);
 
-        tracker.finish_attempt(token, true, "done");
+        guard.finish(true, "done");
         assert!(tracker.snapshot(10).active.is_empty());
+    }
+
+    #[test]
+    fn dropping_an_attempt_drains_the_gauge() {
+        let tracker = Arc::new(ActivityTracker::new());
+        // Simulates a cancelled request: the guard is dropped without finishing.
+        drop(tracker.begin_attempt("c1", "9router", "m", "default:9router", 1));
+
+        let snapshot = tracker.snapshot(10);
+        assert!(
+            snapshot.active.is_empty(),
+            "a dropped attempt must not stay in flight"
+        );
+        assert_eq!(snapshot.connections[0].in_flight, 0);
+        assert_eq!(snapshot.connections[0].failures, 1);
     }
 
     #[test]
@@ -407,9 +461,10 @@ mod tests {
 
     #[test]
     fn usage_counters_attach_to_known_connections() {
-        let tracker = ActivityTracker::new();
-        let token = tracker.begin_attempt("c1", "9router", "m", "alias:9r", 1);
-        tracker.finish_attempt(token, true, "ok");
+        let tracker = Arc::new(ActivityTracker::new());
+        tracker
+            .begin_attempt("c1", "9router", "m", "alias:9r", 1)
+            .finish(true, "ok");
         tracker.record_usage("c1", 100, 20);
         tracker.record_usage("missing", 1, 1);
 
