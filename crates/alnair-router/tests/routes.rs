@@ -5775,6 +5775,26 @@ async fn web_fetch_stays_local_without_a_model() {
 }
 
 #[tokio::test]
+async fn an_unresolvable_model_still_fetches_locally() {
+    // `model` is a hint on this endpoint. Before provider fetches existed the
+    // field was ignored, so a reference that does not resolve must not turn a
+    // working request into a 404 — it falls back to the local fetch.
+    let (app, _db) = app(false).await;
+
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/v1/web/fetch",
+        serde_json::json!({ "model": "no-such-connection", "url": "http://127.0.0.1:8080/" }),
+    )
+    .await;
+
+    // Reaching the guard proves the local path ran; a 404 would mean the
+    // unresolved reference failed the request instead.
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn retrieve_model_returns_one_model_object() {
     let (app, _db) = app(false).await;
     let base_url = spawn_media_upstream("{}").await;

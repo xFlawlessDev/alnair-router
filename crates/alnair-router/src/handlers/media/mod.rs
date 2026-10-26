@@ -265,8 +265,15 @@ pub async fn web_fetch(
         return local_web_fetch(Json(body)).await;
     };
 
+    // `model` is a hint, not a requirement. Before provider fetches existed this
+    // endpoint ignored the field entirely, so a reference that does not resolve
+    // must keep fetching locally rather than turning a working request into a
+    // 404. The allowlist still applies: a key may not reach a model it was not
+    // granted, even by accident.
     ensure_model_allowed(&key, Some(&model))?;
-    let target = resolve_target(&state, Some(&model)).await?;
+    let Ok(target) = resolve_target(&state, Some(&model)).await else {
+        return local_web_fetch(Json(body)).await;
+    };
 
     let mode = state
         .connections()
