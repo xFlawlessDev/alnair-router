@@ -87,6 +87,14 @@ export interface Connection {
   cache_retention: string;
   /** Credential presentation: "api_key" (provider default) or "bearer". */
   auth_style: string;
+  /**
+   * Where `/v1/web/fetch` gets its content: "local" (the router fetches the
+   * URL itself, behind the SSRF guard) or "provider" (forwarded to
+   * `web_fetch_path` on this connection, for pages that need JS rendering).
+   */
+  web_fetch_mode: string;
+  /** Extract path for a provider fetch, e.g. "/v1/scrape". */
+  web_fetch_path: string | null;
   /** Built-in provider preset this connection was created from. */
   provider_id: string | null;
   /** Enabled extra API keys rotating behind this connection. */
@@ -109,6 +117,10 @@ export interface ConnectionInput {
   cache_retention?: string | null;
   /** Send the credential as Authorization: Bearer instead of x-api-key. */
   auth_style?: string | null;
+  /** Where `/v1/web/fetch` gets its content: "local" (default) or "provider". */
+  web_fetch_mode?: string | null;
+  /** Extract path for a provider fetch, e.g. "/v1/scrape". */
+  web_fetch_path?: string | null;
   /** Preset to derive the endpoint and wire family from. */
   provider_id?: string | null;
 }
