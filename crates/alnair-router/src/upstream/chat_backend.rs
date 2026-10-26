@@ -248,6 +248,10 @@ pub struct GenerationOptions {
     pub frequency_penalty: Option<f64>,
     /// Extended-thinking effort, one of `minimal|low|medium|high|max`.
     pub thinking_level: Option<String>,
+    /// OpenAI `web_search_options`, carried through to an OpenAI-compatible
+    /// upstream untouched. The router validates the shape but never rewrites
+    /// it, because each provider exposes its own knobs.
+    pub web_search_options: Option<serde_json::Value>,
 }
 
 /// Parses a thinking effort string into the provider enum, ignoring unknowns.
@@ -327,6 +331,7 @@ impl GenerationOptions {
             max_retries: retry.max_retries_per_tier,
             max_retry_delay_ms: retry.max_retry_delay_ms,
             thinking_level: parse_thinking_level(self.thinking_level.as_deref()),
+            web_search_options: self.web_search_options.clone(),
             ..Default::default()
         }
     }
@@ -460,6 +465,19 @@ pub fn stream(
     {
         return Err(Error::BadRequest(format!(
             "content part `{kind}` is only supported on openai-compatible connections; \
+             this model is served by a {} connection",
+            provider_type_label(&provider_type)
+        )));
+    }
+
+    // `web_search_options` is OpenAI's own knob; only an OpenAI-compatible
+    // upstream can carry it. Accepting it elsewhere would drop the option and
+    // answer without searching.
+    if provider_type != ProviderType::OpenaiCompatible
+        && options.is_some_and(|options| options.web_search_options.is_some())
+    {
+        return Err(Error::BadRequest(format!(
+            "`web_search_options` is only supported on openai-compatible connections; \
              this model is served by a {} connection",
             provider_type_label(&provider_type)
         )));
@@ -675,6 +693,39 @@ mod tests {
         };
         let text = error.to_string();
         assert!(text.contains("input_audio"), "{text}");
+        assert!(text.contains("openai-compatible"), "{text}");
+    }
+
+    #[test]
+    fn web_search_options_are_rejected_on_a_non_openai_provider() {
+        let options = GenerationOptions {
+            web_search_options: Some(serde_json::json!({ "search_context_size": "low" })),
+            ..Default::default()
+        };
+
+        let result = stream(
+            std::sync::Arc::new(default_registry()),
+            "anthropic-native",
+            "https://api.anthropic.com/v1",
+            "claude-sonnet-4",
+            vec![message_text("user", "hello")],
+            Some("sk-ant"),
+            Some(&options),
+            RetryPolicy::default(),
+            true,
+            None,
+            BTreeMap::new(),
+            None,
+            CacheRetention::None,
+            AuthStyle::ApiKey,
+        );
+
+        let error = match result {
+            Ok(_) => panic!("web_search_options must not reach an anthropic connection"),
+            Err(error) => error,
+        };
+        let text = error.to_string();
+        assert!(text.contains("web_search_options"), "{text}");
         assert!(text.contains("openai-compatible"), "{text}");
     }
 

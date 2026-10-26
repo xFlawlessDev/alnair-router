@@ -33,6 +33,7 @@ pub async fn chat_completions(
     if let Some(auth) = &key {
         auth.policy.ensure_model(&requested_model)?;
     }
+    request.validate_web_search_options()?;
     let stream_requested = request.stream;
     let include_usage = request
         .stream_options

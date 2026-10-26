@@ -37,6 +37,11 @@ pub struct ChatCompletionRequest {
     /// OpenAI reasoning effort, e.g. `low`, `medium`, `high`.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    /// OpenAI built-in web search. Replayed verbatim to an OpenAI-compatible
+    /// upstream; validated here so a malformed object fails fast instead of
+    /// reaching a provider that would answer without searching.
+    #[serde(default)]
+    pub web_search_options: Option<serde_json::Value>,
 }
 
 /// `stream_options` on a streaming request.
@@ -276,7 +281,39 @@ impl ChatCompletionRequest {
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
             thinking_level: self.reasoning_effort.clone(),
+            web_search_options: self.web_search_options.clone(),
         }
+    }
+
+    /// Rejects a `web_search_options` value the router cannot forward.
+    ///
+    /// OpenAI documents the object with `search_context_size` and
+    /// `user_location`; an OpenAI-compatible upstream may accept more. The
+    /// router only insists on the one property every implementation agrees on
+    /// being an object, so a malformed value is a `400` rather than a request
+    /// that silently loses its web search.
+    pub fn validate_web_search_options(&self) -> Result<()> {
+        let Some(options) = &self.web_search_options else {
+            return Ok(());
+        };
+        let object = options.as_object().ok_or_else(|| {
+            Error::BadRequest("web_search_options must be a JSON object".to_string())
+        })?;
+
+        if let Some(size) = object.get("search_context_size") {
+            let size = size.as_str().ok_or_else(|| {
+                Error::BadRequest(
+                    "web_search_options.search_context_size must be a string".to_string(),
+                )
+            })?;
+            if !matches!(size, "low" | "medium" | "high") {
+                return Err(Error::BadRequest(format!(
+                    "web_search_options.search_context_size must be low, medium or high; got `{size}`"
+                )));
+            }
+        }
+
+        Ok(())
     }
 
     /// Converts the OpenAI message list into provider-layer messages.
@@ -437,6 +474,62 @@ mod tests {
             .expect_err("unknown part must be rejected");
 
         assert!(error.to_string().contains("unsupported content part type"));
+    }
+
+    fn web_search_request(options: serde_json::Value) -> ChatCompletionRequest {
+        serde_json::from_value(serde_json::json!({
+            "model": "gpt-5-search-api",
+            "messages": [ { "role": "user", "content": "hi" } ],
+            "web_search_options": options,
+        }))
+        .expect("valid request")
+    }
+
+    #[test]
+    fn web_search_options_reach_the_generation_options_untouched() {
+        let request = web_search_request(serde_json::json!({
+            "search_context_size": "medium",
+            "user_location": { "type": "approximate", "country": "ID" }
+        }));
+
+        request
+            .validate_web_search_options()
+            .expect("valid options");
+
+        let options = request.generation_options();
+        let carried = options.web_search_options.expect("carried through");
+        assert_eq!(carried["search_context_size"], "medium");
+        assert_eq!(carried["user_location"]["country"], "ID");
+    }
+
+    #[test]
+    fn a_malformed_web_search_options_is_rejected() {
+        for options in [
+            serde_json::json!("medium"),
+            serde_json::json!([{ "search_context_size": "low" }]),
+            serde_json::json!({ "search_context_size": 3 }),
+            serde_json::json!({ "search_context_size": "huge" }),
+        ] {
+            let request = web_search_request(options.clone());
+            assert!(
+                request.validate_web_search_options().is_err(),
+                "{options} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_request_without_web_search_options_is_valid() {
+        let request: ChatCompletionRequest = serde_json::from_value(serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [ { "role": "user", "content": "hi" } ],
+        }))
+        .expect("valid request");
+
+        request
+            .validate_web_search_options()
+            .expect("absent options are fine");
+        assert!(request.generation_options().web_search_options.is_none());
     }
 
     #[test]

@@ -218,6 +218,20 @@ resolve up front, and the client connects only to the pinned addresses. The guar
 also rejects `100.64.0.0/10` (RFC 6598 CGNAT), which some cloud metadata proxies
 sit inside.
 
+### Built-in web search
+
+`POST /v1/chat/completions` accepts OpenAI's `web_search_options` and replays it
+verbatim to an `openai-compatible` upstream. The router validates the shape —
+the value must be an object, and `search_context_size` must be `low`, `medium`
+or `high` — but never rewrites the provider's own knobs, because each
+implementation exposes its own set. A malformed value is a `400` before any
+upstream call, and the option is rejected on `anthropic-native`,
+`command-code` and `codebuddy-intl` connections: those stacks cannot carry it,
+so accepting it would silently answer without searching.
+
+Anthropic's equivalent is a `tools` entry (`web_search_20250305`), not this
+field; the router leaves non-function tools untouched in `/v1/responses`.
+
 ### Schema (`migrations/0001_init.sql`)
 
 | Table | Purpose |

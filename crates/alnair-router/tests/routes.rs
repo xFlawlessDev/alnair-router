@@ -5610,6 +5610,67 @@ async fn an_unrecognizable_search_body_is_forwarded_untouched() {
 }
 
 #[tokio::test]
+async fn web_search_options_reach_an_openai_compatible_upstream_verbatim() {
+    let (app, _db) = app(false).await;
+    let (base_url, captured) = spawn_capturing_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(&app, &connection_id, "searcher", Some("gpt-5-search-api")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "searcher",
+            "messages": [{ "role": "user", "content": "what is new today?" }],
+            "web_search_options": { "search_context_size": "medium" }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+
+    let sent = captured.lock().expect("capture lock");
+    assert_eq!(
+        sent[0]["web_search_options"]["search_context_size"],
+        "medium"
+    );
+}
+
+#[tokio::test]
+async fn a_malformed_web_search_options_is_a_400_not_a_silent_drop() {
+    let (app, _db) = app(false).await;
+    let (base_url, captured) = spawn_capturing_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(&app, &connection_id, "searchy2", Some("gpt-5-search-api")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "searchy2",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "web_search_options": { "search_context_size": "enormous" }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected body: {body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("search_context_size"),
+        "unexpected body: {body}"
+    );
+    assert!(
+        captured.lock().expect("capture lock").is_empty(),
+        "a rejected request must not reach the upstream"
+    );
+}
+
+#[tokio::test]
 async fn retrieve_model_returns_one_model_object() {
     let (app, _db) = app(false).await;
     let base_url = spawn_media_upstream("{}").await;

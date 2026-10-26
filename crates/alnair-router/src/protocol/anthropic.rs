@@ -182,6 +182,8 @@ impl MessagesRequest {
                 let budget = thinking.budget_tokens.unwrap_or(0);
                 Some(crate::upstream::chat_backend::thinking_level_from_budget(budget).to_string())
             }),
+            // Anthropic's own web search is a `tools` entry, not this field.
+            web_search_options: None,
         })
     }
 }

@@ -108,6 +108,11 @@ pub struct LlmStreamOptions {
     pub num_ctx: Option<i32>,
     pub thinking_level: Option<ThinkingLevel>,
     pub cache_retention: CacheRetention,
+    /// OpenAI `web_search_options`, replayed verbatim on an OpenAI-compatible
+    /// upstream. The router does not interpret the object; providers that
+    /// support built-in web search read it, and the rest reject the request,
+    /// which surfaces as an error rather than a silent drop.
+    pub web_search_options: Option<serde_json::Value>,
     pub connect_timeout_ms: Option<u64>,
     pub idle_timeout_ms: Option<u64>,
     /// Upper bound for the exponential retry delay, in milliseconds.
@@ -131,6 +136,7 @@ impl Default for LlmStreamOptions {
             num_ctx: None,
             thinking_level: None,
             cache_retention: CacheRetention::None,
+            web_search_options: None,
             connect_timeout_ms: None,
             idle_timeout_ms: None,
             max_retry_delay_ms: 30_000,
@@ -248,6 +254,7 @@ impl From<&GenerationOptions> for LlmStreamOptions {
             num_ctx: value.num_ctx,
             thinking_level: value.thinking_level,
             cache_retention: CacheRetention::None,
+            web_search_options: None,
             connect_timeout_ms: None,
             idle_timeout_ms: None,
             max_retry_delay_ms: 30_000,
@@ -289,6 +296,11 @@ impl LlmStreamOptions {
         }
         if supports_cache_control && let Some(cache_control) = self.openai_cache_control() {
             body["cache_control"] = cache_control;
+        }
+        // Replayed verbatim: the router validates the shape but never rewrites
+        // the provider's own web-search knobs.
+        if let Some(web_search_options) = &self.web_search_options {
+            body["web_search_options"] = web_search_options.clone();
         }
     }
 
