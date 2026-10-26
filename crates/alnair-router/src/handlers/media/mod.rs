@@ -8,6 +8,7 @@
 mod fetch;
 mod multipart;
 mod proxy;
+mod search;
 
 pub use fetch::web_fetch;
 
@@ -176,10 +177,15 @@ pub async fn video_status(
     passthrough(response).await
 }
 
-/// `POST /v1/search` — SearXNG-style search passthrough.
+/// `POST /v1/search` — search passthrough with a normalized reply.
 ///
 /// The upstream takes no model, so an optional `model` in the body only picks
 /// the connection; it is stripped before the request is forwarded.
+///
+/// The response is mapped onto the router's canonical search shape when the
+/// upstream returned something recognizable, so a client does not have to know
+/// whether Tavily, Perplexity, Brave or SearXNG answered. Anything the router
+/// cannot recognize is forwarded untouched.
 pub async fn search(
     State(state): State<AppState>,
     Extension(key): Extension<Option<AuthenticatedKey>>,
@@ -212,7 +218,37 @@ pub async fn search(
     context
         .record(&target, status_label(status), latency_ms)
         .await;
-    passthrough(response).await
+
+    if !status.is_success() {
+        return passthrough(response).await;
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| crate::error::Error::Upstream(format!("search body: {error}")))?;
+    let parsed: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(parsed) => parsed,
+        // Not JSON at all: hand the caller exactly what the upstream said.
+        Err(_) => return raw_json_response(bytes),
+    };
+
+    match search::normalize_search_response(&parsed, None) {
+        Some(normalized) => raw_json_response(
+            serde_json::to_vec(&normalized)
+                .map_err(|error| crate::error::Error::Internal(error.to_string()))?,
+        ),
+        None => raw_json_response(bytes),
+    }
+}
+
+/// Returns a JSON body with a 200 status.
+fn raw_json_response(bytes: impl Into<axum::body::Bytes>) -> Result<Response> {
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(bytes.into()))
+        .map_err(|error| crate::error::Error::Internal(error.to_string()))
 }
 
 /// Forwards a multipart body upstream, rewriting its `model` field.

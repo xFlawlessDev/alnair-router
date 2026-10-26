@@ -198,6 +198,26 @@ connection's provider, so an operator can tell a misrouted request from a
 malformed one. `ContentPart::Media` carries the raw wire object; the Anthropic
 provider asserts it never receives one.
 
+### Search and fetch
+
+`POST /v1/search` proxies the request to the resolved connection's `/search`,
+because the request shape is the upstream's own: Tavily and Perplexity both take
+`query` + `max_results`, LiteLLM picks a provider with `search_tool_name`, and
+SearXNG wants form-encoded `q`. Only the base URL can absorb a different path;
+a different *encoding* would need a per-connection mode. The response is then
+mapped onto one canonical shape by `handlers/media/search.rs` — `results[]` with
+`title`, `url`, `snippet`, `score`, `published_at`, `content` — so a client does
+not have to know which provider answered. Normalization is best-effort: a body
+with no recognizable result array is forwarded verbatim, and a non-2xx response
+is never rewritten.
+
+`POST /v1/web/fetch` is **not** a proxy. It fetches the URL itself, so no
+connection, base URL or provider is involved. That is why the SSRF guard is the
+only thing between it and the internal network: every hop is validated, hostnames
+resolve up front, and the client connects only to the pinned addresses. The guard
+also rejects `100.64.0.0/10` (RFC 6598 CGNAT), which some cloud metadata proxies
+sit inside.
+
 ### Schema (`migrations/0001_init.sql`)
 
 | Table | Purpose |

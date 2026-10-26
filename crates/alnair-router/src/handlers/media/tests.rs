@@ -116,6 +116,28 @@ fn private_ip_ranges_are_rejected() {
 }
 
 #[test]
+fn carrier_grade_nat_ranges_are_rejected() {
+    // RFC 6598 shared address space; some cloud metadata proxies live here.
+    for address in ["100.64.0.1", "100.127.255.254", "::ffff:100.64.0.1"] {
+        assert!(
+            is_private_ip(ip(address)),
+            "{address} should be private (CGNAT)"
+        );
+    }
+}
+
+#[test]
+fn addresses_adjacent_to_cgnat_stay_public() {
+    // 100.63.255.255 and 100.128.0.0 sit just outside 100.64.0.0/10.
+    for address in ["100.63.255.255", "100.128.0.0", "100.0.0.1"] {
+        assert!(
+            !is_private_ip(ip(address)),
+            "{address} should be considered public"
+        );
+    }
+}
+
+#[test]
 fn public_ips_are_allowed() {
     for address in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"] {
         assert!(

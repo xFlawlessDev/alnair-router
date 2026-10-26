@@ -5504,6 +5504,111 @@ async fn newly_added_proxy_endpoints_are_routed() {
     }
 }
 
+/// Serves a fixed JSON body from `/v1/search`, so a test can drive the
+/// normalizer with a specific upstream dialect.
+async fn spawn_search_upstream(body: serde_json::Value) -> String {
+    let router = axum::Router::new()
+        .route(
+            "/v1/search",
+            axum::routing::post(move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }),
+        )
+        .route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({ "object": "list", "data": [] }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}/v1")
+}
+
+/// Creates a connection and alias, then runs one search against it.
+async fn search_through(
+    app: &axum::Router,
+    prefix: &str,
+    upstream_body: serde_json::Value,
+) -> serde_json::Value {
+    let base_url = spawn_search_upstream(upstream_body).await;
+    let prefix = route_media_to(app, &base_url, prefix, "tavily").await;
+
+    let (status, body) = json_request(
+        app,
+        "POST",
+        "/v1/search",
+        serde_json::json!({ "model": prefix, "query": "rust", "max_results": 3 }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    body
+}
+
+#[tokio::test]
+async fn search_responses_are_normalized_across_upstream_dialects() {
+    let (app, _db) = app(false).await;
+
+    // Tavily: `content` + `score` + `published_date`.
+    let tavily = search_through(
+        &app,
+        "tavilyish",
+        serde_json::json!({
+            "query": "rust",
+            "results": [{
+                "title": "Rust",
+                "url": "https://rust-lang.org",
+                "content": "A language.",
+                "score": 0.9,
+                "published_date": "2024-01-01"
+            }]
+        }),
+    )
+    .await;
+    assert_eq!(tavily["object"], "search");
+    assert_eq!(tavily["query"], "rust");
+    assert_eq!(tavily["results"][0]["url"], "https://rust-lang.org");
+    assert_eq!(tavily["results"][0]["snippet"], "A language.");
+    assert_eq!(tavily["results"][0]["score"], 0.9);
+
+    // Brave: results nested under `web`, snippet spelled `description`.
+    let brave = search_through(
+        &app,
+        "braveish",
+        serde_json::json!({
+            "web": { "results": [{ "title": "T", "url": "https://b", "description": "D" }] }
+        }),
+    )
+    .await;
+    assert_eq!(brave["results"][0]["url"], "https://b");
+    assert_eq!(brave["results"][0]["snippet"], "D");
+}
+
+#[tokio::test]
+async fn an_unrecognizable_search_body_is_forwarded_untouched() {
+    let (app, _db) = app(false).await;
+
+    // No `results` array anywhere: the router must not invent a shape.
+    let body = search_through(
+        &app,
+        "oddish",
+        serde_json::json!({ "unexpected": { "shape": true } }),
+    )
+    .await;
+
+    assert_eq!(body["unexpected"]["shape"], true);
+    assert!(body.get("object").is_none());
+}
+
 #[tokio::test]
 async fn retrieve_model_returns_one_model_object() {
     let (app, _db) = app(false).await;

@@ -1,6 +1,6 @@
 //! `/v1/web/fetch`: a server-side fetch with a complete SSRF guard.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -127,8 +127,12 @@ fn is_localhost_name(host: &str) -> bool {
     matches!(host, "localhost" | "localhost.localdomain")
 }
 
-/// Rejects loopback, RFC-1918, link-local, unique-local, unspecified and
-/// broadcast addresses — including IPv4-mapped IPv6 forms of those ranges.
+/// Rejects loopback, RFC-1918, link-local, unique-local, unspecified,
+/// broadcast and CGNAT addresses — including IPv4-mapped IPv6 forms of those
+/// ranges.
+///
+/// `100.64.0.0/10` is carrier-grade NAT, but some cloud metadata proxies sit
+/// inside it, so it is not a safe fetch target either.
 pub(crate) fn is_private_ip(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(address) => {
@@ -137,6 +141,7 @@ pub(crate) fn is_private_ip(address: IpAddr) -> bool {
                 || address.is_link_local()
                 || address.is_unspecified()
                 || address.is_broadcast()
+                || is_cgnat(address)
         }
         IpAddr::V6(address) => {
             address.is_loopback()
@@ -148,6 +153,13 @@ pub(crate) fn is_private_ip(address: IpAddr) -> bool {
                     .is_some_and(|mapped| is_private_ip(IpAddr::V4(mapped)))
         }
     }
+}
+
+/// True for `100.64.0.0/10`, the shared address space RFC 6598 reserves for
+/// carrier-grade NAT.
+fn is_cgnat(address: Ipv4Addr) -> bool {
+    let octets = address.octets();
+    octets[0] == 100 && (64..128).contains(&octets[1])
 }
 
 /// Builds a client that never follows redirects and, for hostnames, connects
