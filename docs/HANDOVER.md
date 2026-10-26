@@ -211,12 +211,21 @@ not have to know which provider answered. Normalization is best-effort: a body
 with no recognizable result array is forwarded verbatim, and a non-2xx response
 is never rewritten.
 
-`POST /v1/web/fetch` is **not** a proxy. It fetches the URL itself, so no
-connection, base URL or provider is involved. That is why the SSRF guard is the
-only thing between it and the internal network: every hop is validated, hostnames
-resolve up front, and the client connects only to the pinned addresses. The guard
-also rejects `100.64.0.0/10` (RFC 6598 CGNAT), which some cloud metadata proxies
-sit inside.
+`POST /v1/web/fetch` fetches the URL itself by default, so no connection, base
+URL or provider is involved. That is why the SSRF guard is the only thing between
+it and the internal network: every hop is validated, hostnames resolve up front,
+and the client connects only to the pinned addresses. The guard also rejects
+`100.64.0.0/10` (RFC 6598 CGNAT), which some cloud metadata proxies sit inside.
+
+A connection can opt into `web_fetch_mode = provider` with a `web_fetch_path`
+(e.g. `/v1/scrape`), in which case a request carrying that connection's model is
+forwarded to its extract endpoint instead. That is the only way to reach pages
+that need JavaScript rendering. The reply is normalized into the same
+`{ url, title, content: { format, text, length } }` envelope the local path
+returns, so a client switches modes without changing how it reads the response;
+a shape the router does not recognize keeps the whole upstream body under `raw`
+rather than reporting an empty page. `local` stays the default, so no existing
+connection changes behaviour.
 
 ### Built-in web search
 

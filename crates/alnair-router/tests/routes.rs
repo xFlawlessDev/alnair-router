@@ -5670,6 +5670,110 @@ async fn a_malformed_web_search_options_is_a_400_not_a_silent_drop() {
     );
 }
 
+/// Serves an extract endpoint that echoes a Firecrawl-shaped body, and records
+/// what the router sent it.
+async fn spawn_extract_upstream() -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+) {
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = captured.clone();
+
+    let router = axum::Router::new()
+        .route(
+            "/v1/scrape",
+            axum::routing::post(move |body: axum::Json<serde_json::Value>| {
+                let sink = sink.clone();
+                async move {
+                    sink.lock().expect("capture lock").push(body.0);
+                    axum::Json(serde_json::json!({
+                        "success": true,
+                        "data": {
+                            "markdown": "rendered body",
+                            "metadata": { "title": "Rendered" }
+                        }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({ "object": "list", "data": [] }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    (format!("http://{address}/v1"), captured)
+}
+
+#[tokio::test]
+async fn web_fetch_uses_the_provider_when_the_connection_asks_for_it() {
+    let (app, _db) = app(false).await;
+    let (base_url, captured) = spawn_extract_upstream().await;
+    let prefix = route_media_to(&app, &base_url, "extractor", "firecrawl").await;
+
+    // Point the connection at its extract path and switch it to provider mode.
+    let (_, connections) = get(&app, "/api/connections").await;
+    let connection_id = connections
+        .as_array()
+        .and_then(|list| list.first())
+        .and_then(|connection| connection["id"].as_str())
+        .expect("connection id")
+        .to_string();
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/connections/{connection_id}"),
+        serde_json::json!({
+            "web_fetch_mode": "provider",
+            "web_fetch_path": "/scrape"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/web/fetch",
+        serde_json::json!({ "model": prefix, "url": "https://example.com" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["content"]["text"], "rendered body");
+    assert_eq!(body["title"], "Rendered");
+
+    let sent = captured.lock().expect("capture lock");
+    assert_eq!(sent[0]["url"], "https://example.com");
+    assert_eq!(sent[0]["format"], "markdown");
+}
+
+#[tokio::test]
+async fn web_fetch_stays_local_without_a_model() {
+    // No model means no connection is consulted, so a private address is
+    // rejected by the SSRF guard exactly as before this feature existed.
+    let (app, _db) = app(false).await;
+
+    let (status, _) = json_request(
+        &app,
+        "POST",
+        "/v1/web/fetch",
+        serde_json::json!({ "url": "http://127.0.0.1:8080/admin" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn retrieve_model_returns_one_model_object() {
     let (app, _db) = app(false).await;

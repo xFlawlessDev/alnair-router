@@ -42,6 +42,14 @@ pub struct Connection {
     /// `bearer` (always `Authorization: Bearer`). OAuth/subscription session
     /// tokens need `bearer`; Anthropic-native upstreams otherwise reject them.
     pub auth_style: String,
+    /// Where `/v1/web/fetch` gets its content: `local` (the router fetches the
+    /// URL itself, behind the SSRF guard) or `provider` (forwarded to this
+    /// connection's extract endpoint). `provider` is how an operator reaches
+    /// pages that need JavaScript rendering.
+    pub web_fetch_mode: String,
+    /// Path appended to `base_url` for a provider fetch, e.g. `/v1/scrape`.
+    /// NULL means the router cannot serve provider fetches for this connection.
+    pub web_fetch_path: Option<String>,
     /// Built-in preset this connection was created from, if any.
     pub provider_id: Option<String>,
     /// Enabled extra keys from `connection_accounts`; loaded by the catalog and
@@ -111,6 +119,12 @@ pub struct CreateConnection {
     /// Credential presentation: `api_key` (default) or `bearer`.
     #[serde(default)]
     pub auth_style: Option<String>,
+    /// Where `/v1/web/fetch` gets its content: `local` (default) or `provider`.
+    #[serde(default)]
+    pub web_fetch_mode: Option<String>,
+    /// Extract path for a provider fetch, e.g. `/v1/scrape`.
+    #[serde(default)]
+    pub web_fetch_path: Option<String>,
     /// Preset to derive `provider_type`, `base_url` and default headers from.
     /// Filled fields may still be overridden.
     #[serde(default)]
@@ -143,6 +157,12 @@ pub struct UpdateConnection {
     /// Set the credential presentation (`api_key`/`bearer`).
     #[serde(default)]
     pub auth_style: Option<String>,
+    /// Set the fetch mode (`local`/`provider`).
+    #[serde(default)]
+    pub web_fetch_mode: Option<String>,
+    /// Set or clear the provider extract path.
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub web_fetch_path: Option<Option<String>>,
     /// Set or clear the preset this connection is labelled with.
     #[serde(default)]
     pub provider_id: Option<String>,
@@ -288,8 +308,8 @@ impl ConnectionRepository {
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
                  connect_timeout_ms, idle_timeout_ms, pricing_model, cache_retention,
-                 auth_style, provider_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 auth_style, web_fetch_mode, web_fetch_path, provider_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -305,6 +325,8 @@ impl ConnectionRepository {
             input.cache_retention.as_deref(),
         )?)
         .bind(normalized_auth_style(input.auth_style.as_deref())?)
+        .bind(normalized_web_fetch_mode(input.web_fetch_mode.as_deref())?)
+        .bind(normalized_model(input.web_fetch_path.as_deref()))
         .bind(&provider_id)
         .bind(now)
         .bind(now)
@@ -385,6 +407,14 @@ impl ConnectionRepository {
             Some(value) => normalized_auth_style(Some(value))?.to_string(),
             None => existing.auth_style.clone(),
         };
+        let web_fetch_mode = match &input.web_fetch_mode {
+            Some(value) => normalized_web_fetch_mode(Some(value))?.to_string(),
+            None => existing.web_fetch_mode.clone(),
+        };
+        let web_fetch_path = match &input.web_fetch_path {
+            Some(value) => normalized_model(value.as_deref()),
+            None => existing.web_fetch_path.clone(),
+        };
         let provider_id = match input.provider_id.as_deref().map(str::trim) {
             Some("") => None,
             Some(id) => {
@@ -399,7 +429,7 @@ impl ConnectionRepository {
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
                  connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, cache_retention = ?,
-                 auth_style = ?, provider_id = ?, updated_at = ?
+                 auth_style = ?, web_fetch_mode = ?, web_fetch_path = ?, provider_id = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -413,6 +443,8 @@ impl ConnectionRepository {
         .bind(pricing_model)
         .bind(&cache_retention)
         .bind(&auth_style)
+        .bind(&web_fetch_mode)
+        .bind(&web_fetch_path)
         .bind(&provider_id)
         .bind(Utc::now())
         .bind(id)
@@ -490,6 +522,17 @@ fn normalized_auth_style(value: Option<&str>) -> Result<&'static str> {
         Some("bearer") => Ok("bearer"),
         Some(other) => Err(Error::BadRequest(format!(
             "auth_style must be api_key or bearer (got '{other}')"
+        ))),
+    }
+}
+
+/// Validates and defaults where `/v1/web/fetch` gets its content.
+fn normalized_web_fetch_mode(value: Option<&str>) -> Result<&'static str> {
+    match value.map(str::trim) {
+        None | Some("") | Some("local") => Ok("local"),
+        Some("provider") => Ok("provider"),
+        Some(other) => Err(Error::BadRequest(format!(
+            "web_fetch_mode must be local or provider (got '{other}')"
         ))),
     }
 }

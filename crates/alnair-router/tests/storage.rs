@@ -61,6 +61,8 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         pricing_model: None,
         cache_retention: None,
         auth_style: None,
+        web_fetch_mode: None,
+        web_fetch_path: None,
         provider_id: None,
     }
 }
@@ -386,6 +388,11 @@ async fn provider_type_rebuild_keeps_children() {
         .execute(&db.pool)
         .await
         .expect("oauth-accounts migration");
+
+    sqlx::raw_sql(include_str!("../migrations/0024_connection_web_fetch.sql"))
+        .execute(&db.pool)
+        .await
+        .expect("web-fetch migration");
 
     let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
         .fetch_all(&db.pool)
@@ -1690,6 +1697,8 @@ async fn connections_round_trip_a_pricing_model_pin() {
             pricing_model: Some("gpt-5.6-luna".to_string()),
             cache_retention: None,
             auth_style: None,
+            web_fetch_mode: None,
+            web_fetch_path: None,
             provider_id: None,
         })
         .await
@@ -1774,6 +1783,8 @@ async fn connections_round_trip_the_auth_style() {
             &defaulted.id,
             UpdateConnection {
                 auth_style: Some(String::new()),
+                web_fetch_mode: None,
+                web_fetch_path: None,
                 ..Default::default()
             },
         )
@@ -1797,6 +1808,8 @@ async fn unknown_auth_style_is_rejected() {
             &created.id,
             UpdateConnection {
                 auth_style: Some("bogus".to_string()),
+                web_fetch_mode: None,
+                web_fetch_path: None,
                 ..Default::default()
             },
         )

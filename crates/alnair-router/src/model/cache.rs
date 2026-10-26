@@ -179,6 +179,8 @@ mod tests {
                 pricing_model: None,
                 cache_retention: None,
                 auth_style: None,
+                web_fetch_mode: None,
+                web_fetch_path: None,
                 provider_id: None,
             })
             .await

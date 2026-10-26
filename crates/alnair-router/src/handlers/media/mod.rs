@@ -10,7 +10,7 @@ mod multipart;
 mod proxy;
 mod search;
 
-pub use fetch::web_fetch;
+pub use fetch::web_fetch as local_web_fetch;
 
 use axum::Extension;
 use axum::Json;
@@ -240,6 +240,79 @@ pub async fn search(
         ),
         None => raw_json_response(bytes),
     }
+}
+
+/// `POST /v1/web/fetch` — fetches a URL server-side.
+///
+/// Without a `model` the router fetches the URL itself, behind the SSRF guard.
+/// A `model` naming a connection with `web_fetch_mode = provider` forwards the
+/// URL to that connection's extract endpoint instead, which is how pages that
+/// need JavaScript rendering are reached.
+pub async fn web_fetch(
+    State(state): State<AppState>,
+    Extension(key): Extension<Option<AuthenticatedKey>>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response> {
+    let url = body
+        .get("url")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| crate::error::Error::BadRequest("url is required".to_string()))?
+        .to_string();
+
+    let model = model_of(&body);
+    let Some(model) = model.filter(|model| !model.trim().is_empty()) else {
+        // No connection named: the router's own fetch is the default.
+        return local_web_fetch(Json(body)).await;
+    };
+
+    ensure_model_allowed(&key, Some(&model))?;
+    let target = resolve_target(&state, Some(&model)).await?;
+
+    let mode = state
+        .connections()
+        .get(&target.connection_id)
+        .await?
+        .map(|connection| (connection.web_fetch_mode, connection.web_fetch_path))
+        .unwrap_or_default();
+
+    let (mode, path) = mode;
+    if mode != "provider" {
+        // The connection exists but fetches locally; behave exactly as before.
+        return local_web_fetch(Json(body)).await;
+    }
+
+    let path = path.ok_or_else(|| {
+        crate::error::Error::BadRequest(format!(
+            "connection `{}` is set to fetch through its provider but has no web_fetch_path",
+            target.connection_name
+        ))
+    })?;
+
+    let format = body
+        .get("format")
+        .and_then(|value| value.as_str())
+        .unwrap_or("markdown");
+
+    let context = ProxyContext::new(state, &key, &Some(model));
+    let _permit = context.state.limiter.acquire(&target.connection_id).await?;
+    let started = std::time::Instant::now();
+
+    let result = fetch::provider_fetch(fetch::ProviderFetch {
+        target: &target,
+        path: &path,
+        url: &url,
+        format,
+    })
+    .await;
+
+    let latency_ms = started.elapsed().as_millis() as u64;
+    let label = match &result {
+        Ok(_) => "ok",
+        Err(_) => "error",
+    };
+    context.record(&target, label, latency_ms).await;
+
+    result
 }
 
 /// Returns a JSON body with a 200 status.

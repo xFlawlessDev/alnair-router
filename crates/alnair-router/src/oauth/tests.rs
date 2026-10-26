@@ -331,6 +331,8 @@ async fn cache_with_account(
             pricing_model: None,
             cache_retention: None,
             auth_style: Some("bearer".to_string()),
+            web_fetch_mode: None,
+            web_fetch_path: None,
             provider_id: None,
         })
         .await
