@@ -372,19 +372,10 @@ fn convert_message(item: &serde_json::Value) -> Result<RouterMessage> {
         }
         Some(serde_json::Value::Array(parts)) => parts
             .iter()
-            .filter_map(
-                |part| match part.get("type").and_then(|value| value.as_str()) {
-                    Some("input_text" | "output_text" | "text") => part
-                        .get("text")
-                        .and_then(|value| value.as_str())
-                        .map(|text| chat_backend::MessagePart::Text(text.to_string())),
-                    Some("input_image" | "image_url") => part
-                        .get("image_url")
-                        .and_then(image_url)
-                        .map(chat_backend::MessagePart::ImageUrl),
-                    _ => None,
-                },
-            )
+            .map(convert_part)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
             .collect(),
         Some(_) => {
             return Err(Error::BadRequest(
@@ -394,6 +385,33 @@ fn convert_message(item: &serde_json::Value) -> Result<RouterMessage> {
     };
 
     Ok(chat_backend::message_parts(role, parts))
+}
+
+/// Converts one Responses content part, or `None` for a part that carries no
+/// payload the router can forward.
+fn convert_part(part: &serde_json::Value) -> Result<Option<chat_backend::MessagePart>> {
+    let kind = part.get("type").and_then(|value| value.as_str());
+    match kind {
+        Some("input_text" | "output_text" | "text") => Ok(part
+            .get("text")
+            .and_then(|value| value.as_str())
+            .map(|text| chat_backend::MessagePart::Text(text.to_string()))),
+        Some("input_image" | "image_url") => Ok(part
+            .get("image_url")
+            .and_then(image_url)
+            .map(chat_backend::MessagePart::ImageUrl)),
+        Some(kind) if crate::protocol::openai::is_media_part_type(kind) => {
+            crate::protocol::openai::media_part(part.clone()).map(Some)
+        }
+        // An unrecognized part is a client bug, not something to drop: the
+        // model would otherwise answer a question it never saw.
+        Some(other) => Err(Error::BadRequest(format!(
+            "unsupported content part type `{other}`"
+        ))),
+        None => Err(Error::BadRequest(
+            "content part requires a `type`".to_string(),
+        )),
+    }
 }
 
 /// Reads an image URL from either wire shape.

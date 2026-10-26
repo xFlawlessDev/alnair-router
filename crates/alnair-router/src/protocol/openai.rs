@@ -103,6 +103,144 @@ pub struct OpenAiContentPart {
     pub text: Option<String>,
     #[serde(default)]
     pub image_url: Option<OpenAiImageUrl>,
+    /// Every other field of the part, kept so a part the router does not
+    /// translate can be replayed upstream exactly as the client sent it.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl OpenAiContentPart {
+    /// Rebuilds the original wire object for verbatim replay.
+    fn to_raw(&self) -> serde_json::Value {
+        let mut object = self.extra.clone();
+        object.insert(
+            "type".to_string(),
+            serde_json::Value::String(self.part_type.clone()),
+        );
+        if let Some(text) = &self.text {
+            object.insert("text".to_string(), serde_json::Value::String(text.clone()));
+        }
+        if let Some(image) = &self.image_url {
+            object.insert(
+                "image_url".to_string(),
+                serde_json::json!({ "url": image.url }),
+            );
+        }
+        serde_json::Value::Object(object)
+    }
+
+    /// Converts one wire part into a router part.
+    ///
+    /// Text and image parts are translated; audio, video and file parts are
+    /// validated and then carried verbatim, because OpenAI-compatible
+    /// upstreams spell them differently. A part whose payload is missing, or a
+    /// type the router cannot vouch for, is a `400` — silently dropping it
+    /// would let the model answer a question it never saw.
+    fn into_message_part(self) -> Result<Option<MessagePart>> {
+        match self.part_type.as_str() {
+            "text" => Ok(self.text.map(MessagePart::Text)),
+            "image_url" => Ok(self.image_url.map(|image| MessagePart::ImageUrl(image.url))),
+            kind if is_media_part_type(kind) => {
+                let raw = self.to_raw();
+                media_part(raw).map(Some)
+            }
+            other => Err(Error::BadRequest(format!(
+                "unsupported content part type `{other}`; supported: text, image_url, {}",
+                MEDIA_PART_TYPES.join(", ")
+            ))),
+        }
+    }
+}
+
+/// Content part types the router forwards to an OpenAI-compatible upstream
+/// without interpreting them.
+///
+/// `input_audio`/`file` are OpenAI's spelling, `audio_url`/`video_url` the
+/// one most OpenAI-compatible gateways use, and `input_file`/`input_video` the
+/// Responses API spelling.
+const MEDIA_PART_TYPES: [&str; 6] = [
+    "input_audio",
+    "audio_url",
+    "video_url",
+    "input_video",
+    "file",
+    "input_file",
+];
+
+/// True when `kind` names a media part the router forwards verbatim.
+pub(crate) fn is_media_part_type(kind: &str) -> bool {
+    MEDIA_PART_TYPES.contains(&kind)
+}
+
+/// Validates a media part and wraps it for verbatim replay.
+///
+/// Shared with the Responses handler, which sees the same part shapes.
+pub(crate) fn media_part(raw: serde_json::Value) -> Result<MessagePart> {
+    validate_media_part(&raw)?;
+    Ok(MessagePart::Media(raw))
+}
+
+/// Checks that a media part carries the payload its type promises.
+///
+/// The router does not decode the media, but an empty or missing payload is a
+/// client bug worth surfacing before it reaches the provider.
+fn validate_media_part(raw: &serde_json::Value) -> Result<()> {
+    let kind = raw
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let payload = raw.get(kind).ok_or_else(|| {
+        Error::BadRequest(format!(
+            "content part `{kind}` is missing its `{kind}` payload"
+        ))
+    })?;
+
+    match kind {
+        "input_audio" => {
+            let data = payload
+                .get("data")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if data.trim().is_empty() {
+                return Err(Error::BadRequest(
+                    "`input_audio` requires a non-empty base64 `data` field".to_string(),
+                ));
+            }
+            if payload
+                .get("format")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+            {
+                return Err(Error::BadRequest(
+                    "`input_audio` requires a `format` field, e.g. `wav` or `mp3`".to_string(),
+                ));
+            }
+        }
+        _ => {
+            // The URL-shaped parts (`audio_url`, `video_url`, `file`, ...) all
+            // carry either a `url` string or a nested object holding one.
+            let url = payload
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| part_url(payload));
+            if url.as_deref().unwrap_or_default().trim().is_empty() {
+                return Err(Error::BadRequest(format!(
+                    "content part `{kind}` requires a non-empty `url`"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Reads a URL from either `{ "url": … }` or `{ "file_data": …, "filename": … }`.
+fn part_url(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| payload.get("file_data").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,11 +342,10 @@ impl OpenAiMessage {
             Some(OpenAiContent::Parts(parts)) => {
                 let parts: Vec<MessagePart> = parts
                     .into_iter()
-                    .filter_map(|part| match part.part_type.as_str() {
-                        "text" => part.text.map(MessagePart::Text),
-                        "image_url" => part.image_url.map(|image| MessagePart::ImageUrl(image.url)),
-                        _ => None,
-                    })
+                    .map(OpenAiContentPart::into_message_part)
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .flatten()
                     .collect();
 
                 if parts.is_empty() {
@@ -240,6 +377,91 @@ fn content_to_text(content: OpenAiContent) -> String {
             .filter_map(|part| part.text)
             .collect::<Vec<_>>()
             .join(" "),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message_from(content: serde_json::Value) -> Result<RouterMessage> {
+        let request: ChatCompletionRequest = serde_json::from_value(serde_json::json!({
+            "model": "gpt-4o-audio-preview",
+            "messages": [ { "role": "user", "content": content } ],
+        }))
+        .expect("valid request");
+        request
+            .into_messages()
+            .map(|mut messages| messages.remove(0))
+    }
+
+    fn parts_of(message: &RouterMessage) -> Vec<serde_json::Value> {
+        chat_backend::message_parts_json(message).expect("expected a multipart message")
+    }
+
+    #[test]
+    fn an_input_audio_part_survives_the_round_trip_verbatim() {
+        let message = message_from(serde_json::json!([
+            { "type": "text", "text": "apa ini?" },
+            { "type": "input_audio", "input_audio": { "data": "UklGRg==", "format": "wav" } }
+        ]))
+        .expect("message");
+
+        let parts = parts_of(&message);
+        assert_eq!(parts.len(), 2);
+        let raw = &parts[1];
+        assert_eq!(raw["type"], "input_audio");
+        assert_eq!(raw["input_audio"]["data"], "UklGRg==");
+        assert_eq!(raw["input_audio"]["format"], "wav");
+    }
+
+    #[test]
+    fn url_shaped_media_parts_are_carried_through() {
+        for (kind, payload) in [
+            ("audio_url", serde_json::json!({ "url": "https://x/a.mp3" })),
+            ("video_url", serde_json::json!({ "url": "https://x/a.mp4" })),
+            ("file", serde_json::json!({ "file_data": "JVBERi0=" })),
+        ] {
+            let message = message_from(serde_json::json!([{ "type": kind, kind: payload }]))
+                .unwrap_or_else(|error| panic!("{kind} rejected: {error}"));
+
+            let parts = parts_of(&message);
+            let raw = &parts[0];
+            assert_eq!(raw["type"], kind);
+        }
+    }
+
+    #[test]
+    fn unknown_part_types_are_rejected_instead_of_dropped() {
+        let error = message_from(serde_json::json!([{ "type": "input_smell", "smell": "?" }]))
+            .expect_err("unknown part must be rejected");
+
+        assert!(error.to_string().contains("unsupported content part type"));
+    }
+
+    #[test]
+    fn a_media_part_missing_its_payload_is_rejected() {
+        let error = message_from(serde_json::json!([{ "type": "input_audio" }]))
+            .expect_err("payload-less part must be rejected");
+        assert!(error.to_string().contains("missing its"));
+
+        let error = message_from(serde_json::json!([
+            { "type": "input_audio", "input_audio": { "data": "  ", "format": "wav" } }
+        ]))
+        .expect_err("empty audio data must be rejected");
+        assert!(error.to_string().contains("non-empty base64"));
+
+        let error = message_from(serde_json::json!([
+            { "type": "input_audio", "input_audio": { "data": "UklGRg==" } }
+        ]))
+        .expect_err("audio without a format must be rejected");
+        assert!(error.to_string().contains("format"));
+
+        let error = message_from(serde_json::json!([
+            { "type": "video_url", "video_url": { "url": "" } }
+        ]))
+        .expect_err("empty video url must be rejected");
+        assert!(error.to_string().contains("non-empty `url`"));
     }
 }
 

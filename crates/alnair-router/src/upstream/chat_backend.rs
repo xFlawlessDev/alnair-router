@@ -33,6 +33,11 @@ pub type RouterMessage = Message;
 pub enum MessagePart {
     Text(String),
     ImageUrl(String),
+    /// An audio, video or file part, kept as the exact wire object the client
+    /// sent. OpenAI-compatible upstreams disagree on the spelling of these
+    /// parts, so the router validates the shape and replays it verbatim rather
+    /// than translating it into one canonical form.
+    Media(serde_json::Value),
 }
 
 /// A tool call an assistant message is asking the model to run.
@@ -62,6 +67,17 @@ pub fn message_is_text(message: &RouterMessage) -> bool {
     matches!(message.content, MessageContent::Text(_))
 }
 
+/// Renders a message's content as wire parts, or `None` when it is plain text.
+///
+/// Callers outside this module cannot name the provider-layer content types, so
+/// this is how the rest of the crate inspects (and tests) a multipart message.
+pub fn message_parts_json(message: &RouterMessage) -> Option<Vec<serde_json::Value>> {
+    match &message.content {
+        MessageContent::Text(_) => None,
+        MessageContent::Parts(parts) => Some(parts.iter().map(ContentPart::to_json).collect()),
+    }
+}
+
 /// Builds a multimodal message from ordered parts.
 pub fn message_parts(role: impl Into<String>, parts: Vec<MessagePart>) -> RouterMessage {
     let parts = parts
@@ -75,6 +91,7 @@ pub fn message_parts(role: impl Into<String>, parts: Vec<MessagePart>) -> Router
                 content_type: "image_url".to_string(),
                 image_url: alnair_llm::ImageUrl { url },
             }),
+            MessagePart::Media(raw) => ContentPart::Media(alnair_llm::MediaContentPart { raw }),
         })
         .collect();
 
@@ -329,6 +346,27 @@ pub fn provider_type_from_str(value: &str) -> Result<ProviderType> {
     }
 }
 
+/// Returns the `type` of the first media part in `messages`, if any.
+fn first_media_part_kind(messages: &[RouterMessage]) -> Option<String> {
+    messages.iter().find_map(|message| match &message.content {
+        MessageContent::Text(_) => None,
+        MessageContent::Parts(parts) => parts.iter().find_map(|part| match part {
+            ContentPart::Media(media) => Some(media.kind().to_string()),
+            ContentPart::Text(_) | ContentPart::ImageUrl(_) => None,
+        }),
+    })
+}
+
+/// Human-readable provider name for error messages.
+fn provider_type_label(provider_type: &ProviderType) -> &'static str {
+    match provider_type {
+        ProviderType::OpenaiCompatible => "openai-compatible",
+        ProviderType::AnthropicNative => "anthropic-native",
+        ProviderType::CommandCode => "command-code",
+        ProviderType::CodeBuddyIntl => "codebuddy-intl",
+    }
+}
+
 /// Builds a provider registry with the supported implementations registered.
 pub fn default_registry() -> ProviderRegistry {
     ProviderRegistry::with_defaults()
@@ -410,6 +448,20 @@ pub fn stream(
     if registry.get(&provider_type).is_none() {
         return Err(Error::UnsupportedProviderType(format!(
             "no provider registered for {provider_type:?}"
+        )));
+    }
+
+    // Media parts are only meaningful on an OpenAI-compatible upstream, where
+    // they are replayed verbatim. Every other provider stack can only carry
+    // text and images, so accepting them would silently drop the media and let
+    // the model answer a question it never saw. Reject the request instead.
+    if provider_type != ProviderType::OpenaiCompatible
+        && let Some(kind) = first_media_part_kind(&messages)
+    {
+        return Err(Error::BadRequest(format!(
+            "content part `{kind}` is only supported on openai-compatible connections; \
+             this model is served by a {} connection",
+            provider_type_label(&provider_type)
         )));
     }
 
@@ -571,6 +623,59 @@ mod tests {
             provider_type_from_str("codebuddy-intl").expect("provider type"),
             ProviderType::CodeBuddyIntl
         );
+    }
+
+    fn media_message() -> RouterMessage {
+        message_parts(
+            "user",
+            vec![
+                MessagePart::Text("apa ini?".to_string()),
+                MessagePart::Media(serde_json::json!({
+                    "type": "input_audio",
+                    "input_audio": { "data": "UklGRg==", "format": "wav" }
+                })),
+            ],
+        )
+    }
+
+    #[test]
+    fn media_parts_are_visible_to_the_provider_gate() {
+        let messages = vec![media_message()];
+        assert_eq!(
+            first_media_part_kind(&messages).as_deref(),
+            Some("input_audio")
+        );
+
+        let text_only = vec![message_text("user", "hello")];
+        assert!(first_media_part_kind(&text_only).is_none());
+    }
+
+    #[test]
+    fn media_parts_are_rejected_on_a_non_openai_provider() {
+        let result = stream(
+            std::sync::Arc::new(default_registry()),
+            "anthropic-native",
+            "https://api.anthropic.com/v1",
+            "claude-sonnet-4",
+            vec![media_message()],
+            Some("sk-ant"),
+            None,
+            RetryPolicy::default(),
+            true,
+            None,
+            BTreeMap::new(),
+            None,
+            CacheRetention::None,
+            AuthStyle::ApiKey,
+        );
+
+        let error = match result {
+            Ok(_) => panic!("media must not reach an anthropic connection"),
+            Err(error) => error,
+        };
+        let text = error.to_string();
+        assert!(text.contains("input_audio"), "{text}");
+        assert!(text.contains("openai-compatible"), "{text}");
     }
 
     #[test]

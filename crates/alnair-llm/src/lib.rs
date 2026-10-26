@@ -23,5 +23,5 @@ pub use providers::{
 };
 pub use types::{
     ChatError, ContentPart, GenerationOptions, ImageUrl, ImageUrlContentPart, LlmStreamChunk,
-    Message, MessageContent, MessageToolCall, ProviderType, TextContentPart,
+    MediaContentPart, Message, MessageContent, MessageToolCall, ProviderType, TextContentPart,
 };

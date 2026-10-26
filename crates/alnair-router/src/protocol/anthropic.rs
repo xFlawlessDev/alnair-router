@@ -226,6 +226,7 @@ impl AnthropicMessage {
                             part_type: "text".to_string(),
                             text: Some(text),
                             image_url: None,
+                            extra: serde_json::Map::new(),
                         });
                     }
                 }
@@ -235,6 +236,7 @@ impl AnthropicMessage {
                             part_type: "image_url".to_string(),
                             text: None,
                             image_url: Some(OpenAiImageUrl { url: source }),
+                            extra: serde_json::Map::new(),
                         });
                     }
                 }

@@ -508,6 +508,16 @@ fn content_blocks_from_message_content(content: &MessageContent) -> Vec<Anthropi
                             });
                         }
                     }
+                    // The router rejects media parts before they reach a
+                    // non-OpenAI provider; dropping one here would let the
+                    // model answer a question it never saw.
+                    ContentPart::Media(media) => {
+                        debug_assert!(
+                            false,
+                            "media content part reached the Anthropic provider: {}",
+                            media.kind()
+                        );
+                    }
                 }
             }
             blocks

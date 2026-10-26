@@ -123,6 +123,52 @@ fn content_parts_accept_text_and_images() {
     assert!(!chat_backend::message_is_text(&messages[0]));
 }
 
+#[test]
+fn content_parts_accept_audio_and_video_verbatim() {
+    let request = request(json!([
+        {
+            "role": "user",
+            "content": [
+                { "type": "input_text", "text": "transcribe this" },
+                { "type": "input_audio", "input_audio": { "data": "UklGRg==", "format": "wav" } },
+                { "type": "video_url", "video_url": { "url": "https://example.com/a.mp4" } }
+            ]
+        }
+    ]));
+
+    let messages = build_messages(&request).expect("messages");
+    let parts = chat_backend::message_parts_json(&messages[0]).expect("multipart message");
+
+    assert_eq!(parts.len(), 3);
+    assert_eq!(parts[1]["type"], "input_audio");
+    assert_eq!(parts[1]["input_audio"]["format"], "wav");
+    assert_eq!(parts[2]["video_url"]["url"], "https://example.com/a.mp4");
+}
+
+#[test]
+fn an_unknown_content_part_is_rejected_rather_than_dropped() {
+    let request = request(json!([
+        {
+            "role": "user",
+            "content": [ { "type": "input_hologram", "blob": "??" } ]
+        }
+    ]));
+
+    assert!(build_messages(&request).is_err());
+}
+
+#[test]
+fn a_media_part_without_its_payload_is_rejected() {
+    let request = request(json!([
+        {
+            "role": "user",
+            "content": [ { "type": "input_audio" } ]
+        }
+    ]));
+
+    assert!(build_messages(&request).is_err());
+}
+
 /// Responses declares tools flat; providers expect them nested under `function`.
 #[test]
 fn flat_function_tools_are_nested_for_the_provider_layer() {

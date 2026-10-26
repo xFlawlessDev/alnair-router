@@ -173,6 +173,31 @@ POST /v1/chat/completions { "model": "free-forever" }
   └─ handler translates chunks to OpenAI SSE, writes usage row
 ```
 
+### Multimodal input (audio, video, file)
+
+`/v1/chat/completions` and `/v1/responses` accept content parts beyond text and
+images, but only for `openai-compatible` connections. The router validates the
+part and replays it upstream **verbatim** instead of translating it, because
+OpenAI-compatible upstreams disagree on the spelling: OpenAI uses
+`input_audio`/`file`, most gateways use `audio_url`/`video_url`, and the
+Responses API uses `input_file`/`input_video`. Recognized types live in
+`protocol/openai.rs::MEDIA_PART_TYPES`; a new dialect is one entry, not a
+mapping table.
+
+Validation happens before the request reaches a provider, so a malformed part
+fails as a `400` instead of reaching the model as an empty message. An
+`input_audio` part needs non-empty base64 `data` plus a `format`; URL-shaped
+parts need a non-empty `url` (or `file_data`). **An unrecognized part type is a
+`400`, never a silent drop** — a dropped part would let the model answer a
+question it never saw.
+
+`chat_backend::stream` rejects media parts on any other provider type
+(`anthropic-native`, `command-code`, `codebuddy-intl`), whose stacks can only
+carry text and images. The error names the offending part type and the
+connection's provider, so an operator can tell a misrouted request from a
+malformed one. `ContentPart::Media` carries the raw wire object; the Anthropic
+provider asserts it never receives one.
+
 ### Schema (`migrations/0001_init.sql`)
 
 | Table | Purpose |

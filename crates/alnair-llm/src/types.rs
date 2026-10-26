@@ -108,12 +108,53 @@ pub struct ImageUrl {
     pub url: String,
 }
 
-/// Content part - text or image
+/// A content part the provider stack carries without interpreting it.
+///
+/// OpenAI-compatible upstreams disagree on how they spell audio, video and
+/// file input (`input_audio` vs `audio_url`, `file` vs `input_file`), so the
+/// router validates the part and then replays it verbatim instead of
+/// translating it. The whole wire object is kept so the upstream sees exactly
+/// what the client sent.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct MediaContentPart {
+    pub raw: serde_json::Value,
+}
+
+impl MediaContentPart {
+    /// The part's `type` discriminator, e.g. `input_audio` or `video_url`.
+    pub fn kind(&self) -> &str {
+        self.raw
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+    }
+}
+
+/// Content part - text, image, or an opaque media part
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ContentPart {
     Text(TextContentPart),
     ImageUrl(ImageUrlContentPart),
+    Media(MediaContentPart),
+}
+
+impl ContentPart {
+    /// Renders the part as its wire object.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            ContentPart::Text(t) => serde_json::json!({
+                "type": "text",
+                "text": t.text
+            }),
+            ContentPart::ImageUrl(img) => serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": img.image_url.url }
+            }),
+            ContentPart::Media(media) => media.raw.clone(),
+        }
+    }
 }
 
 /// Message content - string or multimodal array
@@ -138,7 +179,7 @@ impl MessageContent {
                 .iter()
                 .filter_map(|p| match p {
                     ContentPart::Text(t) => Some(t.text.clone()),
-                    ContentPart::ImageUrl(_) => None,
+                    ContentPart::ImageUrl(_) | ContentPart::Media(_) => None,
                 })
                 .collect::<Vec<_>>()
                 .join(" "),
@@ -156,19 +197,8 @@ impl MessageContent {
         match self {
             MessageContent::Text(s) => serde_json::json!(s),
             MessageContent::Parts(parts) => {
-                let json_parts: Vec<serde_json::Value> = parts
-                    .iter()
-                    .map(|p| match p {
-                        ContentPart::Text(t) => serde_json::json!({
-                            "type": "text",
-                            "text": t.text
-                        }),
-                        ContentPart::ImageUrl(img) => serde_json::json!({
-                            "type": "image_url",
-                            "image_url": { "url": img.image_url.url }
-                        }),
-                    })
-                    .collect();
+                let json_parts: Vec<serde_json::Value> =
+                    parts.iter().map(ContentPart::to_json).collect();
                 serde_json::json!(json_parts)
             }
         }
@@ -187,6 +217,7 @@ impl MessageContent {
                             let base64 = strip_data_url_prefix(&img.image_url.url);
                             images.push(base64);
                         }
+                        ContentPart::Media(_) => {}
                     }
                 }
                 (text_parts.join(" "), images)

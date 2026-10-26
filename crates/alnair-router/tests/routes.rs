@@ -2473,6 +2473,130 @@ async fn bare_alias_name_works_through_chat_completions() {
     assert_eq!(body["choices"][0]["message"]["content"], "pong");
 }
 
+/// Serves an SSE completion and records the request body the router sent, so a
+/// test can assert on what actually reached the upstream.
+async fn spawn_capturing_chat_upstream() -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+) {
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = captured.clone();
+
+    let router = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |body: axum::Json<serde_json::Value>| {
+            let sink = sink.clone();
+            async move {
+                sink.lock().expect("capture lock").push(body.0);
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    concat!(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"pong\"}}]}\n\n",
+                        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                        "data: [DONE]\n\n"
+                    ),
+                )
+            }
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    (format!("http://{address}/v1"), captured)
+}
+
+#[tokio::test]
+async fn audio_and_video_parts_reach_an_openai_compatible_upstream_verbatim() {
+    let (app, _db) = app(false).await;
+    let (base_url, captured) = spawn_capturing_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(
+        &app,
+        &connection_id,
+        "mediaroute",
+        Some("gpt-4o-audio-preview"),
+    )
+    .await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "mediaroute",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "apa ini?" },
+                    { "type": "input_audio", "input_audio": { "data": "UklGRg==", "format": "wav" } },
+                    { "type": "video_url", "video_url": { "url": "https://example.com/a.mp4" } }
+                ]
+            }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["choices"][0]["message"]["content"], "pong");
+
+    let sent = captured.lock().expect("capture lock");
+    let content = &sent[0]["messages"][0]["content"];
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(content[1]["type"], "input_audio");
+    assert_eq!(content[1]["input_audio"]["data"], "UklGRg==");
+    assert_eq!(content[1]["input_audio"]["format"], "wav");
+    assert_eq!(content[2]["type"], "video_url");
+    assert_eq!(content[2]["video_url"]["url"], "https://example.com/a.mp4");
+}
+
+#[tokio::test]
+async fn an_unknown_content_part_is_a_400_not_a_silent_drop() {
+    let (app, _db) = app(false).await;
+    let (base_url, captured) = spawn_capturing_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(
+        &app,
+        &connection_id,
+        "holoroute",
+        Some("gpt-4o-audio-preview"),
+    )
+    .await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "holoroute",
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "input_hologram", "blob": "??" }]
+            }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected body: {body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unsupported content part type"),
+        "unexpected body: {body}"
+    );
+    assert!(
+        captured.lock().expect("capture lock").is_empty(),
+        "a rejected request must not reach the upstream"
+    );
+}
+
 /// Serves an SSE completion that also reports token usage, so the playground
 /// chat's terminal frame has something to report.
 async fn spawn_usage_chat_upstream() -> String {
