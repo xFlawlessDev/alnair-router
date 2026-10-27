@@ -5538,20 +5538,49 @@ async fn search_through(
     app: &axum::Router,
     prefix: &str,
     upstream_body: serde_json::Value,
+    normalize: bool,
 ) -> serde_json::Value {
     let base_url = spawn_search_upstream(upstream_body).await;
     let prefix = route_media_to(app, &base_url, prefix, "tavily").await;
 
+    let path = if normalize {
+        "/v1/search?normalize=true"
+    } else {
+        "/v1/search"
+    };
     let (status, body) = json_request(
         app,
         "POST",
-        "/v1/search",
+        path,
         serde_json::json!({ "model": prefix, "query": "rust", "max_results": 3 }),
     )
     .await;
 
     assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
     body
+}
+
+#[tokio::test]
+async fn search_response_is_verbatim_by_default_and_normalized_only_on_opt_in() {
+    let (app, _db) = app(false).await;
+    let provider_body = serde_json::json!({
+        "query": "rust",
+        "results": [{
+            "title": "Rust",
+            "url": "https://rust-lang.org",
+            "content": "A language.",
+            "score": 0.9,
+            "published_date": "2024-01-01"
+        }]
+    });
+
+    let verbatim = search_through(&app, "search-raw", provider_body.clone(), false).await;
+    assert_eq!(verbatim["results"][0]["content"], "A language.");
+    assert!(verbatim["results"][0].get("snippet").is_none());
+
+    let normalized = search_through(&app, "search-normalized", provider_body, true).await;
+    assert_eq!(normalized["results"][0]["snippet"], "A language.");
+    assert_eq!(normalized["object"], "search");
 }
 
 #[tokio::test]
@@ -5572,6 +5601,7 @@ async fn search_responses_are_normalized_across_upstream_dialects() {
                 "published_date": "2024-01-01"
             }]
         }),
+        true,
     )
     .await;
     assert_eq!(tavily["object"], "search");
@@ -5587,6 +5617,7 @@ async fn search_responses_are_normalized_across_upstream_dialects() {
         serde_json::json!({
             "web": { "results": [{ "title": "T", "url": "https://b", "description": "D" }] }
         }),
+        true,
     )
     .await;
     assert_eq!(brave["results"][0]["url"], "https://b");
@@ -5602,6 +5633,7 @@ async fn an_unrecognizable_search_body_is_forwarded_untouched() {
         &app,
         "oddish",
         serde_json::json!({ "unexpected": { "shape": true } }),
+        true,
     )
     .await;
 

@@ -399,6 +399,12 @@ proxy is reachable from the network. In Docker, publish the port explicitly
 | `POST /v1/videos/generations`, `GET /v1/videos/{id}` | Proxied, including async job polling. The polling URL takes `?model=` to name the connection. |
 | `POST /v1/search`, `POST /v1/web/fetch` | Proxied / server-side fetch (SSRF-guarded — see below). `search` takes an optional `model` to pick the connection. |
 
+`/v1/search` returns the upstream response body unchanged by default. Add
+`?normalize=true` to opt in to the router's canonical `{ object, query, results }`
+shape; this maps common provider result fields (`content`, `snippet`,
+`description`, `link`) onto `snippet` and `url`. Opt-in preserves existing
+clients that depend on Tavily/Brave/Perplexity-specific response fields.
+
 Every proxied endpoint accepts a `model` reference (alias, `alias/model`, combo
 name, or bare model name). The connection's real model id is written into the
 upstream request in its place; `/v1/search`, whose upstream takes no model,

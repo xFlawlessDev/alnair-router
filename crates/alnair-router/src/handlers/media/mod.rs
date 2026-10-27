@@ -177,18 +177,24 @@ pub async fn video_status(
     passthrough(response).await
 }
 
-/// `POST /v1/search` — search passthrough with a normalized reply.
+/// Opt-in response transformations for `/v1/search`.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct SearchQuery {
+    /// Map recognized provider responses onto the router's canonical result
+    /// fields; false/absent preserves the upstream response verbatim.
+    #[serde(default)]
+    pub normalize: bool,
+}
+
+/// `POST /v1/search` — proxies the upstream response verbatim by default.
 ///
-/// The upstream takes no model, so an optional `model` in the body only picks
-/// the connection; it is stripped before the request is forwarded.
-///
-/// The response is mapped onto the router's canonical search shape when the
-/// upstream returned something recognizable, so a client does not have to know
-/// whether Tavily, Perplexity, Brave or SearXNG answered. Anything the router
-/// cannot recognize is forwarded untouched.
+/// Add `?normalize=true` to map recognized search bodies onto the router's
+/// canonical shape. Normalization is opt-in to preserve the response contract
+/// for clients already consuming provider-specific fields.
 pub async fn search(
     State(state): State<AppState>,
     Extension(key): Extension<Option<AuthenticatedKey>>,
+    axum::extract::Query(query): axum::extract::Query<SearchQuery>,
     Json(mut body): Json<serde_json::Value>,
 ) -> Result<Response> {
     let model = model_of(&body);
@@ -232,6 +238,10 @@ pub async fn search(
         // Not JSON at all: hand the caller exactly what the upstream said.
         Err(_) => return raw_json_response(bytes),
     };
+
+    if !query.normalize {
+        return raw_json_response(bytes);
+    }
 
     match search::normalize_search_response(&parsed, None) {
         Some(normalized) => raw_json_response(

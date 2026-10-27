@@ -204,10 +204,13 @@ provider asserts it never receives one.
 because the request shape is the upstream's own: Tavily and Perplexity both take
 `query` + `max_results`, LiteLLM picks a provider with `search_tool_name`, and
 SearXNG wants form-encoded `q`. Only the base URL can absorb a different path;
-a different *encoding* would need a per-connection mode. The response is then
-mapped onto one canonical shape by `handlers/media/search.rs` — `results[]` with
-`title`, `url`, `snippet`, `score`, `published_at`, `content` — so a client does
-not have to know which provider answered. Normalization is best-effort: a body
+a different *encoding* would need a per-connection mode.
+
+The response is **verbatim by default** to preserve the provider-specific wire
+contract for existing clients. `?normalize=true` opts into a canonical
+`results[]` shape (`title`, `url`, `snippet`, `score`, `published_at`,
+`content`) in `handlers/media/search.rs`, so a new client can avoid learning
+Tavily/Perplexity/Brave field variations. Normalization is best-effort: a body
 with no recognizable result array is forwarded verbatim, and a non-2xx response
 is never rewritten.
 
