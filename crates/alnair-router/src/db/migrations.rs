@@ -143,22 +143,25 @@ mod tests {
                 .await
                 .expect("canonical version-1 checksum");
         let source = sqlx::migrate!("./migrations");
-        let expected_v1 = source
+        let expected_v1_sql = source
             .iter()
             .find(|migration| migration.version == 1)
             .expect("version-1 migration")
-            .checksum
-            .as_ref();
-        assert_eq!(stored.as_slice(), expected_v1);
+            .sql
+            .replace("\r\n", "\n");
+        let expected_v1_checksum = Sha384::digest(expected_v1_sql.as_bytes()).to_vec();
+        assert_eq!(stored, expected_v1_checksum);
 
         for migration in source.iter() {
+            let expected_sql = migration.sql.replace("\r\n", "\n");
+            let expected_checksum = Sha384::digest(expected_sql.as_bytes()).to_vec();
             let checksum: Vec<u8> =
                 sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
                     .bind(migration.version)
                     .fetch_one(&pool)
                     .await
                     .expect("canonical migration checksum");
-            assert_eq!(checksum.as_slice(), migration.checksum.as_ref());
+            assert_eq!(checksum, expected_checksum);
         }
     }
 
