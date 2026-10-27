@@ -1,5 +1,6 @@
 //! SQLite persistence: connection pool, migrations, and repositories.
 
+mod migrations;
 pub mod repos;
 
 use std::str::FromStr;
@@ -61,9 +62,10 @@ impl Db {
         Ok(db)
     }
 
-    /// Applies the embedded migrations.
+    /// Applies the embedded migrations after normalizing line endings.
     pub async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("./migrations")
+        migrations::canonical_migrator(&self.pool)
+            .await?
             .run(&self.pool)
             .await
             .map_err(|error| Error::Database(sqlx::Error::Migrate(Box::new(error))))?;

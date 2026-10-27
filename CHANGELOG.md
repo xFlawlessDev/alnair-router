@@ -2,6 +2,13 @@
 
 All notable user-facing changes to Alnair Router are documented here. Release notes summarize behavior and capabilities rather than listing individual commits.
 
+## [0.1.8](https://github.com/xFlawlessDev/alnair-router/compare/v0.1.7...v0.1.8) (2026-10-27)
+
+### Database upgrades
+
+- Fixed startup failures on Windows-to-Linux upgrades caused by SQLx checksums differing only because migration files used CRLF instead of LF line endings.
+- Existing application data is preserved. The router normalizes only an applied migration checksum that exactly matches the CRLF form of the same migration SQL; unrelated checksum mismatches remain errors.
+
 ## [0.1.7](https://github.com/xFlawlessDev/alnair-router/compare/v0.1.6...v0.1.7) (2026-10-27)
 
 ### Multimodal chat
@@ -57,7 +64,7 @@ All notable user-facing changes to Alnair Router are documented here. Release no
 - Windows binaries include the product icon.
 - The router can run in the background instead of holding the terminal open.
 
-## 0.1.0 (2026-09-17)
+## [0.1.0](https://github.com/xFlawlessDev/alnair-router/releases/tag/v0.1.0) (2026-09-17)
 
 First public release of Alnair Router, a self-hosted gateway for routing AI requests across providers.
 
