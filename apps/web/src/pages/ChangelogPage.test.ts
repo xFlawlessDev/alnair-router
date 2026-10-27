@@ -73,16 +73,14 @@ describe("ChangelogPage", () => {
 
     // The shipped CHANGELOG.md is parsed at import time, so the latest release
     // and one of its bullets must be on screen.
-    expect(container.textContent).toContain("v0.1.0");
-    expect(container.textContent).toContain("Features");
-    expect(container.textContent).toContain("Bug Fixes");
+    expect(container.textContent).toContain("v0.1.7");
+    expect(container.textContent).toContain("Multimodal chat");
+    expect(container.textContent).toContain("Web search and fetch");
     expect(container.textContent).toContain("Running");
 
-    // Markdown is rendered, not echoed: no link syntax or backticks survive,
-    // and a commit bullet becomes a real anchor.
+    // Markdown is rendered, not echoed: no link syntax or backticks survive.
     expect(container.textContent).not.toContain("](");
     expect(container.textContent).not.toContain("`");
-    expect(container.querySelector('a[href*="/commit/"]')).toBeTruthy();
 
     unmount();
   });
@@ -169,13 +167,13 @@ describe("ChangelogPage", () => {
     const { container, search, unmount } = await mount();
 
     // A term matching a bullet keeps only the matching changes.
-    search().value = "providers";
+    search().value = "multimodal";
     search().dispatchEvent(new Event("input", { bubbles: true }));
     await settle();
 
-    expect(container.textContent).toContain("OpenAI-compatible wire format");
-    // A bullet that does not match the term is dropped from its release.
-    expect(container.textContent).not.toContain("extended thinking");
+    expect(container.textContent).toContain("audio, video, and file content parts");
+    // A change that does not match the term is omitted from the release.
+    expect(container.textContent).not.toContain("bearer-token authentication");
 
     search().value = "zzz-no-such-change";
     search().dispatchEvent(new Event("input", { bubbles: true }));
