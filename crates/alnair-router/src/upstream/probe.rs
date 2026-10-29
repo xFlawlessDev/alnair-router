@@ -233,6 +233,14 @@ async fn chat_liveness_probe(
     let latency_ms = started.elapsed().as_millis() as u64;
     let status = response.status();
 
+    // A 200 carrying an HTML page means the web UI answered, not the API: the
+    // base_url is a dashboard root, so the chat route does not exist there.
+    // Without this the probe would call a connection healthy and let the first
+    // real request fail with a response nobody can diagnose.
+    if response_serves_html(&response) {
+        return None;
+    }
+
     // Liveness means the chat route itself exists. Only a 404 proves it does
     // not — that is a wrong base_url and must fail loudly. Everything else
     // (401/403, 400/422, 429, even a 5xx) means the request reached a handler:
@@ -255,6 +263,28 @@ fn chat_route_path(provider_type: &str) -> &'static str {
         "anthropic-native" => "/messages",
         _ => "/chat/completions",
     }
+}
+
+/// True when a response is an HTML page, i.e. a web UI answered instead of the
+/// API.
+///
+/// Only an explicit `text/html` counts, so a gateway that mislabels a real JSON
+/// or SSE body is still treated as live.
+fn response_serves_html(response: &reqwest::Response) -> bool {
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    serves_html_page(content_type)
+}
+
+fn serves_html_page(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|value| {
+        value
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("text/html")
+    })
 }
 
 /// Describes an error body without dumping HTML at the operator.
@@ -316,6 +346,21 @@ mod tests {
         );
 
         assert!(summarize_body("   ").contains("empty"));
+    }
+
+    #[test]
+    fn a_html_page_is_not_a_live_chat_route() {
+        // A dashboard answered with 200 HTML where the API path should be, so
+        // the chat route does not exist at this base_url.
+        assert!(serves_html_page(Some("text/html; charset=utf-8")));
+        assert!(serves_html_page(Some("TEXT/HTML")));
+    }
+
+    #[test]
+    fn api_content_types_stay_live() {
+        assert!(!serves_html_page(Some("application/json")));
+        assert!(!serves_html_page(Some("text/event-stream")));
+        assert!(!serves_html_page(None));
     }
 
     fn connection(provider_type: &str, auth_style: &str) -> Connection {

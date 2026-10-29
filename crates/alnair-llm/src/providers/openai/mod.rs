@@ -7,7 +7,10 @@ use tracing::warn;
 
 use crate::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel};
 use crate::provider::LlmProvider;
-use crate::providers::common::{calculate_token_costs, normalize_base_url};
+use crate::providers::common::{
+    calculate_token_costs, describe_non_json_body, is_html_content_type, normalize_base_url,
+    response_content_type,
+};
 use crate::providers::sse::{SseLineBuffer, parse_data_line};
 use crate::types::{ChatError, LlmStreamChunk, Message};
 
@@ -306,10 +309,23 @@ impl OpenAiProvider {
                         "non-streaming OpenAI response is not valid JSON"
                     );
                     yield Err(ChatError::Provider(format!(
-                        "OpenAI response is not valid JSON: {}",
-                        truncate_for_log(&text, 200)
+                        "OpenAI returned a non-JSON response: {}",
+                        describe_non_json_body(&text)
                     )));
                 }
+                return;
+            }
+
+            // A 200 carrying an HTML page is not an event stream; without this
+            // guard it parses to zero events and the turn ends empty.
+            if let Some(content_type) = response_content_type(&response)
+                && is_html_content_type(&content_type)
+            {
+                let body = response.text().await.unwrap_or_default();
+                yield Err(ChatError::Provider(format!(
+                    "OpenAI streaming request returned {content_type} instead of an event stream: {}",
+                    describe_non_json_body(&body)
+                )));
                 return;
             }
 

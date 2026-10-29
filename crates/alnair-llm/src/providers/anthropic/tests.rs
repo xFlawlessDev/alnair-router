@@ -1,5 +1,5 @@
 use super::*;
-use crate::model_config::{AuthStyle, ThinkingLevel};
+use crate::model_config::{AuthStyle, CacheRetention, ThinkingLevel};
 use crate::types::{Message, MessageToolCall};
 use futures::StreamExt;
 
@@ -535,4 +535,101 @@ fn stream_parser_rejects_malformed_tool_input() {
             .to_string()
             .contains("provider returned malformed tool JSON")
     );
+}
+
+/// Serves one canned response so the provider's real HTTP path runs.
+async fn serve_once(status: u16, content_type: &'static str, body: &'static str) -> String {
+    use axum::routing::post;
+
+    let router = axum::Router::new().route(
+        "/messages",
+        post(move || async move {
+            (
+                axum::http::StatusCode::from_u16(status).expect("status"),
+                [(axum::http::header::CONTENT_TYPE, content_type)],
+                body,
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("address");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn complete_reports_an_html_page_instead_of_malformed_json() {
+    let base_url = serve_once(
+        200,
+        "text/html; charset=utf-8",
+        "<!doctype html><html></html>",
+    )
+    .await;
+    let provider = AnthropicNativeProvider::new();
+    let config = ModelConfig::anthropic(base_url, "claude-test", Some("key".to_string()));
+    let options = LlmStreamOptions::default();
+
+    let mut stream = provider.complete(&config, vec![Message::new("user", "hi")], &options, None);
+    let error = stream
+        .next()
+        .await
+        .expect("first item")
+        .expect_err("an HTML page is not a completion");
+
+    let message = error.to_string();
+    assert!(message.contains("non-JSON"), "got: {message}");
+    assert!(message.contains("HTML page"), "got: {message}");
+    assert!(message.contains("/v1"), "got: {message}");
+    assert!(!message.contains("malformed JSON"), "got: {message}");
+}
+
+#[tokio::test]
+async fn stream_rejects_an_html_page_instead_of_ending_empty() {
+    let base_url = serve_once(
+        200,
+        "text/html; charset=utf-8",
+        "<!doctype html><html></html>",
+    )
+    .await;
+    let provider = AnthropicNativeProvider::new();
+    let config = ModelConfig::anthropic(base_url, "claude-test", Some("key".to_string()));
+    let options = LlmStreamOptions::default();
+
+    let mut stream = provider.stream(&config, vec![Message::new("user", "hi")], &options, None);
+    let error = stream
+        .next()
+        .await
+        .expect("first item")
+        .expect_err("an HTML page carries no events");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("instead of an event stream"),
+        "got: {message}"
+    );
+    assert!(message.contains("text/html"), "got: {message}");
+}
+
+#[tokio::test]
+async fn stream_accepts_a_normal_event_stream() {
+    let body = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n\
+                event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"pong\"}}\n\n\
+                event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n";
+    let base_url = serve_once(200, "text/event-stream", body).await;
+    let provider = AnthropicNativeProvider::new();
+    let config = ModelConfig::anthropic(base_url, "claude-test", Some("key".to_string()));
+    let options = LlmStreamOptions::default();
+
+    let mut stream = provider.stream(&config, vec![Message::new("user", "hi")], &options, None);
+    let first = stream
+        .next()
+        .await
+        .expect("first item")
+        .expect("a served stream parses");
+
+    assert!(matches!(first, LlmStreamChunk::Text(text) if text == "pong"));
 }

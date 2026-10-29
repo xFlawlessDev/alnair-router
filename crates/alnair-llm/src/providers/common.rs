@@ -28,6 +28,52 @@ pub(crate) fn retry_after_delay(headers: &HeaderMap) -> Option<Duration> {
     Some(Duration::from_secs(seconds))
 }
 
+/// True when a response content type proves the body is an HTML page.
+///
+/// Only `text/html` counts. A gateway that serves its dashboard at the
+/// configured `base_url` answers the API path with that page and a `200`, which
+/// an SSE reader would otherwise consume as a stream with no events. A missing
+/// or unusual content type is left alone: some relays mislabel a real event
+/// stream, and dropping those would break working connections.
+pub(crate) fn is_html_content_type(content_type: &str) -> bool {
+    content_type
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("text/html")
+}
+
+pub(crate) fn response_content_type(response: &reqwest::Response) -> Option<String> {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)?
+        .to_str()
+        .ok()
+        .map(str::to_string)
+}
+
+/// Describes a provider body that was not the JSON the caller asked for.
+///
+/// A gateway that serves its dashboard at the configured `base_url` answers the
+/// API path with an HTML page and a `200`, so the failure reads as corrupt JSON
+/// when the real fault is the missing API prefix in `base_url`. Naming the HTML
+/// points at the fix; only a genuinely broken JSON body keeps the raw preview.
+pub(crate) fn describe_non_json_body(body: &str) -> String {
+    let trimmed = body.trim_start();
+    if trimmed.is_empty() {
+        return "the endpoint returned an empty body".to_string();
+    }
+    if trimmed.starts_with('<') {
+        return "the endpoint answered an HTML page instead of JSON, so base_url \
+                looks like a web UI root rather than the API root — it usually \
+                needs to end with /v1"
+            .to_string();
+    }
+
+    let compact = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let preview: String = compact.chars().take(200).collect();
+    format!("unexpected body: {preview}")
+}
+
 pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     // 529 is Anthropic's `overloaded_error`; every other provider uses 503.
     matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504 | 529)
@@ -218,5 +264,46 @@ mod tests {
     #[test]
     fn parse_tool_arguments_strict_rejects_malformed_non_empty_json() {
         assert!(parse_tool_arguments_strict(r#"{"broken""#).is_err());
+    }
+
+    #[test]
+    fn describe_non_json_body_points_at_the_base_url_when_html_answers() {
+        let described = describe_non_json_body("<!doctype html><html><body>app</body></html>");
+
+        assert!(described.contains("HTML page"), "got: {described}");
+        assert!(described.contains("/v1"), "got: {described}");
+        assert!(!described.contains("<html>"), "must not echo the page");
+    }
+
+    #[test]
+    fn describe_non_json_body_summarizes_other_bodies() {
+        assert!(describe_non_json_body("   ").contains("empty"));
+
+        let described = describe_non_json_body("{\n  \"error\": \"nope\"\n}");
+        assert_eq!(described, r#"unexpected body: { "error": "nope" }"#);
+    }
+
+    #[test]
+    fn describe_non_json_body_caps_the_preview() {
+        let described = describe_non_json_body(&"x".repeat(1_000));
+
+        assert!(described.len() < 240, "got {} chars", described.len());
+    }
+
+    #[test]
+    fn html_content_type_matches_case_and_parameters() {
+        assert!(is_html_content_type("text/html"));
+        assert!(is_html_content_type("text/html; charset=utf-8"));
+        assert!(is_html_content_type("TEXT/HTML"));
+    }
+
+    #[test]
+    fn html_content_type_ignores_streams_it_must_not_touch() {
+        // A missing type and a mislabelled event stream both stay untouched:
+        // dropping a real stream would break working connections.
+        assert!(!is_html_content_type("text/event-stream"));
+        assert!(!is_html_content_type("application/json"));
+        assert!(!is_html_content_type("application/octet-stream"));
+        assert!(!is_html_content_type(""));
     }
 }
