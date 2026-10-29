@@ -7,7 +7,26 @@
 //! slash). Endpoints were cross-checked against 9Router's provider registry and,
 //! where one exists, the vendor's own documentation.
 
-use super::{ProviderPreset, api_key, free_tier, local};
+use super::{ProviderPreset, api_key, free_tier, local, subscription};
+
+/// Subscription channels reached through an OAuth login rather than an API key.
+pub(super) fn subscription_presets() -> Vec<ProviderPreset> {
+    vec![subscription(
+        "openai-codex",
+        "ChatGPT Plus/Pro (Codex)",
+        "openai-codex",
+        "https://chatgpt.com/backend-api/codex",
+        "openai-codex",
+        Some(
+            "Signs in with your ChatGPT subscription and serves the Codex models through the \
+             Codex backend. The connection needs no API key.",
+        ),
+        Some(
+            "Uses OpenAI's own Codex CLI client, because the Codex backend authorizes no other \
+             application. Use it only with your own account, and check the terms you agreed to.",
+        ),
+    )]
+}
 
 /// Paid and pay-as-you-go endpoints behind an API key.
 pub(super) fn api_key_presets() -> Vec<ProviderPreset> {

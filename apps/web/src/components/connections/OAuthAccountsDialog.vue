@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { CheckCircle2, Copy, ExternalLink, Loader2, XCircle } from "@lucide/vue";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  Loader2,
+  XCircle,
+} from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 
@@ -69,6 +76,13 @@ const selectedPreset = computed(
 const isGeneric = computed(() => presetId.value === "generic");
 const hasDevice = computed(() => Boolean(deviceCodeUrl.value.trim()));
 const busy = computed(() => loginId.value !== null);
+/**
+ * A preset that pins its own client id (ChatGPT/Codex) owns every endpoint and
+ * the client identity. The operator only picks an account label, so the form
+ * collapses to one button plus the risk notice.
+ */
+const pinnedClient = computed(() => Boolean(selectedPreset.value?.client_id));
+const riskNotice = computed(() => selectedPreset.value?.risk_notice ?? null);
 
 watch(
   () => props.open,
@@ -126,6 +140,13 @@ function applyPreset(id: string): void {
   deviceCodeUrl.value = preset?.device_code_url ?? "";
   userInfoUrl.value = preset?.user_info_url ?? "";
   scopes.value = preset?.scopes ?? "";
+  // A pinned client brings its own id; leaving a stale one from a previous
+  // preset in the field would be saved as if the operator had chosen it.
+  clientId.value = preset?.client_id ?? "";
+  clientSecret.value = "";
+  if (pinnedClient.value && !label.value.trim()) {
+    label.value = "chatgpt";
+  }
 }
 
 function stopPolling(): void {
@@ -155,7 +176,7 @@ function validate(): boolean {
     toast.error("An account label is required");
     return false;
   }
-  if (!clientId.value.trim()) {
+  if (!clientId.value.trim() && !pinnedClient.value) {
     toast.error(
       "A client id is required — register an OAuth application with the provider first",
     );
@@ -323,10 +344,11 @@ async function copy(value: string, what: string): Promise<void> {
       <DialogHeader>
         <DialogTitle>OAuth accounts</DialogTitle>
         <DialogDescription>
-          Sign in with your own OAuth application —
+          Sign in with an OAuth application —
           <span class="font-medium">{{ connection.name }}</span> sends the token
-          as <code>Authorization: Bearer</code>. The router ships no client id of
-          its own.
+          as <code>Authorization: Bearer</code>. Most providers use an
+          application you register yourself; ChatGPT/Codex uses OpenAI's own
+          Codex client, which the picker warns about.
         </DialogDescription>
       </DialogHeader>
 
@@ -425,6 +447,14 @@ async function copy(value: string, what: string): Promise<void> {
             </a>
           </div>
 
+          <div
+            v-if="riskNotice"
+            class="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/5 px-3 py-2"
+          >
+            <AlertTriangle class="mt-0.5 size-4 shrink-0 text-amber-500" />
+            <p class="text-xs">{{ riskNotice }}</p>
+          </div>
+
           <div class="grid gap-2 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="oauth-label">Account label</Label>
@@ -435,7 +465,7 @@ async function copy(value: string, what: string): Promise<void> {
                 :disabled="busy"
               />
             </div>
-            <div class="grid gap-2">
+            <div v-if="!pinnedClient" class="grid gap-2">
               <Label for="oauth-client-id">Client ID</Label>
               <Input
                 id="oauth-client-id"
@@ -445,9 +475,18 @@ async function copy(value: string, what: string): Promise<void> {
                 :disabled="busy"
               />
             </div>
+            <div v-else class="grid gap-2">
+              <Label for="oauth-client-id">Client</Label>
+              <Input
+                id="oauth-client-id"
+                :model-value="selectedPreset?.label ?? ''"
+                readonly
+                disabled
+              />
+            </div>
           </div>
 
-          <div class="grid gap-2">
+          <div v-if="!pinnedClient" class="grid gap-2">
             <Label for="oauth-client-secret">
               Client secret
               <span class="text-muted-foreground">
@@ -464,7 +503,7 @@ async function copy(value: string, what: string): Promise<void> {
             />
           </div>
 
-          <div class="grid gap-2">
+          <div v-if="!pinnedClient" class="grid gap-2">
             <Label for="oauth-authorize">Authorize URL</Label>
             <Input
               id="oauth-authorize"
@@ -474,7 +513,7 @@ async function copy(value: string, what: string): Promise<void> {
             />
           </div>
 
-          <div class="grid gap-2">
+          <div v-if="!pinnedClient" class="grid gap-2">
             <Label for="oauth-token">Token URL</Label>
             <Input
               id="oauth-token"
@@ -484,7 +523,7 @@ async function copy(value: string, what: string): Promise<void> {
             />
           </div>
 
-          <div class="grid gap-2 sm:grid-cols-2">
+          <div v-if="!pinnedClient" class="grid gap-2 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="oauth-device">
                 Device code URL
@@ -511,7 +550,7 @@ async function copy(value: string, what: string): Promise<void> {
             </div>
           </div>
 
-          <div class="grid gap-2">
+          <div v-if="!pinnedClient" class="grid gap-2">
             <Label for="oauth-scopes">Scopes</Label>
             <Input
               id="oauth-scopes"

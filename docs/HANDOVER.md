@@ -144,6 +144,7 @@ crates/alnair-router/
 │   │   └── repos/           # connections, aliases, combos, api_keys, usage
 │   ├── upstream/
 │   │   ├── chat_backend.rs  # ← THE SEAM. Only file that may touch alnair_llm
+│   │   ├── chat_backend/    # seam tests, split out when the file hit the cap
 │   │   ├── executor.rs      # fallback walk, permits, timeouts, first-chunk peek
 │   │   ├── probe.rs         # admin model listing / connection tests
 │   │   └── media/          # HTTP proxying for non-chat endpoints
@@ -248,7 +249,7 @@ field; the router leaves non-function tools untouched in `/v1/responses`.
 
 | Table | Purpose |
 |---|---|
-| `connections` | Upstream endpoints. `provider_type` is CHECK-constrained to the two supported values. |
+| `connections` | Upstream endpoints. `provider_type` is CHECK-constrained to the supported families. |
 | `aliases` | `prefix` → `connection_id`, optional `model_override`. Cascades on connection delete. |
 | `combos` | Named fallback chains. |
 | `combo_entries` | Ordered tiers. `model_ref` can be an alias ref, a bare model, or another combo. |
@@ -354,7 +355,8 @@ TTL). The callback route is public — a browser redirect cannot carry an admin
 token — so the PKCE `state` nonce is the guard, and `by_state` refuses an empty
 nonce so a stray `?state=` cannot resolve to a device login. `pkce.rs` is the
 verifier/challenge pair (unpadded S256). `presets.rs` prefills endpoints for a
-provider; presets carry endpoints and scopes only, never a client identity.
+provider; a preset carries endpoints, scopes and authorize-only parameters, and
+its client id only when the provider registers one application (see below).
 
 Tokens are resolved just in time in the executor, next to the pricing lookup,
 via `token_cache.rs`. Refresh is **single-flight per account**: a per-account
@@ -362,13 +364,31 @@ gate means N concurrent requests cause one token POST, not N. A rotated refresh
 token is persisted before the new token is served, and a failed refresh fails
 only that tier and falls through to the next — it does not fail the request.
 
-**No first-party client identity is shipped.** The operator supplies their own
-OAuth application (client id, secret, endpoints, scopes); client id is required,
+**Bring your own client is the rule.** The operator supplies their own OAuth
+application (client id, secret, endpoints, scopes); client id is required,
 authorize URL is required only for a browser login, token URL always. The
 reference project's own registry marks its borrowed-identity providers
 (`claude`, `github`, `gemini-cli`) `deprecated: true` with a `RISK_NOTICE`,
 while its `gitlab.js` takes the client id from the user and is not flagged —
 this feature follows the unflagged one.
+
+**One documented exception: ChatGPT/Codex.** OpenAI's Codex backend authorizes
+only its own CLI application, so the `openai-codex` preset pins
+`app_EMoamEEZ73f0CkXaXp7hrann` and cannot work any other way. It is public (no
+secret), it ships a risk notice that both the picker and the README show, and
+`presets::pins_client` is what the dashboard reads to collapse the form to a
+single "sign in" button. Two further consequences live outside `presets.rs`:
+
+- **A pinned callback needs its own listener.** OpenAI registers
+  `http://localhost:1455/auth/callback`, so the server's own route is unusable.
+  `loopback.rs` binds `127.0.0.1:1455` for one login, answers only that path,
+  and validates `state` exactly like the server callback. `CallbackMode` on
+  `PendingLogin` records which mode a login uses. A busy port is reported, not
+  retried: every other Codex login claims the same one.
+- **The account id is a claim, not a field.** The Codex backend needs
+  `chatgpt-account-id`; `chat_backend::chatgpt_account_id_from_jwt` derives it
+  from the bearer, so a refreshed token carries its own account. A token without
+  the claim is rejected at login — it could never authorize a request.
 
 ### Extra keys per connection
 
@@ -707,10 +727,14 @@ suite should tell you.
 28. **Provider types live in a CHECK constraint.** `connections.provider_type`
     is constrained to the supported families, so a new wire family needs a
     table rebuild (SQLite cannot alter a CHECK). With foreign keys on — the
-    application-wide setting — `DROP TABLE connections` cascades into `aliases`
-    and `connection_accounts`, so migration `0017` copies both aside and
-    restores them before it commits; `provider_type_rebuild_keeps_children`
-    runs the migration against a seeded database to keep that honest.
+    application-wide setting — `DROP TABLE connections` cascades into `aliases`,
+    `connection_accounts` and `oauth_accounts`, so the rebuild migration copies
+    all three aside and restores them before it commits;
+    `provider_type_rebuild_keeps_children` runs the migration against a seeded
+    database to keep that honest. The most recent rebuild (`0025`, for
+    `openai-codex`) is the current reference: a new column on `connections` must
+    be added to both the `CREATE TABLE` and the copy's column list, or it is
+    silently dropped.
 
 29. **The inbound body limit is disabled.** `build_router` layers
     `DefaultBodyLimit::disable()`, so the axum default 2 MiB cap no longer

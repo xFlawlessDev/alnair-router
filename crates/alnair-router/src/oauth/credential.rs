@@ -3,10 +3,28 @@
 //! Access token, refresh token and the endpoints needed to refresh it travel
 //! together as a single JSON blob so a rotation updates them as a unit. The
 //! client id/secret are the operator's own registration — the router ships no
-//! first-party identity.
+//! first-party identity, with one documented exception: the ChatGPT/Codex
+//! preset, whose OAuth application is OpenAI's own CLI client (see
+//! `presets::presets`).
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+
+/// How the token endpoint expects its body.
+///
+/// The authorization-code providers registered in the wild disagree: GitLab and
+/// Google take form encoding, while the ChatGPT/Codex endpoint takes form and
+/// refuses an extra `state` field. The default keeps every existing credential
+/// on the form wire it was minted against.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenBody {
+    /// `application/x-www-form-urlencoded` (the OAuth norm).
+    #[default]
+    Form,
+    /// `application/json`, which some providers accept instead.
+    Json,
+}
 
 /// The OAuth endpoints and client identity a login was performed against.
 ///
@@ -25,6 +43,24 @@ pub struct EndpointConfig {
     pub user_info_url: Option<String>,
     #[serde(default)]
     pub scopes: String,
+    /// Extra query parameters appended only to the browser authorize URL.
+    ///
+    /// The ChatGPT/Codex login needs three of them
+    /// (`id_token_add_organizations`, `codex_cli_simplified_flow`,
+    /// `originator`); every other provider leaves this empty. Never contains a
+    /// secret — they are wire constants the dashboard may show.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authorize_extra: Vec<(String, String)>,
+    /// Body encoding of the token endpoint.
+    #[serde(default)]
+    pub token_body: TokenBody,
+}
+
+impl EndpointConfig {
+    /// True when the token endpoint is form-encoded.
+    pub fn uses_form_body(&self) -> bool {
+        matches!(self.token_body, TokenBody::Form)
+    }
 }
 
 /// Display-only account details read from the provider's userinfo endpoint.
@@ -54,6 +90,13 @@ pub struct OAuthCredential {
     pub endpoints: EndpointConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<AccountInfo>,
+    /// The `chatgpt_account_id` claim of a ChatGPT/Codex access token.
+    ///
+    /// Recorded at login and after every refresh so a credential whose token
+    /// lost the claim is rejected while it is being stored, rather than
+    /// surfacing as an opaque 401 mid-conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_account_id: Option<String>,
 }
 
 impl OAuthCredential {

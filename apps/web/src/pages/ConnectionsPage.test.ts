@@ -31,6 +31,8 @@ const preset = (
   api_key_url: null,
   docs_url: null,
   note: null,
+  risk_notice: null,
+  oauth_preset: null,
   configured: 0,
   ...overrides,
 });

@@ -347,6 +347,7 @@ pub fn provider_type_from_str(value: &str) -> Result<ProviderType> {
         "anthropic-native" => Ok(ProviderType::AnthropicNative),
         "command-code" => Ok(ProviderType::CommandCode),
         "codebuddy-intl" => Ok(ProviderType::CodeBuddyIntl),
+        "openai-codex" => Ok(ProviderType::OpenAiCodex),
         other => Err(Error::UnsupportedProviderType(other.to_string())),
     }
 }
@@ -369,6 +370,7 @@ fn provider_type_label(provider_type: &ProviderType) -> &'static str {
         ProviderType::AnthropicNative => "anthropic-native",
         ProviderType::CommandCode => "command-code",
         ProviderType::CodeBuddyIntl => "codebuddy-intl",
+        ProviderType::OpenAiCodex => "openai-codex",
     }
 }
 
@@ -394,8 +396,16 @@ fn model_config(
 ) -> ModelConfig {
     let supports_thinking = matches!(
         provider_type,
-        ProviderType::CodeBuddyIntl | ProviderType::AnthropicNative
+        ProviderType::CodeBuddyIntl | ProviderType::AnthropicNative | ProviderType::OpenAiCodex
     );
+
+    // The Codex backend needs the ChatGPT account id, which is a claim of the
+    // OAuth bearer. It is derived from the token, not stored on the connection,
+    // so a refreshed token always carries its own account.
+    let chatgpt_account_id = match provider_type {
+        ProviderType::OpenAiCodex => api_key.and_then(chatgpt_account_id_from_jwt),
+        _ => None,
+    };
 
     ModelConfig {
         provider_type,
@@ -404,6 +414,7 @@ fn model_config(
         api_key: api_key.map(str::to_string),
         auth_style,
         custom_headers,
+        chatgpt_account_id,
         supports_vision: false,
         // Capability gates are opt-in: only providers with a known wire shape
         // enable thinking; CodeBuddy expects OpenAI reasoning parameters.
@@ -414,6 +425,38 @@ fn model_config(
         context_window: 0,
         cost_rates: price.map(cost_rates),
     }
+}
+
+/// The `chatgpt_account_id` claim of a ChatGPT/Codex access token.
+///
+/// The token is a JWT whose `https://api.openai.com/auth` claim namespace
+/// carries the account id. The Codex backend refuses a request without the
+/// matching `chatgpt-account-id` header, so this doubles as the login gate: a
+/// token that does not decode to an account id cannot authorize a turn.
+///
+/// SECURITY: the token, its payload and the returned id are never logged.
+pub fn chatgpt_account_id_from_jwt(token: &str) -> Option<String> {
+    use base64::Engine;
+
+    // A JWT is exactly three dot-separated segments; anything else is not a
+    // token this can read, so fail closed rather than decode a lookalike.
+    let mut segments = token.split('.');
+    let (_header, payload, _signature) = (segments.next()?, segments.next()?, segments.next()?);
+    if segments.next().is_some() {
+        return None;
+    }
+
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload))
+        .ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let account_id = claims
+        .get("https://api.openai.com/auth")?
+        .get("chatgpt_account_id")?
+        .as_str()?;
+
+    (!account_id.trim().is_empty()).then(|| account_id.to_string())
 }
 
 /// Converts a router price row into the provider layer's rate struct.
@@ -632,199 +675,4 @@ pub fn into_stream(chunks: ChunkStream) -> impl Stream<Item = Result<StreamChunk
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn codebuddy_intl_provider_type_is_dispatchable() {
-        assert_eq!(
-            provider_type_from_str("codebuddy-intl").expect("provider type"),
-            ProviderType::CodeBuddyIntl
-        );
-    }
-
-    fn media_message() -> RouterMessage {
-        message_parts(
-            "user",
-            vec![
-                MessagePart::Text("apa ini?".to_string()),
-                MessagePart::Media(serde_json::json!({
-                    "type": "input_audio",
-                    "input_audio": { "data": "UklGRg==", "format": "wav" }
-                })),
-            ],
-        )
-    }
-
-    #[test]
-    fn media_parts_are_visible_to_the_provider_gate() {
-        let messages = vec![media_message()];
-        assert_eq!(
-            first_media_part_kind(&messages).as_deref(),
-            Some("input_audio")
-        );
-
-        let text_only = vec![message_text("user", "hello")];
-        assert!(first_media_part_kind(&text_only).is_none());
-    }
-
-    #[test]
-    fn media_parts_are_rejected_on_a_non_openai_provider() {
-        let result = stream(
-            std::sync::Arc::new(default_registry()),
-            "anthropic-native",
-            "https://api.anthropic.com/v1",
-            "claude-sonnet-4",
-            vec![media_message()],
-            Some("sk-ant"),
-            None,
-            RetryPolicy::default(),
-            true,
-            None,
-            BTreeMap::new(),
-            None,
-            CacheRetention::None,
-            AuthStyle::ApiKey,
-        );
-
-        let error = match result {
-            Ok(_) => panic!("media must not reach an anthropic connection"),
-            Err(error) => error,
-        };
-        let text = error.to_string();
-        assert!(text.contains("input_audio"), "{text}");
-        assert!(text.contains("openai-compatible"), "{text}");
-    }
-
-    #[test]
-    fn web_search_options_are_rejected_on_a_non_openai_provider() {
-        let options = GenerationOptions {
-            web_search_options: Some(serde_json::json!({ "search_context_size": "low" })),
-            ..Default::default()
-        };
-
-        let result = stream(
-            std::sync::Arc::new(default_registry()),
-            "anthropic-native",
-            "https://api.anthropic.com/v1",
-            "claude-sonnet-4",
-            vec![message_text("user", "hello")],
-            Some("sk-ant"),
-            Some(&options),
-            RetryPolicy::default(),
-            true,
-            None,
-            BTreeMap::new(),
-            None,
-            CacheRetention::None,
-            AuthStyle::ApiKey,
-        );
-
-        let error = match result {
-            Ok(_) => panic!("web_search_options must not reach an anthropic connection"),
-            Err(error) => error,
-        };
-        let text = error.to_string();
-        assert!(text.contains("web_search_options"), "{text}");
-        assert!(text.contains("openai-compatible"), "{text}");
-    }
-
-    #[test]
-    fn retry_policy_maps_into_provider_options() {
-        let policy = RetryPolicy {
-            max_retries_per_tier: 7,
-            max_retry_delay_ms: 1_234,
-        };
-
-        let options = GenerationOptions::default().to_stream_options(policy);
-
-        assert_eq!(options.max_retries, 7);
-        assert_eq!(options.max_retry_delay_ms, 1_234);
-    }
-
-    #[test]
-    fn retry_policy_default_is_conservative() {
-        let policy = RetryPolicy::default();
-        assert_eq!(policy.max_retries_per_tier, 2);
-        assert_eq!(policy.max_retry_delay_ms, 30_000);
-    }
-
-    #[test]
-    fn retry_policy_applies_even_without_generation_options() {
-        let policy = RetryPolicy {
-            max_retries_per_tier: 3,
-            max_retry_delay_ms: 456,
-        };
-
-        let options = stream_options(None, policy, CacheRetention::None);
-
-        assert_eq!(options.max_retries, 3);
-        assert_eq!(options.max_retry_delay_ms, 456);
-    }
-
-    #[test]
-    fn cache_retention_maps_onto_the_provider_enum() {
-        assert_eq!(cache_retention_from_str("none"), CacheRetention::None);
-        assert_eq!(cache_retention_from_str("short"), CacheRetention::Short);
-        assert_eq!(cache_retention_from_str("long"), CacheRetention::Long);
-        assert_eq!(cache_retention_from_str("bogus"), CacheRetention::None);
-    }
-
-    #[test]
-    fn stream_options_carry_the_target_cache_retention() {
-        let options = stream_options(None, RetryPolicy::default(), CacheRetention::Long);
-
-        assert_eq!(options.cache_retention, CacheRetention::Long);
-    }
-
-    #[test]
-    fn auth_style_maps_onto_the_provider_enum() {
-        assert_eq!(auth_style_from_str("api_key"), AuthStyle::ApiKey);
-        assert_eq!(auth_style_from_str("bearer"), AuthStyle::Bearer);
-        // An unrecognised value must degrade to today's behaviour, never
-        // silently move the credential into a different header.
-        assert_eq!(auth_style_from_str("bogus"), AuthStyle::ApiKey);
-        assert_eq!(auth_style_from_str(""), AuthStyle::ApiKey);
-    }
-
-    #[tokio::test]
-    async fn collect_aggregates_tool_calls_instead_of_failing() {
-        let chunks: ChunkStream = futures::stream::iter(vec![
-            Ok(StreamChunk::Text("calling".to_string())),
-            Ok(StreamChunk::ToolCall {
-                id: "tc1".to_string(),
-                name: "read_file".to_string(),
-                arguments: r#"{"path":"/tmp"}"#.to_string(),
-            }),
-            Ok(StreamChunk::Usage(TokenUsage {
-                prompt_tokens: 5,
-                completion_tokens: 1,
-                ..Default::default()
-            })),
-            Ok(StreamChunk::Done(None)),
-        ])
-        .boxed();
-
-        let completion = collect(chunks).await.expect("collect");
-
-        assert_eq!(completion.content, "calling");
-        assert_eq!(completion.tool_calls.len(), 1);
-        assert_eq!(completion.tool_calls[0].name, "read_file");
-        assert_eq!(completion.finish_reason.as_deref(), Some("tool_calls"));
-        assert_eq!(completion.usage.expect("usage").prompt_tokens, 5);
-    }
-
-    #[tokio::test]
-    async fn collect_marks_plain_completions_as_stopped() {
-        let chunks: ChunkStream = futures::stream::iter(vec![
-            Ok(StreamChunk::Text("hello".to_string())),
-            Ok(StreamChunk::Done(None)),
-        ])
-        .boxed();
-
-        let completion = collect(chunks).await.expect("collect");
-
-        assert_eq!(completion.finish_reason.as_deref(), Some("stop"));
-        assert!(completion.tool_calls.is_empty());
-    }
-}
+mod tests;

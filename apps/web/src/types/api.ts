@@ -126,11 +126,12 @@ export interface ConnectionInput {
 }
 
 /** Tier a provider preset belongs to; the picker groups by this. */
-export type ProviderCategory = "api_key" | "free_tier" | "local";
+export type ProviderCategory = "api_key" | "subscription" | "free_tier" | "local";
 
 /** Picker section order; mirrors the order the API returns. */
 export const PROVIDER_CATEGORIES: { id: ProviderCategory; label: string }[] = [
   { id: "api_key", label: "API key providers" },
+  { id: "subscription", label: "Subscription (OAuth)" },
   { id: "free_tier", label: "Free tier providers" },
   { id: "local", label: "Local servers" },
 ];
@@ -142,11 +143,15 @@ export interface ProviderPreset {
   provider_type: ProviderType;
   base_url: string;
   category: ProviderCategory;
-  auth: "api_key" | "none";
+  auth: "api_key" | "oauth" | "none";
   default_headers: Record<string, string>;
   api_key_url: string | null;
   docs_url: string | null;
   note: string | null;
+  /** Shown before an OAuth login that borrows a first-party client identity. */
+  risk_notice: string | null;
+  /** The OAuth preset that signs this connection in, when `auth` is "oauth". */
+  oauth_preset: string | null;
   /** Connections currently using this preset. */
   configured: number;
 }
@@ -186,8 +191,23 @@ export interface OAuthPreset {
   scopes: string;
   /** True when the provider issues tokens without a client secret. */
   public_client: boolean;
+  /**
+   * A client id the preset pins, when the provider only authorizes its own
+   * application. Empty for every bring-your-own-client preset.
+   */
+  client_id: string;
+  /** Token-endpoint body encoding: "form" or "json". */
+  token_body: "form" | "json";
+  /** Extra authorize query parameters the preset sets. */
+  authorize_extra: [string, string][];
+  /** The redirect port the provider registered, when it is fixed. */
+  redirect_port: number | null;
+  /** The upstream wire family the preset implies, when any. */
+  provider_type: ProviderType | null;
   docs_url: string | null;
   note: string | null;
+  /** A warning to show before starting a login that borrows an identity. */
+  risk_notice: string | null;
 }
 
 export interface OAuthPresetResponse {
@@ -309,6 +329,8 @@ export interface UpstreamModelsResponse {
   latency_ms: number;
   models: UpstreamModel[];
   enumerable: boolean;
+  /** Present when the list came from a compiled-in catalog, not the upstream. */
+  notice: string | null;
 }
 
 export interface ConnectionTestResult {
@@ -317,6 +339,8 @@ export interface ConnectionTestResult {
   enumerable: boolean;
   latency_ms: number;
   message: string;
+  /** Present when the list came from a compiled-in catalog, not the upstream. */
+  notice: string | null;
 }
 
 export interface AliasTestResult {

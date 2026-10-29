@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use crate::db::repos::oauth_accounts::{CreateOAuthAccount, OAuthAccount, UpdateOAuthAccount};
 use crate::error::{Error, Result};
 use crate::oauth::credential::OAuthCredential;
-use crate::oauth::{self, ClientInputs, DeviceChallenge, LoginState, LoginView, PendingLogin};
+use crate::oauth::{
+    self, CallbackMode, ClientInputs, DeviceChallenge, LoginState, LoginView, PendingLogin,
+};
 use crate::state::AppState;
 
 /// `POST /api/oauth/logins` — start a PKCE authorization.
@@ -92,13 +94,39 @@ fn redirect_uri_for(headers: &HeaderMap) -> String {
     oauth::redirect_uri(host)
 }
 
+/// Where this login's browser callback will land.
+///
+/// A preset that pins its redirect (ChatGPT/Codex) gets a dedicated loopback
+/// listener, because the provider only accepts the URI registered for its
+/// client. Everything else comes back to the router's own callback route.
+fn callback_for(preset_id: &str) -> CallbackMode {
+    let preset = oauth::presets::find(preset_id);
+    match (preset.redirect_port, preset.id) {
+        (Some(port), "openai-codex") => CallbackMode::Loopback {
+            port,
+            path: oauth::presets::CODEX_REDIRECT_PATH.to_string(),
+        },
+        _ => CallbackMode::Server,
+    }
+}
+
+/// The URI the operator must register, for one callback mode.
+fn callback_uri(mode: &CallbackMode, headers: &HeaderMap) -> String {
+    match mode {
+        CallbackMode::Server => redirect_uri_for(headers),
+        CallbackMode::Loopback { port, path } => {
+            format!("http://localhost:{port}{path}")
+        }
+    }
+}
+
 /// `POST /api/oauth/logins`
 pub async fn start_login(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(input): Json<StartLoginRequest>,
 ) -> Result<impl IntoResponse> {
-    let endpoints = input.client.into_endpoints()?;
+    let endpoints = input.client.into_endpoints_for(&input.provider_key)?;
     if endpoints.authorize_url.is_empty() {
         return Err(Error::BadRequest(
             "authorize_url is required for a browser login; use the device-code endpoint for a provider without one"
@@ -109,7 +137,8 @@ pub async fn start_login(
     ensure_connection(&state, &input.connection_id).await?;
     let label = normalized_label(&input.label)?;
 
-    let redirect_uri = redirect_uri_for(&headers);
+    let callback = callback_for(&input.provider_key);
+    let redirect_uri = callback_uri(&callback, &headers);
     let (verifier, challenge) = oauth::flows::pkce_pair();
     let login_id = oauth::pkce::random_id();
     let state_nonce = oauth::pkce::random_state();
@@ -128,8 +157,16 @@ pub async fn start_login(
             state_nonce,
             verifier,
             redirect_uri.clone(),
+            callback.clone(),
         ))
         .await;
+
+    // A provider that pins its callback needs a listener running before the
+    // operator's browser reaches it, so it is bound here rather than after a
+    // poll.
+    if let CallbackMode::Loopback { port, path } = callback {
+        spawn_loopback_login(state.clone(), login_id.clone(), port, path);
+    }
 
     Ok((
         StatusCode::CREATED,
@@ -142,12 +179,74 @@ pub async fn start_login(
     ))
 }
 
+/// Finishes a login whose provider pins its callback URL.
+///
+/// The router cannot serve that URL, so a dedicated listener is bound for the
+/// life of the login. It is deliberately spawned rather than awaited: the
+/// dashboard needs the authorize URL back immediately so it can open a tab.
+fn spawn_loopback_login(state: AppState, login_id: String, port: u16, path: String) {
+    tokio::spawn(async move {
+        let Some(login) = state.oauth_logins.get(&login_id).await else {
+            return;
+        };
+
+        let code = match oauth::loopback::await_code(port, &path, &login.state).await {
+            Ok(code) => code,
+            Err(error) => {
+                // A cancelled login is expected, not a failure worth recording.
+                if state.oauth_logins.get(&login_id).await.is_some() {
+                    state
+                        .oauth_logins
+                        .settle(
+                            &login_id,
+                            LoginState::Failed {
+                                error: error.to_string(),
+                            },
+                        )
+                        .await;
+                }
+                return;
+            }
+        };
+
+        // The operator may have cancelled while the browser was open.
+        if state.oauth_logins.get(&login_id).await.is_none() {
+            return;
+        }
+
+        let settled = match complete_login(&state, &login, &code).await {
+            Ok(account_id) => LoginState::Completed { account_id },
+            Err(error) => LoginState::Failed {
+                error: error.to_string(),
+            },
+        };
+        state.oauth_logins.settle(&login_id, settled).await;
+    });
+}
+
+/// Exchanges the code and stores the account, for both callback modes.
+async fn complete_login(state: &AppState, login: &PendingLogin, code: &str) -> Result<String> {
+    let token =
+        oauth::flows::exchange_code(&login.endpoints, code, &login.redirect_uri, &login.verifier)
+            .await?;
+
+    store_account(
+        state,
+        &login.connection_id,
+        &login.label,
+        &login.provider_key,
+        login.endpoints.clone(),
+        token,
+    )
+    .await
+}
+
 /// `POST /api/oauth/device-logins`
 pub async fn start_device_login(
     State(state): State<AppState>,
     Json(input): Json<StartDeviceLoginRequest>,
 ) -> Result<impl IntoResponse> {
-    let endpoints = input.client.into_endpoints()?;
+    let endpoints = input.client.into_endpoints_for(&input.provider_key)?;
 
     ensure_connection(&state, &input.connection_id).await?;
     let label = normalized_label(&input.label)?;
@@ -290,6 +389,21 @@ async fn store_account(
     let now = chrono::Utc::now();
     let account_info = oauth::flows::fetch_account_info(&endpoints, &token.access_token).await;
 
+    // The ChatGPT/Codex backend authorizes on the account id carried in the
+    // bearer's JWT claim. A token without it is useless, so the login fails
+    // here rather than surfacing as an opaque 401 mid-conversation.
+    let chatgpt_account_id =
+        crate::upstream::chat_backend::chatgpt_account_id_from_jwt(&token.access_token);
+    if oauth::presets::find(provider_key).provider_type == Some("openai-codex")
+        && chatgpt_account_id.is_none()
+    {
+        return Err(Error::BadRequest(
+            "the token OpenAI issued carries no ChatGPT account id, so the Codex backend \
+             cannot authorize it; make sure the ChatGPT account has Codex access"
+                .to_string(),
+        ));
+    }
+
     let credential = OAuthCredential {
         access_token: token.access_token,
         refresh_token: token.refresh_token,
@@ -300,6 +414,7 @@ async fn store_account(
         scope: token.scope,
         endpoints,
         account: account_info,
+        chatgpt_account_id,
     };
 
     let account = state
@@ -315,10 +430,45 @@ async fn store_account(
         )
         .await?;
 
+    // A Codex token is a bearer by definition. Promoting the connection here
+    // means the operator never has to remember the auth-style switch.
+    ensure_bearer_auth(state, connection_id, provider_key).await?;
+
     // The catalog mirrors account ids, so a new account must be visible to the
     // resolver on the next request.
     state.invalidate_catalog().await;
     Ok(account.id)
+}
+
+/// Switches a connection to `bearer` when its OAuth provider authenticates that
+/// way and the connection is still on the default `api_key` style.
+///
+/// Only an untouched default is changed: an operator who chose a style
+/// deliberately keeps it.
+async fn ensure_bearer_auth(
+    state: &AppState,
+    connection_id: &str,
+    provider_key: &str,
+) -> Result<()> {
+    if oauth::presets::find(provider_key).provider_type != Some("openai-codex") {
+        return Ok(());
+    }
+    let Some(connection) = state.connections().get(connection_id).await? else {
+        return Ok(());
+    };
+    if connection.auth_style != "bearer" {
+        state
+            .connections()
+            .update(
+                connection_id,
+                crate::db::repos::connections::UpdateConnection {
+                    auth_style: Some("bearer".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 /// `GET /api/oauth/callback` — the browser comes back here.
@@ -362,39 +512,7 @@ pub async fn callback(
         return callback_page(false, "The provider did not return an authorization code.");
     };
 
-    let token = match oauth::flows::exchange_code(
-        &login.endpoints,
-        code,
-        &login.redirect_uri,
-        &login.verifier,
-    )
-    .await
-    {
-        Ok(token) => token,
-        Err(error) => {
-            state
-                .oauth_logins
-                .settle(
-                    &login.id,
-                    LoginState::Failed {
-                        error: error.to_string(),
-                    },
-                )
-                .await;
-            return callback_page(false, &format!("Could not exchange the code: {error}"));
-        }
-    };
-
-    match store_account(
-        &state,
-        &login.connection_id,
-        &login.label,
-        &login.provider_key,
-        login.endpoints.clone(),
-        token,
-    )
-    .await
-    {
+    match complete_login(&state, &login, code).await {
         Ok(account_id) => {
             state
                 .oauth_logins
@@ -412,7 +530,7 @@ pub async fn callback(
                     },
                 )
                 .await;
-            callback_page(false, &format!("Could not store the credential: {error}"))
+            callback_page(false, &format!("Could not connect the account: {error}"))
         }
     }
 }

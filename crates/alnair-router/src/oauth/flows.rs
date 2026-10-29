@@ -80,6 +80,11 @@ pub fn authorize_url(
         if !endpoints.scopes.trim().is_empty() {
             query.append_pair("scope", endpoints.scopes.trim());
         }
+        // Provider-specific flags (the ChatGPT/Codex login's three). They are
+        // wire constants, not secrets — see `EndpointConfig::authorize_extra`.
+        for (key, value) in &endpoints.authorize_extra {
+            query.append_pair(key, value);
+        }
     }
 
     Ok(url.into())
@@ -109,6 +114,24 @@ async fn post_form(url: &str, form: Vec<(&str, String)>) -> Result<TokenResponse
         .await
         .map_err(|error| Error::Upstream(format!("cannot reach '{url}': {error}")))?;
 
+    read_token_response(url, response).await
+}
+
+async fn post_json(url: &str, body: serde_json::Value) -> Result<TokenResponse> {
+    let response = client()
+        .post(url)
+        .header("Accept", "application/json")
+        .json(&body)
+        .timeout(REQUEST_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| Error::Upstream(format!("cannot reach '{url}': {error}")))?;
+
+    read_token_response(url, response).await
+}
+
+/// Parses a token endpoint reply, whichever body encoding was used.
+async fn read_token_response(url: &str, response: reqwest::Response) -> Result<TokenResponse> {
     if !response.status().is_success() {
         return Err(Error::Upstream(format!(
             "token endpoint rejected the request — {}",
@@ -118,18 +141,18 @@ async fn post_form(url: &str, form: Vec<(&str, String)>) -> Result<TokenResponse
 
     response.json::<TokenResponse>().await.map_err(|error| {
         Error::Upstream(format!(
-            "token endpoint returned a non-standard body: {error}"
+            "token endpoint returned a non-standard body: {error} (from '{url}')"
         ))
     })
 }
 
-/// Exchanges an authorization code for tokens.
-pub async fn exchange_code(
+/// Builds the code-grant form or body for the provider's token encoding.
+fn code_grant_form(
     endpoints: &EndpointConfig,
     code: &str,
     redirect_uri: &str,
     verifier: &str,
-) -> Result<TokenResponse> {
+) -> Vec<(&'static str, String)> {
     let mut form = vec![
         ("grant_type", "authorization_code".to_string()),
         ("code", code.to_string()),
@@ -140,8 +163,35 @@ pub async fn exchange_code(
     if let Some(secret) = endpoints.client_secret.as_deref() {
         form.push(("client_secret", secret.to_string()));
     }
+    form
+}
 
-    post_form(&endpoints.token_url, form).await
+/// Turns a form grant into the JSON object a `Json` token endpoint expects.
+fn form_to_json(form: Vec<(&'static str, String)>) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    for (key, value) in form {
+        body.insert(key.to_string(), serde_json::Value::String(value));
+    }
+    serde_json::Value::Object(body)
+}
+
+/// Exchanges an authorization code for tokens.
+///
+/// The ChatGPT/Codex endpoint takes the same grant as a form body but rejects a
+/// `state` field, which this flow never sends, so one implementation covers
+/// both encodings.
+pub async fn exchange_code(
+    endpoints: &EndpointConfig,
+    code: &str,
+    redirect_uri: &str,
+    verifier: &str,
+) -> Result<TokenResponse> {
+    let form = code_grant_form(endpoints, code, redirect_uri, verifier);
+    if endpoints.uses_form_body() {
+        post_form(&endpoints.token_url, form).await
+    } else {
+        post_json(&endpoints.token_url, form_to_json(form)).await
+    }
 }
 
 /// Renews an access token with the refresh grant.
@@ -155,7 +205,11 @@ pub async fn refresh(endpoints: &EndpointConfig, refresh_token: &str) -> Result<
         form.push(("client_secret", secret.to_string()));
     }
 
-    post_form(&endpoints.token_url, form).await
+    if endpoints.uses_form_body() {
+        post_form(&endpoints.token_url, form).await
+    } else {
+        post_json(&endpoints.token_url, form_to_json(form)).await
+    }
 }
 
 /// Starts a device authorization (RFC 8628).

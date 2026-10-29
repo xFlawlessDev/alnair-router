@@ -73,7 +73,7 @@ Working today, verified by the test suite and a live smoke test:
       fallback to the CLI transport (`/alpha/generate`) when a plan has no API
       access, one entitlement probe per connection, and the reserve-tool / tool-pairing
       rules the endpoint requires
-- [x] OAuth provider accounts: a BYO-client PKCE + device-code connector, per-account encrypted credentials, single-flight token refresh, and a dashboard to connect them. No first-party client identity is shipped.
+- [x] OAuth provider accounts: a BYO-client PKCE + device-code connector, per-account encrypted credentials, single-flight token refresh, and a dashboard to connect them. One preset (ChatGPT/Codex) ships a first-party client id because the Codex backend authorizes no other application; it carries a risk notice in the picker and the README.
 - [x] MIT license, CI, multi-stage Dockerfile, opt-in real-provider e2e tests
 
 ---
@@ -135,8 +135,8 @@ math, policy mapping, fallback timing.
 - [x] **P1.3 OAuth provider accounts.** A generic BYO-client connector (PKCE
       browser login and device code), an encrypted per-account credential blob, a
       single-flight token refresh in the executor, and admin API + dashboard to
-      connect and manage accounts. Ships **no** first-party client identity —
-      details below.
+      connect and manage accounts. Ships **no** first-party client identity,
+      with one documented exception: the ChatGPT/Codex preset — details below.
 - [x] **P1.4 Streaming for the non-streaming Anthropic path.**
       `LlmProvider::complete` plus a real `stream: false` `/v1/messages` call for
       `AnthropicNativeProvider`, so non-streaming requests no longer pay SSE
@@ -185,8 +185,8 @@ The reference project's own registry is the argument:
 | `gemini-cli.js` | `deprecated: true`, `RISK_NOTICE` | Google client secret in plaintext |
 | `gitlab.js` | **none** | `meta.clientId` **from the user** |
 
-So `claude`, `codex`, `github` and `kiro` are **not** ported. Nothing borrowed is
-compiled in, and the two provider presets (`gitlab-duo`, `google`) carry
+So `claude`, `codex`, `github` and `kiro` were **not** ported. Nothing borrowed
+was compiled in, and the two provider presets (`gitlab-duo`, `google`) carry
 endpoints and scopes only — the Google one deliberately ships an empty client id
 for the same reason. `cursor` is not OAuth at all; it reads Cursor's own
 `state.vscdb`.
@@ -215,9 +215,46 @@ What landed:
    opens an "OAuth accounts" dialog that runs the whole flow.
 
 **Known limits.** `gitlab-duo` is useful for self-managed GitLab; the GitLab.com
-chat API is internal-only, so a GitLab.com account will not serve chat. A
-provider whose wire format is not OpenAI/Anthropic-shaped (Codex's responses
-API, Cursor's protobuf) still needs a new `provider_type` and is not covered.
+chat API is internal-only, so a GitLab.com account will not serve chat. Cursor's
+protobuf API still needs a new `provider_type` and is not covered.
+
+### P1.3a — ChatGPT/Codex sign-in (shipped)
+
+The `openai-codex` provider speaks the Codex backend's Responses dialect
+(`providers/codex` in `alnair-llm`): system messages are hoisted into
+`instructions`, `store` is always `false`, `include:
+["reasoning.encrypted_content"]` is always requested, and every request carries
+the Codex client identity plus a `chatgpt-account-id` header derived from the
+bearer's JWT claim. That last part is what makes Codex a plain OAuth connection:
+no account id is stored, so a rotated token brings its own.
+
+Two things are inherently different from the rest of P1.3:
+
+- **The client identity is shipped.** OpenAI authorizes only its own Codex CLI
+  application, so `oauth/presets.rs` pins `app_EMoamEEZ73f0CkXaXp7hrann`. That is
+  exactly the borrowed identity the section above refuses — here it is the price
+  of supporting the provider at all. The picker shows a risk notice, the README
+  explains it, and no other preset ships a client id.
+- **The callback is fixed.** OpenAI registers
+  `http://localhost:1455/auth/callback`, so the router cannot serve the code
+  itself. `oauth/loopback.rs` binds that address for the lifetime of one login
+  and refuses a callback whose `state` does not match. A port already in use —
+  by another login or by the `codex` CLI — is reported as a configuration error
+  rather than a silent timeout.
+
+The credential is rejected at login when the issued token carries no
+`chatgpt_account_id`, because the backend would refuse every request it
+authorized.
+
+The backend also publishes no model listing, so `providers/model_catalog.rs`
+compiles in the eight models it served when the catalog was captured. A
+compiled-in list is a liability if it goes stale silently, so it is disclosed
+everywhere it shows: the probe API and the connectivity test carry a `notice`,
+`GET /v1/models` carries one whenever a Codex alias is configured, and the
+dashboard renders it in the alias picker and the import dialog. The list is a
+convenience, never a gate — a model added after the build still routes by id.
+Its entries are also served under the alias prefix (`codex/gpt-5.5`), matching
+how a caller addresses them.
 
 ---
 

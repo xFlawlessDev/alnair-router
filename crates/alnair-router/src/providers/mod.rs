@@ -10,6 +10,7 @@
 //! [`catalog`].
 
 mod catalog;
+pub mod model_catalog;
 
 #[cfg(test)]
 mod tests;
@@ -26,6 +27,9 @@ use crate::db::repos::connections::SUPPORTED_PROVIDER_TYPES;
 pub enum ProviderAuth {
     /// Needs an API key; stored encrypted in `connections.api_key`.
     ApiKey,
+    /// Signed in with an OAuth account instead of a key; the connection has no
+    /// `api_key` and the executor rotates `oauth_accounts`.
+    OAuth,
     /// Reachable without a key: a local server or an open gateway.
     None,
 }
@@ -36,6 +40,8 @@ pub enum ProviderAuth {
 pub enum ProviderCategory {
     /// Paid or pay-as-you-go endpoint behind a key.
     ApiKey,
+    /// Subscription channel reached through an OAuth account.
+    Subscription,
     /// Hosted provider with a free tier.
     FreeTier,
     /// Server running on the user's own machine.
@@ -43,12 +49,13 @@ pub enum ProviderCategory {
 }
 
 impl ProviderCategory {
-    /// Grouping order: API key, then free tier, then local.
+    /// Grouping order: API key, subscription, free tier, then local.
     fn rank(self) -> u8 {
         match self {
             ProviderCategory::ApiKey => 0,
-            ProviderCategory::FreeTier => 1,
-            ProviderCategory::Local => 2,
+            ProviderCategory::Subscription => 1,
+            ProviderCategory::FreeTier => 2,
+            ProviderCategory::Local => 3,
         }
     }
 }
@@ -70,6 +77,13 @@ pub struct ProviderPreset {
     pub api_key_url: Option<&'static str>,
     pub docs_url: Option<&'static str>,
     pub note: Option<&'static str>,
+    /// A warning the dashboard must show for a preset that borrows a
+    /// first-party client identity.
+    pub risk_notice: Option<&'static str>,
+    /// The OAuth preset that signs this connection in, when `auth` is
+    /// [`ProviderAuth::OAuth`]. The dashboard opens that login directly instead
+    /// of asking for endpoints.
+    pub oauth_preset: Option<&'static str>,
 }
 
 /// A preset plus how many connections currently use it.
@@ -83,6 +97,7 @@ pub struct ProviderPresetView {
 /// Every preset a user can pick: grouped by tier, alphabetically inside each.
 pub fn presets() -> Vec<ProviderPreset> {
     let mut presets = catalog::api_key_presets();
+    presets.extend(catalog::subscription_presets());
     presets.extend(catalog::free_tier_presets());
     presets.extend(catalog::local_presets());
     presets.sort_by_key(|preset| (preset.category.rank(), preset.label));
@@ -93,6 +108,32 @@ pub fn presets() -> Vec<ProviderPreset> {
 pub fn find(id: &str) -> Option<ProviderPreset> {
     let id = id.trim().to_ascii_lowercase();
     presets().into_iter().find(|preset| preset.id == id)
+}
+
+/// An OAuth-backed subscription channel: no key, one login.
+fn subscription(
+    id: &'static str,
+    label: &'static str,
+    provider_type: &'static str,
+    base_url: &'static str,
+    oauth_preset: &'static str,
+    note: Option<&'static str>,
+    risk_notice: Option<&'static str>,
+) -> ProviderPreset {
+    ProviderPreset {
+        id,
+        label,
+        provider_type,
+        base_url,
+        category: ProviderCategory::Subscription,
+        auth: ProviderAuth::OAuth,
+        default_headers: BTreeMap::new(),
+        api_key_url: None,
+        docs_url: None,
+        note,
+        risk_notice,
+        oauth_preset: Some(oauth_preset),
+    }
 }
 
 /// A key-based preset in the API-key tier.
@@ -175,5 +216,7 @@ fn provider(
         api_key_url: (!api_key_url.is_empty()).then_some(api_key_url),
         docs_url: None,
         note,
+        risk_notice: None,
+        oauth_preset: None,
     }
 }

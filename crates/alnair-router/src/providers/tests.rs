@@ -28,6 +28,13 @@ fn presets_are_unique_and_supported() {
                 preset.id
             );
         }
+        if preset.auth != ProviderAuth::OAuth {
+            assert!(
+                preset.oauth_preset.is_none(),
+                "{} is not an OAuth login",
+                preset.id
+            );
+        }
     }
 }
 
@@ -85,6 +92,7 @@ fn every_tier_is_populated() {
 
     for category in [
         ProviderCategory::ApiKey,
+        ProviderCategory::Subscription,
         ProviderCategory::FreeTier,
         ProviderCategory::Local,
     ] {
@@ -92,5 +100,46 @@ fn every_tier_is_populated() {
             presets.iter().any(|preset| preset.category == category),
             "{category:?} has no presets"
         );
+    }
+}
+
+/// An OAuth-backed preset carries no key, names the login it uses, and warns
+/// about any borrowed client identity.
+#[test]
+fn oauth_presets_name_their_login_and_carry_no_key() {
+    let oauth_presets: Vec<_> = presets()
+        .into_iter()
+        .filter(|preset| preset.auth == ProviderAuth::OAuth)
+        .collect();
+    assert!(!oauth_presets.is_empty(), "expected an OAuth preset");
+
+    for preset in oauth_presets {
+        assert!(
+            preset.oauth_preset.is_some(),
+            "{} must name its OAuth preset",
+            preset.id
+        );
+        assert!(
+            preset.api_key_url.is_none(),
+            "{} takes no API key",
+            preset.id
+        );
+        assert_eq!(
+            preset.category,
+            ProviderCategory::Subscription,
+            "{} belongs in the subscription tier",
+            preset.id
+        );
+
+        // The named login must exist and describe the same wire family.
+        let login = crate::oauth::presets::find(preset.oauth_preset.unwrap());
+        assert_eq!(login.provider_type, Some(preset.provider_type));
+        if crate::oauth::presets::pins_client(&login) {
+            assert!(
+                preset.risk_notice.is_some(),
+                "{} borrows a client identity and must warn about it",
+                preset.id
+            );
+        }
     }
 }

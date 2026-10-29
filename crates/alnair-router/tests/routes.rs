@@ -348,6 +348,57 @@ async fn models_list_is_empty_on_a_fresh_database() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["object"], "list");
     assert!(body["data"].as_array().expect("array").is_empty());
+    // A database with no built-in catalog in play carries no notice.
+    assert!(body.get("notice").is_none(), "{body}");
+}
+
+/// A Codex alias exposes its compiled-in models under the alias prefix, so a
+/// client can discover them without guessing, and the list is disclosed as a
+/// snapshot.
+#[tokio::test]
+async fn models_list_exposes_the_codex_catalog_under_its_alias() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": format!("codex-{}", uuid_like()),
+            "provider_id": "openai-codex"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+    create_alias_for(&app, connection_id, "codex", Some("gpt-5.5")).await;
+
+    let (status, body) = get(&app, "/v1/models").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let ids: Vec<&str> = body["data"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter_map(|entry| entry["id"].as_str())
+        .collect();
+    assert!(ids.contains(&"codex"), "{ids:?}");
+    assert!(ids.contains(&"codex/gpt-5.5"), "{ids:?}");
+    assert!(ids.contains(&"codex/gpt-6.1-sol"), "{ids:?}");
+    assert!(
+        body["notice"]
+            .as_str()
+            .is_some_and(|notice| notice.contains("built into")),
+        "the snapshot must be disclosed: {body}"
+    );
+
+    // A built-in reference resolves by id, so an SDK can retrieve it.
+    let (status, model) = get(&app, "/v1/models/codex/gpt-5.5").await;
+    assert_eq!(status, StatusCode::OK, "{model}");
+    assert_eq!(model["router_kind"], "builtin");
+
+    // A model outside the catalog still 404s rather than inventing an entry.
+    let (status, _) = get(&app, "/v1/models/codex/gpt-9-imaginary").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -874,6 +925,12 @@ fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
             continue;
         }
         if path.ends_with("upstream/chat_backend.rs") {
+            continue;
+        }
+        // The seam's own tests may name the crate; they are not production
+        // dependencies. The restriction is to `upstream/chat_backend/mod.rs` so
+        // this exception cannot swallow a second production file.
+        if path.ends_with("upstream/chat_backend/tests.rs") {
             continue;
         }
 
@@ -2299,6 +2356,61 @@ async fn connection_test_accepts_a_provider_without_a_models_endpoint() {
             .contains("model list not available"),
         "unexpected body: {body}"
     );
+}
+
+/// A provider with a compiled-in catalog answers from that snapshot, not the
+/// network, and says so.
+#[tokio::test]
+async fn connection_models_serves_the_codex_catalog_with_a_notice() {
+    let (app, _db) = app(false).await;
+    let (status, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": format!("codex-{}", uuid_like()),
+            "provider_id": "openai-codex"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{connection}");
+    let id = connection["id"].as_str().expect("connection id");
+
+    let (status, body) = get(&app, &format!("/api/connections/{id}/models")).await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    let ids: Vec<&str> = body["models"]
+        .as_array()
+        .expect("models")
+        .iter()
+        .filter_map(|model| model["id"].as_str())
+        .collect();
+    assert_eq!(ids.first().copied(), Some("gpt-6.1-sol"), "{ids:?}");
+    assert_eq!(ids.len(), 8, "the catalog should list its published models");
+    assert_eq!(
+        body["enumerable"], true,
+        "a built-in catalog does list models"
+    );
+    assert!(
+        body["notice"]
+            .as_str()
+            .is_some_and(|notice| notice.contains("built into")),
+        "the snapshot must be disclosed: {body}"
+    );
+
+    // The connectivity test mentions the built-in origin rather than implying a
+    // live /models answer.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        &format!("/api/connections/{id}/test"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["models_count"], 8);
+    let message = body["message"].as_str().unwrap_or_default();
+    assert!(message.contains("built-in"), "{message}");
 }
 
 #[tokio::test]
@@ -4648,6 +4760,78 @@ async fn connection_accounts_round_trip_and_invalidate() {
 }
 
 #[tokio::test]
+async fn a_codex_login_pins_the_client_and_the_codex_callback() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "codex",
+            "provider_id": "openai-codex"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+    // A subscription connection authenticates as a bearer from the start.
+    assert_eq!(connection["provider_type"], "openai-codex");
+    assert_eq!(connection["auth_style"], "bearer");
+
+    // The operator supplies no client id: the preset pins OpenAI's own.
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/api/oauth/logins",
+        serde_json::json!({
+            "connection_id": connection_id,
+            "label": "chatgpt",
+            "provider_key": "openai-codex",
+            "client_id": "",
+            "authorize_url": "https://auth.openai.com/oauth/authorize",
+            "token_url": "https://auth.openai.com/oauth/token",
+            "scopes": "openid profile email offline_access"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "start failed: {body}");
+
+    let authorize = body["authorize_url"].as_str().expect("authorize url");
+    assert!(
+        authorize.starts_with("https://auth.openai.com/oauth/authorize?"),
+        "{authorize}"
+    );
+    assert!(
+        authorize.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"),
+        "the pinned client must be used, not an empty one: {authorize}"
+    );
+    // OpenAI registers this callback, so the router cannot substitute its own.
+    assert_eq!(body["redirect_uri"], "http://localhost:1455/auth/callback");
+    for (key, value) in [
+        ("id_token_add_organizations", "true"),
+        ("codex_cli_simplified_flow", "true"),
+        ("originator", "codex_cli_rs"),
+    ] {
+        assert!(
+            authorize.contains(&format!("{key}={value}")),
+            "missing {key}: {authorize}"
+        );
+    }
+
+    // The listener is bound by the login; cancelling must not leave it running.
+    let login_id = body["login_id"].as_str().expect("login id");
+    let response = raw_request_with_auth(
+        &app,
+        "DELETE",
+        &format!("/api/oauth/logins/{login_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
 async fn oauth_presets_ship_endpoints_but_no_borrowed_identity() {
     let (app, _db) = app(false).await;
 
@@ -4664,17 +4848,29 @@ async fn oauth_presets_ship_endpoints_but_no_borrowed_identity() {
         "the generic entry must always be offered: {body}"
     );
 
-    // A preset may carry endpoints and scopes, but never a client id or secret:
-    // shipping one would mean impersonating a first-party application.
+    // A preset may carry endpoints and scopes, but the only client id it may
+    // ship is the documented Codex one: shipping any other would mean
+    // impersonating a first-party application.
     for preset in presets {
-        assert!(
-            preset.get("client_id").is_none(),
-            "a preset carried a client id: {preset}"
-        );
         assert!(
             preset.get("client_secret").is_none(),
             "a preset carried a client secret: {preset}"
         );
+        let client_id = preset["client_id"].as_str().unwrap_or_default();
+        assert!(
+            client_id.is_empty() || preset["id"] == "openai-codex",
+            "a preset carried a client id: {preset}"
+        );
+        if preset["id"] == "openai-codex" {
+            assert_eq!(client_id, "app_EMoamEEZ73f0CkXaXp7hrann");
+            assert!(
+                preset["risk_notice"]
+                    .as_str()
+                    .is_some_and(|note| !note.is_empty()),
+                "the borrowed identity must be disclosed: {preset}"
+            );
+            assert_eq!(preset["redirect_port"], 1455);
+        }
     }
 }
 
@@ -4884,8 +5080,11 @@ async fn oauth_accounts_are_listed_renamed_and_deleted() {
                     device_code_url: None,
                     user_info_url: None,
                     scopes: "api".to_string(),
+                    authorize_extra: Vec::new(),
+                    token_body: alnair_router::oauth::TokenBody::Form,
                 },
                 account: None,
+                chatgpt_account_id: None,
             },
             enabled: true,
         },

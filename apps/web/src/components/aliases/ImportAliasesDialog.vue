@@ -37,6 +37,8 @@ const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
 const connectionId = ref("");
 const models = ref<UpstreamModel[]>([]);
 const result = ref<{ enumerable: boolean }>({ enumerable: true });
+/** Set when the models came from a compiled-in catalog rather than the upstream. */
+const notice = ref<string | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
 const search = ref("");
@@ -117,9 +119,11 @@ function toggleAll(): void {
 async function loadModels(): Promise<void> {
   loading.value = true;
   error.value = null;
+  notice.value = null;
   try {
     const response = await api.listUpstreamModels(connectionId.value);
     models.value = response.models;
+    notice.value = response.notice ?? null;
     result.value = { enumerable: response.enumerable };
   } catch (caught) {
     models.value = [];
@@ -293,6 +297,13 @@ async function importSelected(): Promise<void> {
         </p>
         <p v-else class="rounded-md border p-4 text-sm text-muted-foreground">
           This upstream returned no models.
+        </p>
+
+        <p
+          v-if="notice"
+          class="text-xs text-amber-600 dark:text-amber-400"
+        >
+          {{ notice }}
         </p>
       </div>
 

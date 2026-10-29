@@ -17,6 +17,7 @@
 pub mod credential;
 pub mod flows;
 pub mod logins;
+pub mod loopback;
 pub mod pkce;
 pub mod presets;
 pub mod token_cache;
@@ -24,8 +25,10 @@ pub mod token_cache;
 #[cfg(test)]
 mod tests;
 
-pub use credential::{AccountInfo, EndpointConfig, OAuthCredential};
-pub use logins::{DeviceChallenge, LoginRegistry, LoginState, LoginView, PendingLogin};
+pub use credential::{AccountInfo, EndpointConfig, OAuthCredential, TokenBody};
+pub use logins::{
+    CallbackMode, DeviceChallenge, LoginRegistry, LoginState, LoginView, PendingLogin,
+};
 pub use presets::{ClientInputs, OAuthPreset};
 pub use token_cache::OAuthTokenCache;
 

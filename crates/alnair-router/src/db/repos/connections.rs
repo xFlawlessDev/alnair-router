@@ -11,11 +11,12 @@ use crate::crypto::CredentialCipher;
 use crate::error::{Error, Result};
 
 /// The upstream families supported by the router.
-pub const SUPPORTED_PROVIDER_TYPES: [&str; 4] = [
+pub const SUPPORTED_PROVIDER_TYPES: [&str; 5] = [
     "openai-compatible",
     "anthropic-native",
     "command-code",
     "codebuddy-intl",
+    "openai-codex",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -302,6 +303,14 @@ impl ConnectionRepository {
             Some(value) => Some(self.cipher.encrypt(&value)?),
             None => None,
         };
+        // An OAuth-backed preset sends its credential as a bearer by definition,
+        // so an untouched default is already correct for it.
+        let default_auth_style = match preset.as_ref().map(|preset| preset.auth) {
+            Some(crate::providers::ProviderAuth::OAuth) => Some("bearer"),
+            _ => None,
+        };
+        let auth_style =
+            normalized_auth_style(input.auth_style.as_deref().or(default_auth_style))?.to_string();
         let provider_id = preset.as_ref().map(|preset| preset.id.to_string());
 
         sqlx::query(
@@ -324,7 +333,7 @@ impl ConnectionRepository {
         .bind(normalized_cache_retention(
             input.cache_retention.as_deref(),
         )?)
-        .bind(normalized_auth_style(input.auth_style.as_deref())?)
+        .bind(&auth_style)
         .bind(normalized_web_fetch_mode(input.web_fetch_mode.as_deref())?)
         .bind(normalized_model(input.web_fetch_path.as_deref()))
         .bind(&provider_id)

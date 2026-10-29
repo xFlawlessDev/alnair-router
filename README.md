@@ -765,7 +765,38 @@ would refuse.
 | `anthropic-native` | Supported |
 | `command-code` | Supported — Command Code's Provider API, falling back to its CLI transport when the plan has no API access (Go) |
 | `codebuddy-intl` | Supported — CodeBuddy Intl stream-only API at `https://www.codebuddy.ai/v2`; the router transforms messages and always streams upstream |
+| `openai-codex` | Supported — the ChatGPT/Codex backend's Responses dialect, authorized by a ChatGPT subscription OAuth account instead of an API key (see [Codex sign-in](#codex-sign-in)) |
 | anything else (including `ollama`) | **Rejected at write time** with `400 unsupported_provider_type` |
+
+### Codex sign-in
+
+The `openai-codex` connection signs in with a ChatGPT Plus/Pro account and
+serves its models through `https://chatgpt.com/backend-api/codex`. It needs no
+API key: the connection authenticates with the OAuth bearer, and the router
+derives the required `chatgpt-account-id` header from that token's own JWT
+claim on every request, so a refreshed token always carries its own account.
+
+Two details are fixed by OpenAI and therefore not editable: the client is
+OpenAI's Codex CLI application (`app_EMoamEEZ73f0CkXaXp7hrann`), and the
+callback is `http://localhost:1455/auth/callback`. The router binds that port
+for the duration of the login only, so nothing is left listening afterwards.
+While another Codex login is running — including the `codex` CLI itself — the
+port is taken and the login reports it.
+
+**This is the one place the router does not bring-your-own-client.** The Codex
+backend authorizes no other application, so supporting the provider at all means
+shipping OpenAI's identity. The dashboard shows a notice before the login
+starts. Use it only with your own ChatGPT account, and review the terms you
+agreed to: a subscription is licensed for OpenAI's own clients.
+
+**The model list is built in.** The Codex backend publishes no `/models`
+endpoint, so the router ships a snapshot of its catalog instead of showing an
+empty picker. Every surface that shows it says where it came from:
+`GET /api/connections/{id}/models` carries a `notice`, `POST
+/api/connections/{id}/test` says "built-in", and `notice` rides
+`GET /v1/models` whenever a Codex alias is configured. The snapshot is not a
+gate — a model OpenAI ships after this build still works if you type its id, and
+one it retires may be listed until the next release.
 
 ## Architecture
 

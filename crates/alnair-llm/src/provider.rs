@@ -5,7 +5,8 @@ use futures::stream::BoxStream;
 
 use crate::model_config::{LlmStreamOptions, ModelConfig};
 use crate::providers::{
-    AnthropicNativeProvider, CodeBuddyIntlProvider, CommandCodeProvider, OpenAiProvider,
+    AnthropicNativeProvider, CodeBuddyIntlProvider, CodexProvider, CommandCodeProvider,
+    OpenAiProvider,
 };
 use crate::types::{ChatError, LlmStreamChunk, Message, ProviderType};
 
@@ -76,6 +77,7 @@ impl ProviderRegistry {
             &ProviderType::CodeBuddyIntl,
             Arc::new(CodeBuddyIntlProvider::new()),
         );
+        registry.register(&ProviderType::OpenAiCodex, Arc::new(CodexProvider::new()));
         registry
     }
 }
@@ -86,5 +88,6 @@ pub fn provider_type_to_key(provider_type: &ProviderType) -> &'static str {
         ProviderType::AnthropicNative => "anthropic-native",
         ProviderType::CommandCode => "command-code",
         ProviderType::CodeBuddyIntl => "codebuddy-intl",
+        ProviderType::OpenAiCodex => "openai-codex",
     }
 }

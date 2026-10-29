@@ -25,8 +25,11 @@ fn credential(expires_at: Option<chrono::DateTime<Utc>>) -> OAuthCredential {
             device_code_url: None,
             user_info_url: None,
             scopes: "read".to_string(),
+            authorize_extra: Vec::new(),
+            token_body: crate::oauth::credential::TokenBody::Form,
         },
         account: None,
+        chatgpt_account_id: None,
     }
 }
 
@@ -143,6 +146,7 @@ async fn a_pending_login_is_found_by_state_only_while_it_lasts() {
         "state-1".to_string(),
         "verifier-1".to_string(),
         "http://127.0.0.1:7878/api/oauth/callback".to_string(),
+        CallbackMode::Server,
     );
 
     registry.insert(login).await;
@@ -207,15 +211,139 @@ fn the_generic_preset_is_the_fallback_and_ships_no_identity() {
     assert!(generic.authorize_url.is_empty());
     assert!(generic.token_url.is_empty());
 
-    // No preset may ship a client identity.
+    // `openai-codex` is the one documented exception: the Codex backend
+    // authorizes no application but OpenAI's own. It must carry a risk notice
+    // so the dashboard cannot present it as an ordinary pick, and every other
+    // preset must still ship no identity at all.
     for preset in presets::presets() {
+        if preset.id == "openai-codex" {
+            assert!(presets::pins_client(&preset));
+            assert!(
+                preset.risk_notice.is_some(),
+                "the borrowed-identity preset must ship a risk notice"
+            );
+        } else {
+            assert!(
+                !presets::pins_client(&preset),
+                "{} pins a client",
+                preset.id
+            );
+        }
+
+        // No preset ever ships a secret; each one is a public PKCE client or
+        // takes the operator's own registration.
         let serialized = serde_json::to_string(&preset).expect("serialize");
         assert!(
-            !serialized.contains("client_id") && !serialized.contains("client_secret"),
-            "preset {} appears to ship client credentials",
+            !serialized.contains("client_secret"),
+            "preset {} appears to ship a secret",
             preset.id
         );
     }
+}
+
+#[test]
+fn the_codex_preset_fixes_the_codex_login_details() {
+    let preset = presets::find("openai-codex");
+
+    assert_eq!(preset.provider_type, Some("openai-codex"));
+    assert_eq!(preset.client_id, presets::CODEX_CLIENT_ID);
+    assert!(preset.public_client);
+    assert_eq!(preset.redirect_port, Some(presets::CODEX_REDIRECT_PORT));
+    assert!(matches!(
+        preset.token_body,
+        crate::oauth::credential::TokenBody::Form
+    ));
+    assert!(
+        preset
+            .authorize_extra
+            .iter()
+            .any(|(key, value)| { *key == "originator" && *value == "codex_cli_rs" })
+    );
+}
+
+#[test]
+fn a_pinned_client_overrides_whatever_the_caller_sent() {
+    let inputs = |client_id: &str| ClientInputs {
+        client_id: client_id.to_string(),
+        client_secret: Some("should-be-dropped".to_string()),
+        authorize_url: "https://auth.openai.com/oauth/authorize".to_string(),
+        token_url: "https://auth.openai.com/oauth/token".to_string(),
+        device_code_url: None,
+        user_info_url: None,
+        scopes: "openid".to_string(),
+    };
+
+    // A blank id is fine for a preset that pins its own, and the public client
+    // must not inherit a secret the dashboard sent by mistake.
+    let endpoints = inputs("")
+        .into_endpoints_for("openai-codex")
+        .expect("a pinned preset needs no operator client id");
+    assert_eq!(endpoints.client_id, presets::CODEX_CLIENT_ID);
+    assert_eq!(endpoints.client_secret, None);
+    assert_eq!(endpoints.authorize_extra.len(), 3);
+
+    // A bring-your-own-client preset still requires one.
+    assert!(inputs("").into_endpoints_for("gitlab-duo").is_err());
+    let byo = inputs("client-1")
+        .into_endpoints_for("gitlab-duo")
+        .expect("valid");
+    assert_eq!(byo.client_id, "client-1");
+    assert!(byo.authorize_extra.is_empty());
+}
+
+#[test]
+fn the_codex_authorize_url_carries_its_extra_parameters() {
+    let preset = presets::find("openai-codex");
+    let endpoints = EndpointConfig {
+        client_id: preset.client_id.to_string(),
+        client_secret: None,
+        authorize_url: preset.authorize_url.to_string(),
+        token_url: preset.token_url.to_string(),
+        device_code_url: None,
+        user_info_url: None,
+        scopes: preset.scopes.to_string(),
+        authorize_extra: preset
+            .authorize_extra
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect(),
+        token_body: preset.token_body,
+    };
+
+    let url = flows::authorize_url(
+        &endpoints,
+        &format!(
+            "http://localhost:{}{}",
+            preset.redirect_port.unwrap(),
+            presets::CODEX_REDIRECT_PATH
+        ),
+        "state-1",
+        "challenge-1",
+    )
+    .expect("authorize url");
+    let parsed = url::Url::parse(&url).expect("valid url");
+    let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+
+    assert_eq!(parsed.host_str(), Some("auth.openai.com"));
+    assert_eq!(
+        query.get("client_id").map(String::as_str),
+        Some(preset.client_id)
+    );
+    assert_eq!(
+        query.get("redirect_uri").map(String::as_str),
+        Some("http://localhost:1455/auth/callback")
+    );
+    assert_eq!(
+        query.get("code_challenge_method").map(String::as_str),
+        Some("S256")
+    );
+    for (key, value) in preset.authorize_extra {
+        assert_eq!(query.get(key).map(String::as_str), Some(value), "{key}");
+    }
+    assert!(
+        !url.contains("code_verifier"),
+        "the verifier must not ride the authorize URL"
+    );
 }
 
 #[test]

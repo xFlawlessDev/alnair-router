@@ -313,11 +313,14 @@ mod tests {
                 device_code_url: None,
                 user_info_url: None,
                 scopes: "read".to_string(),
+                authorize_extra: Vec::new(),
+                token_body: crate::oauth::credential::TokenBody::Form,
             },
             account: Some(AccountInfo {
                 username: Some("octocat".to_string()),
                 ..AccountInfo::default()
             }),
+            chatgpt_account_id: None,
         }
     }
 

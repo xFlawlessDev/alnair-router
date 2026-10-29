@@ -87,6 +87,93 @@ pub(super) async fn test_pool() -> SqlitePool {
 mod tests {
     use super::*;
 
+    /// A provider-type migration rebuilds `connections`, which every child table
+    /// references. With foreign keys on, dropping the old table would cascade
+    /// into those children, so the rebuild copies them aside and restores them.
+    /// This drives the real migrations and then asserts the children survived.
+    #[tokio::test]
+    async fn provider_type_rebuild_keeps_children() {
+        use crate::config::SecretsConfig;
+        use crate::crypto::CredentialCipher;
+        use std::sync::Arc;
+
+        const SECRET: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+        let db = crate::db::Db::connect_in_memory().await.expect("db");
+        let cipher = Arc::new(
+            CredentialCipher::from_config(&SecretsConfig {
+                key: Some(SECRET.to_string()),
+            })
+            .expect("cipher"),
+        );
+
+        // A connection with every child row kind attached.
+        let connection = crate::db::repos::connections::ConnectionRepository::new(
+            db.pool.clone(),
+            cipher.clone(),
+        )
+        .create(crate::db::repos::connections::CreateConnection {
+            name: "codex-main".to_string(),
+            provider_type: "openai-codex".to_string(),
+            base_url: "https://chatgpt.com/backend-api/codex".to_string(),
+            api_key: None,
+            custom_headers: Default::default(),
+            enabled: true,
+            connect_timeout_ms: None,
+            idle_timeout_ms: None,
+            pricing_model: None,
+            cache_retention: None,
+            auth_style: Some("bearer".to_string()),
+            web_fetch_mode: None,
+            web_fetch_path: None,
+            provider_id: Some("openai-codex".to_string()),
+        })
+        .await
+        .expect("a codex connection is accepted");
+
+        // Columns added after an earlier rebuild must survive this one.
+        assert_eq!(connection.auth_style, "bearer");
+        assert_eq!(connection.cache_retention, "none");
+        assert_eq!(connection.web_fetch_mode, "local");
+
+        sqlx::query(
+            "INSERT INTO aliases (id, prefix, connection_id, model_override, enabled, sort_order, created_at, updated_at)
+             VALUES ('alias-1', 'codex', ?, NULL, 1, 0, 'now', 'now')",
+        )
+        .bind(&connection.id)
+        .execute(&db.pool)
+        .await
+        .expect("alias");
+
+        sqlx::query(
+            "INSERT INTO oauth_accounts (id, connection_id, label, provider_key, credential, enabled, created_at, updated_at)
+             VALUES ('account-1', ?, 'work', 'openai-codex', '{}', 1, 'now', 'now')",
+        )
+        .bind(&connection.id)
+        .execute(&db.pool)
+        .await
+        .expect("oauth account");
+
+        let aliases: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM aliases")
+            .fetch_one(&db.pool)
+            .await
+            .expect("aliases survived");
+        assert_eq!(aliases, 1, "the rebuild dropped an alias");
+
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_accounts")
+            .fetch_one(&db.pool)
+            .await
+            .expect("oauth accounts survived");
+        assert_eq!(accounts, 1, "the rebuild dropped an OAuth account");
+
+        // An unsupported family is still refused by the rebuilt CHECK.
+        let error = sqlx::query("UPDATE connections SET provider_type = 'not-a-provider'")
+            .execute(&db.pool)
+            .await
+            .expect_err("the CHECK must still reject an unknown family");
+        assert!(error.to_string().to_lowercase().contains("constraint"));
+    }
+
     #[tokio::test]
     async fn windows_crlf_checksum_is_reconciled_without_changing_data() {
         let pool = test_pool().await;
@@ -135,7 +222,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("latest migration");
-        assert_eq!(version, 24);
+        assert_eq!(version, 25);
 
         let stored: Vec<u8> =
             sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 1")
@@ -200,7 +287,7 @@ mod tests {
             .fetch_one(&db.pool)
             .await
             .expect("latest migration version");
-        assert_eq!(max_version, 24);
+        assert_eq!(max_version, 25);
     }
 
     #[tokio::test]

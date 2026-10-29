@@ -11,6 +11,10 @@ use crate::state::AppState;
 pub struct ModelList {
     pub object: &'static str,
     pub data: Vec<ModelObject>,
+    /// Why a listed model may be missing or stale, when any entry came from a
+    /// compiled-in catalog rather than the upstream. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -19,7 +23,8 @@ pub struct ModelObject {
     pub object: &'static str,
     pub created: i64,
     pub owned_by: String,
-    /// Router-specific provenance: `alias` or `combo`.
+    /// Router-specific provenance: `alias`, `combo`, or `builtin` for a model
+    /// that came from a provider's compiled-in catalog.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub router_kind: Option<&'static str>,
 }
@@ -29,11 +34,17 @@ pub struct ModelObject {
 /// Connections are deliberately absent: only a combo name, an alias prefix and
 /// a bare model name resolve, so a connection name here would 404 at request
 /// time. A connection becomes addressable only once an alias points at it.
+///
+/// A provider with a compiled-in catalog (ChatGPT/Codex) additionally lists its
+/// models under the alias prefix that reaches it, because the backend publishes
+/// no listing of its own. Those entries are a snapshot, so the reply carries the
+/// catalog's notice.
 pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList>> {
     let catalog = state.catalog_snapshot().await?.catalog;
     let created = chrono::Utc::now().timestamp();
 
     let mut data = Vec::new();
+    let mut notice: Option<&'static str> = None;
 
     for alias in catalog.aliases.iter().filter(|a| a.is_enabled()) {
         data.push(ModelObject {
@@ -43,6 +54,31 @@ pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList
             owned_by: "alnair-router".to_string(),
             router_kind: Some("alias"),
         });
+
+        // The alias prefix is what a caller puts in front of the id
+        // (`codex/gpt-5.5`), so the built-in models appear under it.
+        let Some(connection) = catalog
+            .connections
+            .iter()
+            .find(|connection| connection.id == alias.connection_id)
+        else {
+            continue;
+        };
+        let Some(models) = crate::providers::model_catalog::models_for(&connection.provider_type)
+        else {
+            continue;
+        };
+
+        notice = crate::providers::model_catalog::notice_for(&connection.provider_type);
+        for model in models {
+            data.push(ModelObject {
+                id: format!("{}/{}", alias.prefix, model.id),
+                object: "model",
+                created,
+                owned_by: "alnair-router".to_string(),
+                router_kind: Some("builtin"),
+            });
+        }
     }
 
     for combo in catalog.combos.iter().filter(|c| c.is_enabled()) {
@@ -60,6 +96,7 @@ pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList
     Ok(Json(ModelList {
         object: "list",
         data,
+        notice,
     }))
 }
 
@@ -134,13 +171,17 @@ pub async fn models_info(State(state): State<AppState>) -> Result<Json<ModelInfo
 
 /// `GET /v1/models/{id}` — one model object, as the OpenAI SDKs expect.
 ///
-/// Ids are matched the same way the router resolves them: an alias prefix or a
-/// combo name. A connection name is deliberately not addressable, so the reply
-/// stays consistent with what a completion request would accept.
+/// Ids are matched the same way the router resolves them: an alias prefix, a
+/// combo name, or a `{alias prefix}/{builtin model}` reference. A connection
+/// name is deliberately not addressable, so the reply stays consistent with
+/// what a completion request would accept.
 pub async fn retrieve_model(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<ModelObject>> {
+    // The route is a catch-all so a built-in reference (`codex/gpt-5.5`) can be
+    // retrieved; axum may hand back a leading slash on an empty segment.
+    let id = id.trim_start_matches('/').to_string();
     let catalog = state.catalog_snapshot().await?.catalog;
     let created = chrono::Utc::now().timestamp();
 
@@ -157,7 +198,13 @@ pub async fn retrieve_model(
         (Some(_), _) => "alias",
         (None, Some(_)) => "combo",
         (None, None) => {
-            return Err(Error::NotFound(format!("no alias or combo named '{id}'")));
+            if is_builtin_reference(&catalog, &id) {
+                "builtin"
+            } else {
+                return Err(Error::NotFound(format!(
+                    "no alias, combo or built-in model named '{id}'"
+                )));
+            }
         }
     };
 
@@ -168,4 +215,28 @@ pub async fn retrieve_model(
         owned_by: "alnair-router".to_string(),
         router_kind: Some(router_kind),
     }))
+}
+
+/// True when `id` is `{alias prefix}/{model}` and that model is in the
+/// connection's compiled-in catalog.
+fn is_builtin_reference(catalog: &crate::model::resolver::Catalog, id: &str) -> bool {
+    let Some((prefix, model)) = id.split_once('/') else {
+        return false;
+    };
+    let Some(alias) = catalog
+        .aliases
+        .iter()
+        .find(|alias| alias.is_enabled() && alias.prefix == prefix)
+    else {
+        return false;
+    };
+    let Some(connection) = catalog
+        .connections
+        .iter()
+        .find(|connection| connection.id == alias.connection_id)
+    else {
+        return false;
+    };
+    crate::providers::model_catalog::models_for(&connection.provider_type)
+        .is_some_and(|models| models.iter().any(|entry| entry.id == model))
 }

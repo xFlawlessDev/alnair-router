@@ -20,6 +20,26 @@ use crate::oauth::credential::EndpointConfig;
 /// How long a started login stays valid before it is pruned.
 const LOGIN_TTL: Duration = Duration::from_secs(15 * 60);
 
+/// Where the provider sends the browser after a login.
+///
+/// Most providers accept any registered redirect, so the router serves
+/// `/api/oauth/callback` itself. A provider that pins its callback needs its own
+/// listener on a fixed port instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallbackMode {
+    /// The router's own `/api/oauth/callback` route.
+    Server,
+    /// A dedicated loopback listener on this port and path.
+    Loopback { port: u16, path: String },
+}
+
+impl CallbackMode {
+    /// Whether this login is waiting on a dedicated listener.
+    pub fn is_loopback(&self) -> bool {
+        matches!(self, CallbackMode::Loopback { .. })
+    }
+}
+
 /// Where a login has got to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -63,6 +83,8 @@ pub struct PendingLogin {
     /// PKCE verifier, consumed by the code exchange.
     pub verifier: String,
     pub redirect_uri: String,
+    /// Where the callback is expected.
+    pub callback: CallbackMode,
     pub device: Option<DeviceChallenge>,
     pub state_value: LoginState,
     started: Instant,
@@ -171,6 +193,7 @@ impl PendingLogin {
         state: String,
         verifier: String,
         redirect_uri: String,
+        callback: CallbackMode,
     ) -> Self {
         Self {
             id,
@@ -181,6 +204,7 @@ impl PendingLogin {
             state,
             verifier,
             redirect_uri,
+            callback,
             device: None,
             state_value: LoginState::Pending,
             started: Instant::now(),
@@ -205,6 +229,7 @@ impl PendingLogin {
             state: String::new(),
             verifier: String::new(),
             redirect_uri: String::new(),
+            callback: CallbackMode::Server,
             device: Some(device),
             state_value: LoginState::Pending,
             started: Instant::now(),

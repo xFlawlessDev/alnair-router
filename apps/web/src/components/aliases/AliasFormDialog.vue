@@ -46,6 +46,8 @@ const saving = ref(false);
 const models = ref<UpstreamModel[]>([]);
 const loadingModels = ref(false);
 const modelsError = ref<string | null>(null);
+/** Set when the connection's models come from a compiled-in catalog. */
+const modelsNotice = ref<string | null>(null);
 
 const isEdit = computed(() => props.alias !== null);
 
@@ -61,6 +63,7 @@ watch(
     selectedModel.value = "";
     models.value = [];
     modelsError.value = null;
+    modelsNotice.value = null;
     sortOrder.value = alias?.sort_order ?? 0;
     enabled.value = alias ? alias.enabled !== 0 : true;
     if (connectionId.value) void loadModels();
@@ -75,9 +78,11 @@ watch(connectionId, (id) => {
 async function loadModels(): Promise<void> {
   loadingModels.value = true;
   modelsError.value = null;
+  modelsNotice.value = null;
   try {
     const result = await api.listUpstreamModels(connectionId.value);
     models.value = result.models;
+    modelsNotice.value = result.notice ?? null;
     const current = modelOverride.value.trim();
     if (current && result.models.some((model) => model.id === current)) {
       overrideMode.value = "list";
@@ -85,6 +90,7 @@ async function loadModels(): Promise<void> {
     }
   } catch (caught) {
     models.value = [];
+    modelsNotice.value = null;
     modelsError.value =
       caught instanceof ApiError ? caught.message : "Failed to load models";
   } finally {
@@ -249,6 +255,12 @@ async function save(): Promise<void> {
           </p>
           <p v-else-if="models.length" class="text-xs text-muted-foreground">
             {{ models.length }} models loaded from the connection.
+          </p>
+          <p
+            v-if="modelsNotice"
+            class="text-xs text-amber-600 dark:text-amber-400"
+          >
+            {{ modelsNotice }}
           </p>
         </div>
 

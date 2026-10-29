@@ -29,8 +29,13 @@ pub struct ProbeOutcome {
     pub models: Vec<UpstreamModel>,
     pub latency_ms: u64,
     /// False when the provider does not publish a `/models` endpoint and the
-    /// outcome is inferred from a chat-route liveness probe instead.
+    /// outcome is inferred from a chat-route liveness probe instead. A
+    /// provider served from a compiled-in catalog reports `true`, because it
+    /// does list models — just not from the network.
     pub enumerable: bool,
+    /// Set when `models` came from a compiled-in snapshot rather than the
+    /// upstream, so every caller can show why the list may be stale.
+    pub notice: Option<&'static str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,12 +53,31 @@ struct UpstreamModelRaw {
 
 /// Fetches `GET {base_url}/models` from the connection's upstream.
 ///
+/// A provider with a compiled-in catalog (`providers/model_catalog.rs`) never
+/// reaches the network: the backend publishes no listing, so the snapshot is
+/// the answer and it carries a notice saying so.
+///
 /// When the plain `base_url` answers 404 while `{base_url}/v1` works, the
 /// error explains the missing `/v1` instead of dumping the upstream's HTML.
 /// When the upstream does not publish a `/models` endpoint at all, the probe
 /// falls back to a chat-route liveness check and reports the connection as
 /// reachable but not model-enumerable.
 pub async fn fetch_models(connection: &Connection) -> Result<ProbeOutcome> {
+    if let Some(models) = crate::providers::model_catalog::models_for(&connection.provider_type) {
+        return Ok(ProbeOutcome {
+            models: models
+                .iter()
+                .map(|model| UpstreamModel {
+                    id: model.id.to_string(),
+                    name: model.display_name.to_string(),
+                })
+                .collect(),
+            latency_ms: 0,
+            enumerable: true,
+            notice: crate::providers::model_catalog::notice_for(&connection.provider_type),
+        });
+    }
+
     let base = connection.base_url.trim_end_matches('/');
 
     // Command Code serves its model list under the Provider API path; a plan
@@ -164,6 +188,7 @@ async fn probe_url(connection: &Connection, url: &str) -> Result<ProbeOutcome> {
         models,
         latency_ms,
         enumerable: true,
+        notice: None,
     })
 }
 
@@ -254,6 +279,7 @@ async fn chat_liveness_probe(
         models: Vec::new(),
         latency_ms,
         enumerable: false,
+        notice: None,
     })
 }
 

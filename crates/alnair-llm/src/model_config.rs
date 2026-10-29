@@ -30,6 +30,13 @@ pub struct ModelConfig {
     pub auth_style: AuthStyle,
     #[serde(default)]
     pub custom_headers: BTreeMap<String, String>,
+    /// The `chatgpt_account_id` claim of a ChatGPT/Codex OAuth bearer. The
+    /// Codex backend refuses a request without the matching
+    /// `chatgpt-account-id` header, and the claim is the only place the id
+    /// exists, so the router derives it from the access token per request.
+    /// `None` for every other provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_account_id: Option<String>,
     #[serde(default)]
     pub supports_vision: bool,
     #[serde(default)]
@@ -183,6 +190,7 @@ impl ModelConfig {
             api_key,
             auth_style: AuthStyle::default(),
             custom_headers: BTreeMap::new(),
+            chatgpt_account_id: None,
             supports_vision: false,
             supports_thinking: false,
             supports_cache_control: false,
@@ -203,6 +211,7 @@ impl ModelConfig {
             api_key,
             auth_style: AuthStyle::default(),
             custom_headers: BTreeMap::new(),
+            chatgpt_account_id: None,
             supports_vision: false,
             supports_thinking: false,
             supports_cache_control: false,

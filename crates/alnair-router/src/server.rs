@@ -190,7 +190,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/responses", post(handlers::responses::responses))
         .route("/v1/models", get(handlers::models::list_models))
         .route("/v1/models/info", get(handlers::models::models_info))
-        .route("/v1/models/{id}", get(handlers::models::retrieve_model))
+        // A catch-all, because a built-in catalog reference carries a slash
+        // (`codex/gpt-5.5`). The static `info` route above still wins.
+        .route("/v1/models/{*id}", get(handlers::models::retrieve_model))
         .route("/v1/embeddings", post(handlers::media::embeddings))
         .route(
             "/v1/images/generations",

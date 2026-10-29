@@ -458,6 +458,9 @@ pub async fn connection_models(
         "latency_ms": outcome.latency_ms,
         "models": outcome.models,
         "enumerable": outcome.enumerable,
+        // Present only when the list is a compiled-in snapshot; the dashboard
+        // shows it so a stale entry is never mistaken for a live answer.
+        "notice": outcome.notice,
     })))
 }
 
@@ -474,7 +477,11 @@ pub async fn connection_test(
     let outcome = crate::upstream::probe::fetch_models(&connection).await?;
     let count = outcome.models.len();
 
-    let message = if outcome.enumerable {
+    let message = if let Some(_notice) = outcome.notice {
+        // The list is real but compiled in, so say where it came from rather
+        // than implying the backend just answered a `/models` call.
+        format!("Connected — {count} built-in models (this provider publishes no /models list)")
+    } else if outcome.enumerable {
         format!("Connected — {count} models available")
     } else {
         "Connected — model list not available (this provider does not publish /models)".to_string()
@@ -486,6 +493,7 @@ pub async fn connection_test(
         "enumerable": outcome.enumerable,
         "latency_ms": outcome.latency_ms,
         "message": message,
+        "notice": outcome.notice,
     })))
 }
 

@@ -34,6 +34,7 @@ type CategoryFilter = ProviderCategory | "all";
 
 const CATEGORY_SHORT: Record<ProviderCategory, string> = {
   api_key: "API key",
+  subscription: "OAuth",
   free_tier: "Free tier",
   local: "Local",
 };
@@ -89,6 +90,13 @@ function quickLabel(preset: ProviderPreset): string {
   return preset.auth === "none" ? "Quick add" : "Duplicate";
 }
 
+/** An OAuth channel is added by signing in, so it never quick-adds. */
+function authBadge(preset: ProviderPreset): string {
+  if (preset.auth === "oauth") return "sign-in required";
+  if (preset.auth === "none") return "no key";
+  return "key required";
+}
+
 /** Roving arrow-key navigation across the cards, mirroring the DOM order. */
 function onGridKeydown(event: KeyboardEvent): void {
   const moves: Record<string, (index: number, last: number) => number> = {
@@ -115,7 +123,12 @@ function onGridKeydown(event: KeyboardEvent): void {
 }
 
 function pickCategory(value: unknown): void {
-  if (value === "api_key" || value === "free_tier" || value === "local") {
+  if (
+    value === "api_key" ||
+    value === "subscription" ||
+    value === "free_tier" ||
+    value === "local"
+  ) {
     category.value = value;
   } else {
     category.value = "all";
@@ -278,10 +291,18 @@ watch(
                   <Badge v-if="preset.configured" variant="secondary">
                     {{ preset.configured }} added
                   </Badge>
-                  <Badge v-else-if="preset.auth === 'none'" variant="secondary"
-                    >no key</Badge
+                  <Badge
+                    v-else
+                    :variant="preset.auth === 'none' ? 'secondary' : 'outline'"
+                    >{{ authBadge(preset) }}</Badge
                   >
-                  <Badge v-else variant="outline">key required</Badge>
+                </span>
+
+                <span
+                  v-if="preset.risk_notice"
+                  class="text-xs text-amber-600 dark:text-amber-400"
+                >
+                  {{ preset.risk_notice }}
                 </span>
               </button>
 
