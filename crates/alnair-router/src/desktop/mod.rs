@@ -72,12 +72,20 @@ pub fn run(options: Options) -> Result<()> {
     let mut tray: Option<TrayIcon> = None;
 
     event_loop.run_return(|event, _target, control_flow| match event {
-        Event::NewEvents(StartCause::Init) => match build(&address) {
-            Ok(icon) => tray = Some(icon),
-            Err(error) => {
-                tracing::warn!(%error, "cannot create the tray icon; serving without it");
+        Event::NewEvents(StartCause::Init) => {
+            // `tao` starts on `ControlFlow::Poll` and keeps it unless the
+            // handler says otherwise: every drained batch posts another
+            // "process new events" message, so the loop spins at a full core
+            // while the icon sits idle. `Wait` blocks until the next tray,
+            // menu, or proxy event instead.
+            *control_flow = ControlFlow::Wait;
+            match build(&address) {
+                Ok(icon) => tray = Some(icon),
+                Err(error) => {
+                    tracing::warn!(%error, "cannot create the tray icon; serving without it");
+                }
             }
-        },
+        }
         Event::UserEvent(UserEvent::Menu(id)) => {
             if id.0 == MENU_OPEN {
                 open_dashboard(&address);

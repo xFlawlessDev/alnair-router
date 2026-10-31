@@ -2,6 +2,13 @@
 
 All notable user-facing changes to Alnair Router are documented here. Release notes summarize behavior and capabilities rather than listing individual commits.
 
+## [0.1.9](https://github.com/xFlawlessDev/alnair-router/compare/v0.1.8...v0.1.9) (2026-11-01)
+
+### Performance
+
+- The router no longer burns about half a CPU core while idle on Windows and macOS. With the tray icon enabled, the desktop event loop now blocks until there is an actual tray, menu, or shutdown event instead of polling continuously.
+- No configuration change is needed: the fix applies to every desktop run, and machines that relied on `--no-tray` to keep the process quiet can now use the tray without the cost.
+
 ## [0.1.8](https://github.com/xFlawlessDev/alnair-router/compare/v0.1.7...v0.1.8) (2026-10-27)
 
 ### Database upgrades
