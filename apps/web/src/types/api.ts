@@ -126,13 +126,19 @@ export interface ConnectionInput {
 }
 
 /** Tier a provider preset belongs to; the picker groups by this. */
-export type ProviderCategory = "api_key" | "subscription" | "free_tier" | "local";
+export type ProviderCategory =
+  | "api_key"
+  | "subscription"
+  | "free_tier"
+  | "search"
+  | "local";
 
 /** Picker section order; mirrors the order the API returns. */
 export const PROVIDER_CATEGORIES: { id: ProviderCategory; label: string }[] = [
   { id: "api_key", label: "API key providers" },
   { id: "subscription", label: "Subscription (OAuth)" },
   { id: "free_tier", label: "Free tier providers" },
+  { id: "search", label: "Search providers" },
   { id: "local", label: "Local servers" },
 ];
 

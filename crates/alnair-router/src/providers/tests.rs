@@ -72,6 +72,26 @@ fn presets_group_by_category_in_order() {
     }
 }
 
+/// Search providers are key-based presets that the router reaches through
+/// `/v1/search`, so each must be a hosted endpoint with a key link.
+#[test]
+fn search_presets_are_key_based_hosted_endpoints() {
+    let search: Vec<_> = presets()
+        .into_iter()
+        .filter(|preset| preset.category == ProviderCategory::Search)
+        .collect();
+
+    for id in ["exa", "firecrawl", "tavily"] {
+        let preset = search
+            .iter()
+            .find(|preset| preset.id == id)
+            .unwrap_or_else(|| panic!("{id} should be a search preset"));
+        assert_eq!(preset.auth, ProviderAuth::ApiKey);
+        assert!(preset.api_key_url.is_some(), "{id} needs a key link");
+        assert!(preset.base_url.starts_with("https://"), "{id} needs https");
+    }
+}
+
 /// Only the presets whose endpoint is account-specific may ship a placeholder.
 #[test]
 fn only_templated_presets_contain_placeholders() {

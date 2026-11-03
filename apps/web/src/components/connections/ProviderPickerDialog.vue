@@ -36,6 +36,7 @@ const CATEGORY_SHORT: Record<ProviderCategory, string> = {
   api_key: "API key",
   subscription: "OAuth",
   free_tier: "Free tier",
+  search: "Search",
   local: "Local",
 };
 
@@ -127,6 +128,7 @@ function pickCategory(value: unknown): void {
     value === "api_key" ||
     value === "subscription" ||
     value === "free_tier" ||
+    value === "search" ||
     value === "local"
   ) {
     category.value = value;

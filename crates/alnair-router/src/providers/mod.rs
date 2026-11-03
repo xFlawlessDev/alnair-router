@@ -44,18 +44,21 @@ pub enum ProviderCategory {
     Subscription,
     /// Hosted provider with a free tier.
     FreeTier,
+    /// Hosted web search API, served by `/v1/search` rather than chat.
+    Search,
     /// Server running on the user's own machine.
     Local,
 }
 
 impl ProviderCategory {
-    /// Grouping order: API key, subscription, free tier, then local.
+    /// Grouping order: API key, subscription, free tier, search, then local.
     fn rank(self) -> u8 {
         match self {
             ProviderCategory::ApiKey => 0,
             ProviderCategory::Subscription => 1,
             ProviderCategory::FreeTier => 2,
-            ProviderCategory::Local => 3,
+            ProviderCategory::Search => 3,
+            ProviderCategory::Local => 4,
         }
     }
 }
@@ -99,6 +102,7 @@ pub fn presets() -> Vec<ProviderPreset> {
     let mut presets = catalog::api_key_presets();
     presets.extend(catalog::subscription_presets());
     presets.extend(catalog::free_tier_presets());
+    presets.extend(catalog::search_presets());
     presets.extend(catalog::local_presets());
     presets.sort_by_key(|preset| (preset.category.rank(), preset.label));
     presets
@@ -172,6 +176,27 @@ fn free_tier(
         provider_type,
         base_url,
         ProviderCategory::FreeTier,
+        ProviderAuth::ApiKey,
+        api_key_url,
+        note,
+    )
+}
+
+/// A key-based web search API. Its base URL is the provider root, and the
+/// router appends `/search` for search requests.
+fn search(
+    id: &'static str,
+    label: &'static str,
+    base_url: &'static str,
+    api_key_url: &'static str,
+    note: Option<&'static str>,
+) -> ProviderPreset {
+    provider(
+        id,
+        label,
+        "openai-compatible",
+        base_url,
+        ProviderCategory::Search,
         ProviderAuth::ApiKey,
         api_key_url,
         note,

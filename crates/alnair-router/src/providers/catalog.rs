@@ -7,7 +7,35 @@
 //! slash). Endpoints were cross-checked against 9Router's provider registry and,
 //! where one exists, the vendor's own documentation.
 
-use super::{ProviderPreset, api_key, free_tier, local, subscription};
+use super::{ProviderPreset, api_key, free_tier, local, search, subscription};
+
+/// Web search APIs behind an API key. Each base URL is the provider root, and
+/// the router appends `/search`, so the endpoints match `POST {base}/search`.
+pub(super) fn search_presets() -> Vec<ProviderPreset> {
+    vec![
+        search(
+            "exa",
+            "Exa",
+            "https://api.exa.ai",
+            "https://dashboard.exa.ai/api-keys",
+            Some("Neural and keyword web search; accepts a Bearer key."),
+        ),
+        search(
+            "firecrawl",
+            "Firecrawl",
+            "https://api.firecrawl.dev/v2",
+            "https://www.firecrawl.dev/app/api-keys",
+            Some("Web search that can also return page content as markdown."),
+        ),
+        search(
+            "tavily",
+            "Tavily",
+            "https://api.tavily.com",
+            "https://app.tavily.com/home",
+            Some("Search tuned for LLM agents; returns ranked snippets."),
+        ),
+    ]
+}
 
 /// Subscription channels reached through an OAuth login rather than an API key.
 pub(super) fn subscription_presets() -> Vec<ProviderPreset> {

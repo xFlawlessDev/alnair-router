@@ -5703,6 +5703,47 @@ async fn newly_added_proxy_endpoints_are_routed() {
     }
 }
 
+/// Harnesses always call `/v1/search`; the router owns the provider path. The
+/// `/v1/web/search` spelling is not a route, so it must not silently succeed.
+#[tokio::test]
+async fn search_is_one_harness_endpoint_and_web_search_is_not_a_route() {
+    let (app, _db) = app(false).await;
+    let provider_body = serde_json::json!({
+        "query": "rust",
+        "results": [{ "title": "Rust", "url": "https://rust-lang.org", "content": "A language." }]
+    });
+    let base_url = spawn_search_upstream(provider_body.clone()).await;
+    let prefix = route_media_to(&app, &base_url, "alias-search", "tavily").await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/search",
+        serde_json::json!({ "model": prefix, "query": "rust" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "/v1/search should be routed: {body}"
+    );
+    assert_eq!(body, provider_body);
+
+    let (_status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/web/search",
+        serde_json::json!({ "model": prefix, "query": "rust" }),
+    )
+    .await;
+    // Not an API route: the dashboard fallback answers instead of the provider,
+    // so the provider body must never come back.
+    assert_ne!(
+        body, provider_body,
+        "/v1/web/search must not reach the provider"
+    );
+}
+
 /// Serves a fixed JSON body from `/v1/search`, so a test can drive the
 /// normalizer with a specific upstream dialect.
 async fn spawn_search_upstream(body: serde_json::Value) -> String {
