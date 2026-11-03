@@ -5986,6 +5986,80 @@ async fn spawn_extract_upstream() -> (
     (format!("http://{address}/v1"), captured)
 }
 
+/// A search connection can name its own path. The mock serves only
+/// `/v1/web/search`, so a request sent to the default `/v1/search` would 404.
+#[tokio::test]
+async fn search_uses_the_connection_search_path() {
+    let (app, _db) = app(false).await;
+    let provider_body = serde_json::json!({
+        "query": "rust",
+        "results": [{ "title": "Rust", "url": "https://rust-lang.org", "content": "A language." }]
+    });
+    let router = axum::Router::new().route(
+        "/v1/web/search",
+        axum::routing::post({
+            let body = provider_body.clone();
+            move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let base_url = format!("http://{address}/v1");
+
+    // Create the connection directly so its id is known, then alias it.
+    let (status, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "search-path-case",
+            "provider_type": "openai-compatible",
+            "base_url": base_url,
+            "api_key": "sk-search",
+            "search_path": "/web/search"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {connection}");
+    let connection_id = connection["id"].as_str().expect("connection id");
+    assert_eq!(connection["search_path"], "/web/search");
+
+    let (status, alias) = json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": "searchcase",
+            "connection_id": connection_id,
+            "model_override": "tavily"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {alias}");
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/search",
+        serde_json::json!({ "model": "searchcase", "query": "rust" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "search should use /web/search: {body}"
+    );
+    assert_eq!(body, provider_body);
+}
+
 #[tokio::test]
 async fn web_fetch_uses_the_provider_when_the_connection_asks_for_it() {
     let (app, _db) = app(false).await;

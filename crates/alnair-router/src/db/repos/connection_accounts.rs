@@ -255,6 +255,7 @@ mod tests {
                 auth_style: None,
                 web_fetch_mode: None,
                 web_fetch_path: None,
+                search_path: None,
                 provider_id: None,
             })
             .await

@@ -25,6 +25,7 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         auth_style: "api_key".to_string(),
         web_fetch_mode: "local".to_string(),
         web_fetch_path: None,
+        search_path: None,
         provider_id: None,
         extra_keys: Vec::new(),
         oauth_account_ids: Vec::new(),

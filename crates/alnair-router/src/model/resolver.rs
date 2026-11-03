@@ -20,6 +20,8 @@ pub struct ResolvedTarget {
     /// `openai-compatible` or `anthropic-native`.
     pub provider_type: String,
     pub base_url: String,
+    /// Path appended to `base_url` for a search request; `None` means `/search`.
+    pub search_path: Option<String>,
     pub model: String,
     /// Credentials to try for this target, in rotation order. The primary
     /// connection key comes first, then enabled extra accounts.
@@ -293,6 +295,7 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         connection_name: connection.name.clone(),
         provider_type: connection.provider_type.clone(),
         base_url: connection.base_url.clone(),
+        search_path: connection.search_path.clone(),
         model,
         api_keys,
         custom_headers: connection.headers(),

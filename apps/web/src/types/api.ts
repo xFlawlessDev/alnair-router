@@ -95,6 +95,8 @@ export interface Connection {
   web_fetch_mode: string;
   /** Extract path for a provider fetch, e.g. "/v1/scrape". */
   web_fetch_path: string | null;
+  /** Search path appended to `base_url`; null means the default "/search". */
+  search_path: string | null;
   /** Built-in provider preset this connection was created from. */
   provider_id: string | null;
   /** Enabled extra API keys rotating behind this connection. */
@@ -121,6 +123,8 @@ export interface ConnectionInput {
   web_fetch_mode?: string | null;
   /** Extract path for a provider fetch, e.g. "/v1/scrape". */
   web_fetch_path?: string | null;
+  /** Search path appended to `base_url`, e.g. "/web/search". */
+  search_path?: string | null;
   /** Preset to derive the endpoint and wire family from. */
   provider_id?: string | null;
 }

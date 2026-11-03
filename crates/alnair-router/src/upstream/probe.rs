@@ -405,6 +405,7 @@ mod tests {
             auth_style: auth_style.to_string(),
             web_fetch_mode: "local".to_string(),
             web_fetch_path: None,
+            search_path: None,
             provider_id: None,
             extra_keys: Vec::new(),
             oauth_account_ids: Vec::new(),

@@ -165,6 +165,7 @@ mod tests {
             connection_name: "test".to_string(),
             provider_type: provider_type.to_string(),
             base_url: "https://api.example.com/v1".to_string(),
+            search_path: None,
             model: "some-model".to_string(),
             api_keys: vec!["secret-key".to_string()],
             custom_headers: Default::default(),

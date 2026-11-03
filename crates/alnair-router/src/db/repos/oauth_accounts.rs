@@ -347,6 +347,7 @@ mod tests {
                 auth_style: Some("bearer".to_string()),
                 web_fetch_mode: None,
                 web_fetch_path: None,
+                search_path: None,
                 provider_id: None,
             })
             .await

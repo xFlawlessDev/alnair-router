@@ -158,6 +158,7 @@ async fn combo_falls_through_to_the_second_tier() {
             auth_style: None,
             web_fetch_mode: None,
             web_fetch_path: None,
+            search_path: None,
             provider_id: None,
         })
         .await
@@ -181,6 +182,7 @@ async fn combo_falls_through_to_the_second_tier() {
             auth_style: None,
             web_fetch_mode: None,
             web_fetch_path: None,
+            search_path: None,
             provider_id: None,
         })
         .await
@@ -281,6 +283,7 @@ async fn all_tiers_failing_reports_the_last_error() {
             auth_style: None,
             web_fetch_mode: None,
             web_fetch_path: None,
+            search_path: None,
             provider_id: None,
         })
         .await
@@ -345,6 +348,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             auth_style: None,
             web_fetch_mode: None,
             web_fetch_path: None,
+            search_path: None,
             provider_id: None,
         })
         .await
@@ -431,6 +435,7 @@ async fn idle_streams_error_after_the_timeout() {
             auth_style: None,
             web_fetch_mode: None,
             web_fetch_path: None,
+            search_path: None,
             provider_id: None,
         })
         .await

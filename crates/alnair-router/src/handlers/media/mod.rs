@@ -209,7 +209,13 @@ pub async fn search(
     let _permit = context.state.limiter.acquire(&target.connection_id).await?;
     let started = std::time::Instant::now();
     let proxy = MediaProxy::new();
-    let response = proxy.post_json(&target, "/search", &body).await;
+    let response = proxy
+        .post_json(
+            &target,
+            target.search_path.as_deref().unwrap_or("/search"),
+            &body,
+        )
+        .await;
     let latency_ms = started.elapsed().as_millis() as u64;
 
     let response = match response {

@@ -32,6 +32,7 @@ const connection: Connection = {
   auth_style: "api_key",
   web_fetch_mode: "local",
   web_fetch_path: null,
+  search_path: null,
   provider_id: "openai",
   account_count: 0,
   created_at: new Date().toISOString(),

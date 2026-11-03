@@ -26,6 +26,7 @@ const connection = (overrides: Partial<Connection>): Connection => ({
   auth_style: "api_key",
   web_fetch_mode: "local",
   web_fetch_path: null,
+  search_path: null,
   provider_id: "openai",
   account_count: 0,
   created_at: "2026-01-01T00:00:00Z",

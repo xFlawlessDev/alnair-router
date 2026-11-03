@@ -51,6 +51,8 @@ pub struct Connection {
     /// Path appended to `base_url` for a provider fetch, e.g. `/v1/scrape`.
     /// NULL means the router cannot serve provider fetches for this connection.
     pub web_fetch_path: Option<String>,
+    /// Path appended to `base_url` for a search request. NULL means `/search`.
+    pub search_path: Option<String>,
     /// Built-in preset this connection was created from, if any.
     pub provider_id: Option<String>,
     /// Enabled extra keys from `connection_accounts`; loaded by the catalog and
@@ -126,6 +128,9 @@ pub struct CreateConnection {
     /// Extract path for a provider fetch, e.g. `/v1/scrape`.
     #[serde(default)]
     pub web_fetch_path: Option<String>,
+    /// Search path appended to `base_url`, e.g. `/web/search`. Defaults to `/search`.
+    #[serde(default)]
+    pub search_path: Option<String>,
     /// Preset to derive `provider_type`, `base_url` and default headers from.
     /// Filled fields may still be overridden.
     #[serde(default)]
@@ -164,6 +169,9 @@ pub struct UpdateConnection {
     /// Set or clear the provider extract path.
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub web_fetch_path: Option<Option<String>>,
+    /// Set or clear the search path (`None` restores the default `/search`).
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub search_path: Option<Option<String>>,
     /// Set or clear the preset this connection is labelled with.
     #[serde(default)]
     pub provider_id: Option<String>,
@@ -317,8 +325,8 @@ impl ConnectionRepository {
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
                  connect_timeout_ms, idle_timeout_ms, pricing_model, cache_retention,
-                 auth_style, web_fetch_mode, web_fetch_path, provider_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 auth_style, web_fetch_mode, web_fetch_path, search_path, provider_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -336,6 +344,7 @@ impl ConnectionRepository {
         .bind(&auth_style)
         .bind(normalized_web_fetch_mode(input.web_fetch_mode.as_deref())?)
         .bind(normalized_model(input.web_fetch_path.as_deref()))
+        .bind(normalized_model(input.search_path.as_deref()))
         .bind(&provider_id)
         .bind(now)
         .bind(now)
@@ -424,6 +433,10 @@ impl ConnectionRepository {
             Some(value) => normalized_model(value.as_deref()),
             None => existing.web_fetch_path.clone(),
         };
+        let search_path = match &input.search_path {
+            Some(value) => normalized_model(value.as_deref()),
+            None => existing.search_path.clone(),
+        };
         let provider_id = match input.provider_id.as_deref().map(str::trim) {
             Some("") => None,
             Some(id) => {
@@ -438,7 +451,7 @@ impl ConnectionRepository {
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
                  connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, cache_retention = ?,
-                 auth_style = ?, web_fetch_mode = ?, web_fetch_path = ?, provider_id = ?, updated_at = ?
+                 auth_style = ?, web_fetch_mode = ?, web_fetch_path = ?, search_path = ?, provider_id = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -454,6 +467,7 @@ impl ConnectionRepository {
         .bind(&auth_style)
         .bind(&web_fetch_mode)
         .bind(&web_fetch_path)
+        .bind(&search_path)
         .bind(&provider_id)
         .bind(Utc::now())
         .bind(id)
