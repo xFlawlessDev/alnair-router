@@ -128,6 +128,8 @@ mod tests {
             web_fetch_path: None,
 
             search_path: None,
+
+            search_tier: None,
             provider_id: Some("openai-codex".to_string()),
         })
         .await
@@ -224,7 +226,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("latest migration");
-        assert_eq!(version, 27);
+        assert_eq!(version, 28);
 
         let stored: Vec<u8> =
             sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 1")
@@ -289,7 +291,7 @@ mod tests {
             .fetch_one(&db.pool)
             .await
             .expect("latest migration version");
-        assert_eq!(max_version, 27);
+        assert_eq!(max_version, 28);
     }
 
     #[tokio::test]

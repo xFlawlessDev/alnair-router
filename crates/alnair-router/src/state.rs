@@ -27,6 +27,7 @@ use crate::settings::{SettingsOverrides, SettingsRepository};
 use crate::telemetry::ActivityTracker;
 use crate::token_saver::TokenSaverSettings;
 use crate::upstream::chat_backend::{ProviderRegistry, RetryPolicy};
+use crate::upstream::search_rotation::SearchRotation;
 use crate::upstream::{Executor, ExecutorSettings, KeyRotator, UpstreamTimeouts};
 
 /// State shared by every handler.
@@ -63,6 +64,8 @@ pub struct AppState {
     pub oauth_tokens: Arc<OAuthTokenCache>,
     /// Logins waiting on a browser redirect or a device-code approval.
     pub oauth_logins: Arc<LoginRegistry>,
+    /// Round-robin cursors for `/v1/search` fallback tiers.
+    pub search_rotation: Arc<SearchRotation>,
 }
 
 impl AppState {
@@ -121,6 +124,7 @@ impl AppState {
             catalog_cache,
             oauth_tokens,
             oauth_logins: LoginRegistry::new(),
+            search_rotation: Arc::new(SearchRotation::new()),
         })
     }
 

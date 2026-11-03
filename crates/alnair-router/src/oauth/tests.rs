@@ -462,6 +462,7 @@ async fn cache_with_account(
             web_fetch_mode: None,
             web_fetch_path: None,
             search_path: None,
+            search_tier: None,
             provider_id: None,
         })
         .await

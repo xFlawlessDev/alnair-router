@@ -26,6 +26,7 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         web_fetch_mode: "local".to_string(),
         web_fetch_path: None,
         search_path: None,
+        search_tier: None,
         provider_id: None,
         extra_keys: Vec::new(),
         oauth_account_ids: Vec::new(),

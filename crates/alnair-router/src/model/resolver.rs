@@ -22,6 +22,8 @@ pub struct ResolvedTarget {
     pub base_url: String,
     /// Path appended to `base_url` for a search request; `None` means `/search`.
     pub search_path: Option<String>,
+    /// Search fallback tier, when the connection is a search provider.
+    pub search_tier: Option<i64>,
     pub model: String,
     /// Credentials to try for this target, in rotation order. The primary
     /// connection key comes first, then enabled extra accounts.
@@ -141,6 +143,21 @@ impl Catalog {
 }
 
 impl Resolver {
+    /// Every enabled connection that opted into search fallback, as a target
+    /// with no model. Search providers have no model, so the model field stays
+    /// empty and the upstream path comes from `search_path`.
+    pub fn search_targets(&self) -> Vec<ResolvedTarget> {
+        let mut targets: Vec<ResolvedTarget> = self
+            .connections_by_id
+            .values()
+            .filter(|connection| connection.search_tier.is_some())
+            .map(|connection| target_from(connection, String::new(), "search".to_string()))
+            .collect();
+        // Stable order inside a tier, so the round-robin rotation is predictable.
+        targets.sort_by(|a, b| a.connection_name.cmp(&b.connection_name));
+        targets
+    }
+
     /// Resolves `reference` into an ordered attempt list.
     ///
     /// A combo expands recursively (bounded by [`MAX_DEPTH`]); cycles are
@@ -296,6 +313,7 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         provider_type: connection.provider_type.clone(),
         base_url: connection.base_url.clone(),
         search_path: connection.search_path.clone(),
+        search_tier: connection.search_tier,
         model,
         api_keys,
         custom_headers: connection.headers(),

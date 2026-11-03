@@ -53,6 +53,7 @@ const connection = (overrides: Partial<Connection>): Connection => ({
   web_fetch_mode: "local",
   web_fetch_path: null,
   search_path: null,
+  search_tier: null,
   provider_id: "openai",
   account_count: 0,
   created_at: "2026-01-01T00:00:00Z",

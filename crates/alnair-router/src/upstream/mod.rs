@@ -5,6 +5,7 @@ pub mod chat_backend;
 pub mod executor;
 pub mod media;
 pub mod probe;
+pub mod search_rotation;
 
 pub use executor::{
     Attempt, AttemptOutcome, ExecutedStream, Executor, ExecutorSettings, KeyRotator,

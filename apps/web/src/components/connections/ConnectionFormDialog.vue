@@ -65,6 +65,7 @@ const enabled = ref(true);
 const connectTimeout = ref("");
 const idleTimeout = ref("");
 const pricingModel = ref("");
+const searchTier = ref("");
 const cacheRetention = ref("none");
 const authStyle = ref("api_key");
 const saving = ref(false);
@@ -111,6 +112,8 @@ watch(
         ? String(connection.idle_timeout_ms)
         : "";
     pricingModel.value = connection?.pricing_model ?? "";
+    searchTier.value =
+      connection?.search_tier != null ? String(connection.search_tier) : "";
     cacheRetention.value = connection?.cache_retention ?? "none";
     authStyle.value = connection?.auth_style ?? "api_key";
     newAccountLabel.value = "";
@@ -214,6 +217,14 @@ function parseTimeout(value: string | number): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+/** Tiers start at 1; empty or invalid input leaves the connection out of search. */
+function parseSearchTier(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
 function addHeader(): void {
   headers.value.push({ key: "", value: "" });
 }
@@ -258,6 +269,7 @@ async function save(): Promise<void> {
     connect_timeout_ms: parseTimeout(connectTimeout.value),
     idle_timeout_ms: parseTimeout(idleTimeout.value),
     pricing_model: pricingModel.value.trim() || null,
+    search_tier: parseSearchTier(searchTier.value),
     cache_retention: cacheRetention.value,
     auth_style: authStyle.value,
   };
@@ -474,6 +486,23 @@ async function save(): Promise<void> {
             Catalog id used to price this connection's requests. Set it when the
             upstream model id differs from the catalog (e.g. relay paths like
             <code>ocg/openai/gpt-5.6-luna</code>).
+          </p>
+        </div>
+
+        <div class="grid gap-2">
+          <Label for="connection-search-tier">Search fallback tier (optional)</Label>
+          <Input
+            id="connection-search-tier"
+            v-model="searchTier"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="Leave empty to stay out of search fallback"
+          />
+          <p class="text-xs text-muted-foreground">
+            For search providers. When a search request's primary provider is out
+            of quota or rate limited, the router tries the lowest tier first.
+            Connections that share a tier take turns round-robin.
           </p>
         </div>
 

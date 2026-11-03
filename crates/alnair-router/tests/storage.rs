@@ -64,6 +64,7 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         web_fetch_mode: None,
         web_fetch_path: None,
         search_path: None,
+        search_tier: None,
         provider_id: None,
     }
 }
@@ -401,6 +402,13 @@ async fn provider_type_rebuild_keeps_children() {
     .execute(&db.pool)
     .await
     .expect("search-path migration");
+
+    sqlx::raw_sql(include_str!(
+        "../migrations/0028_connection_search_tier.sql"
+    ))
+    .execute(&db.pool)
+    .await
+    .expect("search-tier migration");
 
     let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
         .fetch_all(&db.pool)
@@ -1749,6 +1757,7 @@ async fn connections_round_trip_a_pricing_model_pin() {
             web_fetch_mode: None,
             web_fetch_path: None,
             search_path: None,
+            search_tier: None,
             provider_id: None,
         })
         .await
@@ -1836,6 +1845,7 @@ async fn connections_round_trip_the_auth_style() {
                 web_fetch_mode: None,
                 web_fetch_path: None,
                 search_path: None,
+                search_tier: None,
                 ..Default::default()
             },
         )
@@ -1862,6 +1872,7 @@ async fn unknown_auth_style_is_rejected() {
                 web_fetch_mode: None,
                 web_fetch_path: None,
                 search_path: None,
+                search_tier: None,
                 ..Default::default()
             },
         )

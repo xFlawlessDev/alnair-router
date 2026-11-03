@@ -97,6 +97,8 @@ export interface Connection {
   web_fetch_path: string | null;
   /** Search path appended to `base_url`; null means the default "/search". */
   search_path: string | null;
+  /** Search fallback tier (lower is tried first); null stays out of fallback. */
+  search_tier: number | null;
   /** Built-in provider preset this connection was created from. */
   provider_id: string | null;
   /** Enabled extra API keys rotating behind this connection. */
@@ -125,6 +127,8 @@ export interface ConnectionInput {
   web_fetch_path?: string | null;
   /** Search path appended to `base_url`, e.g. "/web/search". */
   search_path?: string | null;
+  /** Search fallback tier, 1 or higher. Omit to stay out of fallback. */
+  search_tier?: number | null;
   /** Preset to derive the endpoint and wire family from. */
   provider_id?: string | null;
 }

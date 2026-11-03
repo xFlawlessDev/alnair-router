@@ -21,6 +21,7 @@ use axum::response::Response;
 
 use crate::error::Result;
 use crate::middleware::AuthenticatedKey;
+use crate::model::ResolvedTarget;
 use crate::state::AppState;
 use crate::upstream::media::MediaProxy;
 
@@ -186,7 +187,14 @@ pub struct SearchQuery {
     pub normalize: bool,
 }
 
-/// `POST /v1/search` — proxies the upstream response verbatim by default.
+/// `POST /v1/search` — sends the request to the named provider, falling back to
+/// search tiers when that provider is out of quota or rate limited.
+///
+/// The primary target is `model` (or the default connection). If it answers a
+/// quota or rate-limit status, or cannot be reached at all, the request moves on
+/// to the configured search connections, lowest tier first; a tier's members
+/// rotate round-robin. Any other status, including `404`, is returned as is, so
+/// a misconfigured path stays visible instead of being papered over.
 ///
 /// Add `?normalize=true` to map recognized search bodies onto the router's
 /// canonical shape. Normalization is opt-in to preserve the response contract
@@ -204,34 +212,111 @@ pub async fn search(
         object.remove("model");
     }
 
-    let target = resolve_target(&state, model.as_deref()).await?;
-    let context = ProxyContext::new(state, &key, &model);
+    // The primary is the named model's connection, or the default connection
+    // when none is named. Search providers carry no model, so a request with
+    // neither simply goes straight to the search tiers.
+    let mut candidates = Vec::new();
+    match resolve_target(&state, model.as_deref()).await {
+        Ok(primary) => candidates.push(primary),
+        // A named model that does not resolve is the caller's error; surface it.
+        Err(error) if model.is_some() => return Err(error),
+        // No model and no default connection: search tiers are the only route.
+        Err(_) => {}
+    }
+    candidates.extend(search_fallbacks(&state).await?);
+
+    if candidates.is_empty() {
+        return Err(crate::error::Error::NoRoute(
+            "no search provider is available".to_string(),
+        ));
+    }
+
+    let mut last = None;
+    for target in candidates {
+        let response = attempt_search(&state, &key, &model, &target, &body).await;
+        match response {
+            Ok(response) if !is_search_fallback_status(response.status()) => {
+                return finish_search(response, query.normalize).await;
+            }
+            // Quota or rate limit: try the next candidate, keep this response
+            // in case nothing else answers.
+            Ok(response) => last = Some(Ok(response)),
+            // Could not reach the provider at all: try the next candidate.
+            Err(error) => last = Some(Err(error)),
+        }
+    }
+
+    match last {
+        Some(Ok(response)) => finish_search(response, query.normalize).await,
+        Some(Err(error)) => Err(error),
+        None => Err(crate::error::Error::NoRoute(
+            "no search provider is available".to_string(),
+        )),
+    }
+}
+
+/// Statuses that mean a provider cannot serve more search right now, so the
+/// next search tier should be tried. `404` is deliberately absent: it points to
+/// a wrong path, which fallback would only hide.
+fn is_search_fallback_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 429 | 432 | 433 | 434)
+}
+
+/// Search connections in the order to try after the primary: tiers ascending,
+/// each tier rotated round-robin.
+async fn search_fallbacks(state: &AppState) -> Result<Vec<ResolvedTarget>> {
+    let resolver = state.resolver().await?;
+    let mut tiered: std::collections::BTreeMap<i64, Vec<ResolvedTarget>> =
+        std::collections::BTreeMap::new();
+
+    for target in resolver.search_targets() {
+        if let Some(tier) = target.search_tier {
+            tiered.entry(tier).or_default().push(target);
+        }
+    }
+
+    let mut ordered = Vec::new();
+    for (tier, members) in tiered {
+        ordered.extend(state.search_rotation.order(tier, &members));
+    }
+    Ok(ordered)
+}
+
+/// Sends one attempt to a target, recording its usage row.
+async fn attempt_search(
+    state: &AppState,
+    key: &Option<AuthenticatedKey>,
+    model: &Option<String>,
+    target: &ResolvedTarget,
+    body: &serde_json::Value,
+) -> Result<reqwest::Response> {
+    let context = ProxyContext::new(state.clone(), key, model);
     let _permit = context.state.limiter.acquire(&target.connection_id).await?;
     let started = std::time::Instant::now();
     let proxy = MediaProxy::new();
     let response = proxy
         .post_json(
-            &target,
+            target,
             target.search_path.as_deref().unwrap_or("/search"),
-            &body,
+            body,
         )
         .await;
     let latency_ms = started.elapsed().as_millis() as u64;
 
-    let response = match response {
-        Ok(response) => response,
-        Err(error) => {
-            context.record(&target, "error", latency_ms).await;
-            return Err(error);
+    match &response {
+        Ok(response) => {
+            context
+                .record(target, status_label(response.status()), latency_ms)
+                .await
         }
-    };
+        Err(_) => context.record(target, "error", latency_ms).await,
+    }
+    response
+}
 
-    let status = response.status();
-    context
-        .record(&target, status_label(status), latency_ms)
-        .await;
-
-    if !status.is_success() {
+/// Hands the chosen upstream response back, normalizing it when asked.
+async fn finish_search(response: reqwest::Response, normalize: bool) -> Result<Response> {
+    if !response.status().is_success() {
         return passthrough(response).await;
     }
 
@@ -245,7 +330,7 @@ pub async fn search(
         Err(_) => return raw_json_response(bytes),
     };
 
-    if !query.normalize {
+    if !normalize {
         return raw_json_response(bytes);
     }
 
