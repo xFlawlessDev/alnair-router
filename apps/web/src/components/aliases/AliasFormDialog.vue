@@ -5,6 +5,13 @@ import { toast } from "vue-sonner";
 
 import { Button } from "@/components/ui/button";
 import {
+  Combobox,
+  ComboboxAnchor,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
+import {
   Dialog,
   DialogDescription,
   DialogFooter,
@@ -48,6 +55,11 @@ const modelOverride = ref("");
 /** Empty or "inherit" means billing falls back to the override or connection pin. */
 const pricingModel = ref("inherit");
 const prices = ref<ModelPrice[]>([]);
+/** Upper bound on reference-price rows rendered at once; the list can hold thousands. */
+const PRICE_RESULT_LIMIT = 100;
+const priceSearch = ref("");
+/** Combobox selection; copied into `pricingModel` and then cleared. */
+const pickedPrice = ref<string | null>(null);
 const sortOrder = ref(0);
 const enabled = ref(true);
 const saving = ref(false);
@@ -60,6 +72,41 @@ const modelsNotice = ref<string | null>(null);
 
 const isEdit = computed(() => props.alias !== null);
 
+/** Distinct price model names matching the search, capped for rendering. */
+const priceMatches = computed(() => {
+  const query = priceSearch.value.trim().toLowerCase();
+  const seen = new Set<string>();
+  const matches: string[] = [];
+  for (const price of prices.value) {
+    if (seen.has(price.model)) continue;
+    if (query && !price.model.toLowerCase().includes(query)) continue;
+    seen.add(price.model);
+    matches.push(price.model);
+  }
+  return {
+    total: matches.length,
+    shown: matches.slice(0, PRICE_RESULT_LIMIT),
+  };
+});
+
+const pricingLabel = computed(() =>
+  pricingModel.value === "inherit" || !pricingModel.value
+    ? "Inherit from model"
+    : pricingModel.value,
+);
+
+watch(pickedPrice, (model) => {
+  if (!model) return;
+  pricingModel.value = model;
+  priceSearch.value = "";
+  pickedPrice.value = null;
+});
+
+/** The input doubles as the search text, so typing narrows the list. */
+function updatePriceSearch(value: unknown): void {
+  priceSearch.value = typeof value === "string" ? value : "";
+}
+
 watch(
   () => props.open,
   (open) => {
@@ -71,6 +118,7 @@ watch(
     pricingModel.value = alias?.pricing_model ?? "inherit";
     overrideMode.value = alias?.model_override ? "custom" : "none";
     selectedModel.value = "";
+    priceSearch.value = "";
     models.value = [];
     modelsError.value = null;
     modelsNotice.value = null;
@@ -289,25 +337,55 @@ async function save(): Promise<void> {
         </div>
 
         <div class="grid gap-2">
-          <Label>Reference price</Label>
-          <Select v-model="pricingModel">
-            <SelectTrigger id="alias-pricing-model" class="w-full">
-              <SelectValue placeholder="Inherit from model" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="inherit">Inherit from model</SelectItem>
-              <SelectItem
-                v-for="price in prices"
-                :key="`${price.model}:${price.source}`"
-                :value="price.model"
+          <Label for="alias-pricing-model">Reference price</Label>
+          <Combobox
+            v-model="pickedPrice"
+            :ignore-filter="true"
+            :reset-search-term-on-select="false"
+            :reset-search-term-on-blur="false"
+            open-on-focus
+          >
+            <ComboboxAnchor class="w-full">
+              <ComboboxInput
+                id="alias-pricing-model"
+                :model-value="priceSearch"
+                :placeholder="pricingLabel"
+                class="h-9 w-full"
+                autocomplete="off"
+                @update:model-value="updatePriceSearch"
+              />
+            </ComboboxAnchor>
+            <ComboboxList class="w-[var(--reka-combobox-trigger-width)]">
+              <ComboboxItem value="inherit" class="text-xs">
+                Inherit from model
+              </ComboboxItem>
+              <ComboboxItem
+                v-for="model in priceMatches.shown"
+                :key="model"
+                :value="model"
+                class="text-xs"
               >
-                {{ price.model }}
-              </SelectItem>
-            </SelectContent>
-          </Select>
+                <span class="truncate font-mono">{{ model }}</span>
+              </ComboboxItem>
+              <p
+                v-if="!priceMatches.total"
+                class="px-2 py-6 text-center text-xs text-muted-foreground"
+              >
+                No stored price matches
+              </p>
+              <p
+                v-else-if="priceMatches.total > priceMatches.shown.length"
+                class="px-2 py-1.5 text-xs text-muted-foreground"
+              >
+                Showing {{ priceMatches.shown.length }} of
+                {{ priceMatches.total }} — type to narrow down
+              </p>
+            </ComboboxList>
+          </Combobox>
           <p class="text-xs text-muted-foreground">
-            Stored price row used to bill requests through this prefix. Inherit
-            uses the connection's pricing model, then the model id.
+            Selected: <span class="font-mono">{{ pricingLabel }}</span
+            >. Stored price row used to bill requests through this prefix.
+            Inherit uses the connection's pricing model, then the model id.
           </p>
         </div>
 
