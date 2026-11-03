@@ -163,3 +163,19 @@ fn oauth_presets_name_their_login_and_carry_no_key() {
         }
     }
 }
+
+/// The dashboard switches on these exact strings; `snake_case` alone turns
+/// `OAuth` into `o_auth`, which silently disabled the sign-in UI.
+#[test]
+fn auth_variants_serialize_to_dashboard_strings() {
+    for (auth, expected) in [
+        (ProviderAuth::ApiKey, "api_key"),
+        (ProviderAuth::OAuth, "oauth"),
+        (ProviderAuth::None, "none"),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&auth).expect("serialize"),
+            format!("\"{expected}\"")
+        );
+    }
+}

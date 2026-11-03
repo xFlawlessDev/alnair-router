@@ -71,8 +71,90 @@ describe("ConnectionFormDialog", () => {
     container.remove();
   });
 
-  it("parses numeric timeout inputs bound to number fields", async () => {
-    vi.mocked(api.updateConnection).mockResolvedValue(undefined as never);
+  it("shows the sign-in flow for a new OAuth (Codex) connection", async () => {
+    const open = ref(true);
+    const app = createApp({
+      setup() {
+        return () =>
+          h(ConnectionFormDialog, {
+            open: open.value,
+            connection: null,
+            oauth: true,
+            preset: {
+              id: "openai-codex",
+              label: "ChatGPT Plus/Pro (Codex)",
+              provider_type: "openai-codex",
+              base_url: "https://chatgpt.com/backend-api/codex",
+              category: "subscription",
+              auth: "oauth",
+              default_headers: {},
+              api_key_url: null,
+              docs_url: null,
+              note: null,
+              risk_notice: null,
+              oauth_preset: "openai-codex",
+              configured: 0,
+            },
+            "onUpdate:open": (value: boolean) => {
+              open.value = value;
+            },
+          });
+      },
+    });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    app.mount(container);
+    await nextTick();
+
+    expect(document.body.textContent).toContain("Connect in browser");
+    expect(document.body.textContent).not.toContain("Create connection");
+    expect(document.querySelector("#connection-api-key")).toBeNull();
+
+    app.unmount();
+    container.remove();
+  });
+
+  it("locks an existing OAuth connection to sign-in only", async () => {
+    const open = ref(true);
+    const oauthConnection: Connection = {
+      ...connection,
+      id: "c2",
+      provider_type: "openai-codex",
+      provider_id: "openai-codex",
+      api_key: null,
+    };
+    const app = createApp({
+      setup() {
+        return () =>
+          h(ConnectionFormDialog, {
+            open: open.value,
+            connection: oauthConnection,
+            oauth: true,
+            "onUpdate:open": (value: boolean) => {
+              open.value = value;
+            },
+          });
+      },
+    });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    app.mount(container);
+    await nextTick();
+
+    // Only the name stays editable; the credential fields are gone.
+    expect(document.querySelector("#connection-name")).not.toBeNull();
+    expect(document.querySelector("#connection-api-key")).toBeNull();
+    expect(document.querySelector("#connection-base-url")).toBeNull();
+    expect(document.body.textContent).toContain("Sign in again");
+    expect(document.body.textContent).toContain("Save name");
+
+    app.unmount();
+    container.remove();
+  });
+
+  it("parses numeric timeout inputs bound to number fields", async () => {    vi.mocked(api.updateConnection).mockResolvedValue(undefined as never);
 
     // Start closed so the open-watcher seeds name/base_url, as it does in use.
     const open = ref(false);

@@ -6,6 +6,7 @@ import {
   EyeOff,
   KeyRound,
   Loader2,
+  LogIn,
   Pencil,
   Plug,
   Plus,
@@ -23,7 +24,6 @@ import StatusBadge from "@/components/StatusBadge.vue";
 import ConnectionCard from "@/components/connections/ConnectionCard.vue";
 import ConnectionFormDialog from "@/components/connections/ConnectionFormDialog.vue";
 import ConnectionsToolbar from "@/components/connections/ConnectionsToolbar.vue";
-import OAuthAccountsDialog from "@/components/connections/OAuthAccountsDialog.vue";
 import ProviderPickerDialog from "@/components/connections/ProviderPickerDialog.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -176,17 +176,42 @@ async function onPresetQuickAdd(preset: ProviderPreset): Promise<void> {
 }
 
 function openEdit(connection: Connection): void {
+  // An OAuth connection is managed by signing in, never by editing fields.
+  if (isOAuthProvider(connection.provider_id)) {
+    openOAuth(connection);
+    return;
+  }
   selectedPreset.value = null;
   editing.value = connection;
   formOpen.value = true;
 }
 
-/** The connection whose OAuth accounts are being managed, if any. */
-const oauthConnection = ref<Connection | null>(null);
-
+/** Opens the sign-in view for an OAuth connection. */
 function openOAuth(connection: Connection): void {
-  oauthConnection.value = connection;
+  selectedPreset.value = null;
+  editing.value = connection;
+  formOpen.value = true;
 }
+
+/** Whether a provider id names an OAuth channel (ChatGPT/Codex and similar). */
+function isOAuthProvider(providerId: string | null | undefined): boolean {
+  if (!providerId) return false;
+  return presets.value.some(
+    (preset) => preset.id === providerId && preset.auth === "oauth",
+  );
+}
+
+/**
+ * The preset carries `auth` itself, so a Codex create does not depend on the
+ * provider catalog having loaded when the form opens.
+ */
+const formIsOAuth = computed(
+  () =>
+    selectedPreset.value?.auth === "oauth" ||
+    (editing.value?.provider_id
+      ? isOAuthProvider(editing.value.provider_id)
+      : false),
+);
 
 function providerLabel(connection: Connection): string {
   if (!connection.provider_id) return "";
@@ -385,13 +410,14 @@ onMounted(load);
               :headers="headerCount(connection)"
               :testing="testingId === connection.id"
               :revealed="revealed.has(connection.id)"
+              :oauth="isOAuthProvider(connection.provider_id)"
               @toggle="toggleEnabled(connection)"
               @test="runTest(connection)"
               @edit="openEdit(connection)"
+              @oauth="openOAuth(connection)"
               @delete="deleting = connection"
               @reveal="toggleReveal(connection.id)"
               @copy="copySecret(connection.api_key ?? '')"
-              @oauth="openOAuth(connection)"
             />
           </div>
 
@@ -526,19 +552,20 @@ onMounted(load);
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        :aria-label="`Edit ${connection.name}`"
+                        :aria-label="
+                          isOAuthProvider(connection.provider_id)
+                            ? `Sign in to ${connection.name}`
+                            : `Edit ${connection.name}`
+                        "
+                        :title="
+                          isOAuthProvider(connection.provider_id)
+                            ? 'Sign in with the provider account'
+                            : undefined
+                        "
                         @click="openEdit(connection)"
                       >
-                        <Pencil />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="`OAuth accounts for ${connection.name}`"
-                        title="Connect OAuth accounts that authenticate with a bearer token"
-                        @click="openOAuth(connection)"
-                      >
-                        <KeyRound />
+                        <LogIn v-if="isOAuthProvider(connection.provider_id)" />
+                        <Pencil v-else />
                       </Button>
                       <Button
                         variant="ghost"
@@ -571,17 +598,10 @@ onMounted(load);
       v-model:open="formOpen"
       :connection="editing"
       :preset="selectedPreset"
+      :oauth="formIsOAuth"
       :default-name="selectedPreset ? suggestName(selectedPreset) : ''"
       @saved="load"
       @change-provider="openPicker"
-    />
-
-    <OAuthAccountsDialog
-      v-if="oauthConnection"
-      :open="oauthConnection !== null"
-      :connection="oauthConnection"
-      @update:open="oauthConnection = $event ? oauthConnection : null"
-      @saved="load"
     />
 
     <ConfirmDialog

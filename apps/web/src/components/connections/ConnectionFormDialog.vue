@@ -40,6 +40,8 @@ const props = defineProps<{
   connection: Connection | null;
   /** Preset to prefill from when creating. */
   preset?: ProviderPreset | null;
+  /** The connection's provider is an OAuth channel (e.g. ChatGPT/Codex). */
+  oauth?: boolean;
   /** Suggested name for a new connection (kept unique by the page). */
   defaultName?: string;
 }>();
@@ -70,6 +72,89 @@ const cacheRetention = ref("none");
 const authStyle = ref("api_key");
 const saving = ref(false);
 
+/** Codex sign-in that runs inside the create dialog once the row exists. */
+const loginId = ref<string | null>(null);
+const loginUrl = ref<string | null>(null);
+const loginError = ref<string | null>(null);
+let loginPoll: ReturnType<typeof setInterval> | null = null;
+const LOGIN_POLL_MS = 1500;
+
+function stopLoginPoll(): void {
+  if (loginPoll !== null) {
+    clearInterval(loginPoll);
+    loginPoll = null;
+  }
+}
+
+/** Starts the browser login for a saved OAuth connection and watches it. */
+async function startOAuthSignIn(connection: Connection): Promise<void> {
+  const oauth = props.preset?.oauth_preset ?? props.preset?.id ?? "openai-codex";
+  loginError.value = null;
+  saving.value = true;
+  try {
+    const started = await api.startOAuthLogin({
+      connection_id: connection.id,
+      label: "chatgpt",
+      provider_key: oauth,
+      client_id: "",
+      client_secret: null,
+      authorize_url: "",
+      token_url: "",
+      device_code_url: null,
+      user_info_url: null,
+      scopes: "",
+    });
+    loginId.value = started.login_id;
+    loginUrl.value = started.authorize_url;
+    window.open(started.authorize_url, "_blank", "noopener,noreferrer");
+    loginPoll = setInterval(() => void pollOAuthSignIn(), LOGIN_POLL_MS);
+  } catch (caught) {
+    loginError.value =
+      caught instanceof ApiError ? caught.message : "Failed to start the login";
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function pollOAuthSignIn(): Promise<void> {
+  const id = loginId.value;
+  if (!id) return;
+  try {
+    const view = await api.oauthLoginStatus(id);
+    if (view.status === "completed") {
+      stopLoginPoll();
+      loginId.value = null;
+      toast.success(`Account “${view.label}” connected`);
+      emit("saved");
+      emit("update:open", false);
+    } else if (view.status === "failed") {
+      stopLoginPoll();
+      loginId.value = null;
+      loginError.value = view.error ?? "The provider refused the login";
+    }
+  } catch (caught) {
+    if (caught instanceof ApiError && caught.status === 404) {
+      stopLoginPoll();
+      loginId.value = null;
+      loginError.value = "This login expired. Start it again.";
+    }
+  }
+}
+
+async function cancelOAuthSignIn(): Promise<void> {
+  const id = loginId.value;
+  stopLoginPoll();
+  loginId.value = null;
+  loginUrl.value = null;
+  if (id) {
+    try {
+      await api.cancelOAuthLogin(id);
+    } catch {
+      // Already gone is fine.
+    }
+  }
+}
+
 /** Extra keys (only meaningful once the connection exists). */
 const accounts = ref<ConnectionAccount[]>([]);
 const accountsLoading = ref(false);
@@ -79,6 +164,15 @@ const addingAccount = ref(false);
 
 const isEdit = computed(() => props.connection !== null);
 const hasExistingKey = computed(() => Boolean(props.connection?.api_key));
+/** OAuth connections sign in instead of holding a static key. */
+const isOAuth = computed(() => props.oauth || props.preset?.auth === "oauth");
+/** A new OAuth connection needs only a name; the login supplies the credential. */
+const oauthCreate = computed(() => !isEdit.value && isOAuth.value);
+/**
+ * An existing OAuth connection is managed by signing in, not by editing: its
+ * endpoint and credential come from the provider, so the form is read-only.
+ */
+const oauthLocked = computed(() => isEdit.value && isOAuth.value);
 
 watch(
   () => props.open,
@@ -233,6 +327,7 @@ function removeHeader(index: number): void {
   headers.value.splice(index, 1);
 }
 
+
 async function save(): Promise<void> {
   if (!name.value.trim() || !baseUrl.value.trim()) {
     toast.error("Name and base URL are required");
@@ -277,9 +372,15 @@ async function save(): Promise<void> {
   saving.value = true;
   try {
     if (props.connection) {
-      const patch: Partial<ConnectionInput> = { ...body };
-      if (apiKey.value.trim()) patch.api_key = apiKey.value.trim();
-      else if (clearApiKey.value) patch.api_key = null;
+      // A locked OAuth connection only owns its name; sending the hidden
+      // fields would overwrite the provider's endpoint with stale values.
+      const patch: Partial<ConnectionInput> = oauthLocked.value
+        ? { name: name.value.trim() }
+        : { ...body };
+      if (!oauthLocked.value) {
+        if (apiKey.value.trim()) patch.api_key = apiKey.value.trim();
+        else if (clearApiKey.value) patch.api_key = null;
+      }
       await api.updateConnection(props.connection.id, patch);
       toast.success(`Connection “${body.name}” updated`);
     } else {
@@ -288,9 +389,17 @@ async function save(): Promise<void> {
         ...(props.preset ? { provider_id: props.preset.id } : {}),
         ...(apiKey.value.trim() ? { api_key: apiKey.value.trim() } : {}),
       };
-      await api.createConnection(createBody);
+      const created = await api.createConnection(createBody);
       toast.success(`Connection “${body.name}” created`);
+      if (isOAuth.value) {
+        // The login needs the saved row; keep this dialog open to show it.
+        emit("saved");
+        saving.value = false;
+        await startOAuthSignIn(created);
+        return;
+      }
     }
+
     emit("saved");
     emit("update:open", false);
   } catch (error) {
@@ -360,7 +469,9 @@ async function save(): Promise<void> {
           />
         </div>
 
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div v-if="!oauthLocked" class="grid gap-4">
+
+        <div v-if="!oauthCreate" class="grid gap-4 sm:grid-cols-2">
           <div class="grid gap-2">
             <Label>Provider type</Label>
             <Select v-model="providerType">
@@ -391,7 +502,7 @@ async function save(): Promise<void> {
           </div>
         </div>
 
-        <div class="grid gap-2">
+        <div v-if="!oauthCreate" class="grid gap-2">
           <Label for="connection-base-url">Base URL</Label>
           <Input
             id="connection-base-url"
@@ -405,7 +516,7 @@ async function save(): Promise<void> {
           </p>
         </div>
 
-        <div class="grid gap-2">
+        <div v-if="!oauthCreate" class="grid gap-2">
           <Label for="connection-api-key">
             API key{{ preset?.auth === "none" ? " (optional)" : "" }}
           </Label>
@@ -447,7 +558,7 @@ async function save(): Promise<void> {
           </div>
         </div>
 
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div v-if="!oauthCreate" class="grid gap-4 sm:grid-cols-2">
           <div class="grid gap-2">
             <Label for="connection-connect-timeout">Connect timeout (ms)</Label>
             <Input
@@ -474,7 +585,7 @@ async function save(): Promise<void> {
           </div>
         </div>
 
-        <div class="grid gap-2">
+        <div v-if="!oauthCreate" class="grid gap-2">
           <Label for="connection-pricing-model">Pricing model (optional)</Label>
           <Input
             id="connection-pricing-model"
@@ -489,7 +600,7 @@ async function save(): Promise<void> {
           </p>
         </div>
 
-        <div class="grid gap-2">
+        <div v-if="!oauthCreate" class="grid gap-2">
           <Label for="connection-search-tier">Search fallback tier (optional)</Label>
           <Input
             id="connection-search-tier"
@@ -506,7 +617,7 @@ async function save(): Promise<void> {
           </p>
         </div>
 
-        <div class="grid gap-2">
+        <div v-if="!oauthCreate" class="grid gap-2">
           <Label>Prompt caching</Label>
           <Select v-model="cacheRetention">
             <SelectTrigger id="connection-cache-retention" class="w-full">
@@ -526,7 +637,7 @@ async function save(): Promise<void> {
           </p>
         </div>
 
-        <div class="grid gap-2">
+        <div v-if="!oauthCreate" class="grid gap-2">
           <Label>Credential header</Label>
           <Select v-model="authStyle">
             <SelectTrigger id="connection-auth-style" class="w-full">
@@ -548,7 +659,7 @@ async function save(): Promise<void> {
           </p>
         </div>
 
-        <div class="grid gap-2">
+        <div v-if="!oauthCreate" class="grid gap-2">
           <div class="flex items-center justify-between">
             <Label>Custom headers</Label>
             <Button
@@ -661,15 +772,93 @@ async function save(): Promise<void> {
         <p v-else class="text-xs text-muted-foreground">
           Extra API keys can be added once the connection is saved.
         </p>
+        </div>
+        </div>
+
+        <div
+          v-if="oauthLocked"
+          class="grid gap-3 rounded border p-3"
+        >
+          <p class="text-sm font-medium">Managed by its OAuth account</p>
+          <p class="text-xs text-muted-foreground">
+            The endpoint and credential come from the provider login, so only
+            the name can be changed here. Sign in again to add or replace an
+            account.
+          </p>
+          <div>
+            <Button
+              v-if="connection"
+              type="button"
+              variant="outline"
+              @click="startOAuthSignIn(connection)"
+            >
+              Sign in again
+            </Button>
+          </div>
+          <p
+            v-if="loginUrl && !loginError"
+            class="text-xs text-muted-foreground"
+          >
+            Finish signing in on the browser tab that opened.
+          </p>
+          <p v-if="loginError" class="text-xs text-destructive">
+            {{ loginError }}
+          </p>
+        </div>
+
+      <div
+        v-if="oauthCreate && (loginUrl || loginError)"
+        class="mx-6 mb-2 grid gap-2 rounded border p-3 text-xs"
+      >
+        <p v-if="loginUrl && !loginError" class="text-muted-foreground">
+          Finish signing in on the browser tab that opened.
+        </p>
+        <p v-if="loginError" class="text-destructive">{{ loginError }}</p>
+        <div class="flex gap-2">
+          <Button
+            v-if="loginUrl && !loginError"
+            type="button"
+            variant="outline"
+            size="sm"
+            @click="cancelOAuthSignIn"
+          >
+            Cancel login
+          </Button>
+          <Button
+            v-if="loginError"
+            type="button"
+            variant="outline"
+            size="sm"
+            @click="loginError = null; loginUrl = null"
+          >
+            Try again
+          </Button>
+        </div>
       </div>
 
-      <DialogFooter>
+      <DialogFooter v-if="oauthLocked">
         <Button variant="outline" @click="emit('update:open', false)"
           >Cancel</Button
         >
         <Button :disabled="saving" @click="save">
+          {{ saving ? "Saving…" : "Save name" }}
+        </Button>
+      </DialogFooter>
+
+      <DialogFooter v-else>
+        <Button variant="outline" @click="emit('update:open', false)"
+          >Cancel</Button
+        >
+
+        <Button :disabled="saving" @click="save">
           {{
-            saving ? "Saving…" : isEdit ? "Save changes" : "Create connection"
+            saving
+              ? "Saving…"
+              : oauthCreate
+                ? "Connect in browser"
+                : isEdit
+                  ? "Save changes"
+                  : "Create connection"
           }}
         </Button>
       </DialogFooter>

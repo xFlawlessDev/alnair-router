@@ -6,6 +6,7 @@ import {
   EyeOff,
   KeyRound,
   Loader2,
+  LogIn,
   Pencil,
   Trash2,
 } from "@lucide/vue";
@@ -27,16 +28,18 @@ const props = defineProps<{
   headers: number;
   testing: boolean;
   revealed: boolean;
+  /** The provider signs in with OAuth, so it is managed by signing in. */
+  oauth?: boolean;
 }>();
 
 const emit = defineEmits<{
   test: [];
   edit: [];
+  oauth: [];
   delete: [];
   toggle: [];
   reveal: [];
   copy: [];
-  oauth: [];
 }>();
 </script>
 
@@ -135,19 +138,14 @@ const emit = defineEmits<{
         <Button
           variant="ghost"
           size="icon-sm"
-          :aria-label="`Edit ${connection.name}`"
-          @click="emit('edit')"
+          :aria-label="
+            oauth ? `Sign in to ${connection.name}` : `Edit ${connection.name}`
+          "
+          :title="oauth ? 'Sign in with the provider account' : undefined"
+          @click="oauth ? emit('oauth') : emit('edit')"
         >
-          <Pencil />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          :aria-label="`OAuth accounts for ${connection.name}`"
-          title="Connect OAuth accounts that authenticate with a bearer token"
-          @click="emit('oauth')"
-        >
-          <KeyRound />
+          <LogIn v-if="oauth" />
+          <Pencil v-else />
         </Button>
         <Button
           variant="ghost"

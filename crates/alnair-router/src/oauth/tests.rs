@@ -291,6 +291,43 @@ fn a_pinned_client_overrides_whatever_the_caller_sent() {
     assert!(byo.authorize_extra.is_empty());
 }
 
+/// The dashboard should not have to reproduce a preset's endpoints: a blank
+/// payload must still resolve to the provider's own URLs.
+#[test]
+fn a_named_preset_fills_its_own_endpoints() {
+    let endpoints = ClientInputs {
+        client_id: String::new(),
+        client_secret: None,
+        authorize_url: String::new(),
+        token_url: String::new(),
+        device_code_url: None,
+        user_info_url: None,
+        scopes: String::new(),
+    }
+    .into_endpoints_for("openai-codex")
+    .expect("a named preset owns every endpoint");
+
+    let preset = presets::find("openai-codex");
+    assert_eq!(endpoints.authorize_url, preset.authorize_url);
+    assert_eq!(endpoints.token_url, preset.token_url);
+    assert_eq!(endpoints.scopes, preset.scopes);
+
+    // The generic entry is the one that still demands operator URLs.
+    assert!(
+        ClientInputs {
+            client_id: "client-1".to_string(),
+            client_secret: None,
+            authorize_url: String::new(),
+            token_url: String::new(),
+            device_code_url: None,
+            user_info_url: None,
+            scopes: String::new(),
+        }
+        .into_endpoints_for("generic")
+        .is_err()
+    );
+}
+
 #[test]
 fn the_codex_authorize_url_carries_its_extra_parameters() {
     let preset = presets::find("openai-codex");

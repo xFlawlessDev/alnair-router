@@ -84,6 +84,8 @@ const busy = computed(() => loginId.value !== null);
 const pinnedClient = computed(() => Boolean(selectedPreset.value?.client_id));
 const riskNotice = computed(() => selectedPreset.value?.risk_notice ?? null);
 
+// `immediate` matters: the dialog is mounted while already open, and a plain
+// watch would never run `load()`, leaving the accounts list on "Loading…".
 watch(
   () => props.open,
   (open) => {
@@ -94,6 +96,7 @@ watch(
     resetForm();
     void load();
   },
+  { immediate: true },
 );
 
 onBeforeUnmount(stopPolling);
@@ -121,6 +124,12 @@ async function load(): Promise<void> {
     ]);
     presets.value = presetList.data ?? [];
     accounts.value = Array.isArray(accountList) ? accountList : [];
+    // Start on the connection's own provider when it is an OAuth preset, so a
+    // Codex connection does not open on the generic GitLab entry.
+    const own = props.connection.provider_id;
+    if (own && presets.value.some((preset) => preset.id === own)) {
+      presetId.value = own;
+    }
     applyPreset(presetId.value);
   } catch (caught) {
     toast.error(
@@ -344,11 +353,8 @@ async function copy(value: string, what: string): Promise<void> {
       <DialogHeader>
         <DialogTitle>OAuth accounts</DialogTitle>
         <DialogDescription>
-          Sign in with an OAuth application —
-          <span class="font-medium">{{ connection.name }}</span> sends the token
-          as <code>Authorization: Bearer</code>. Most providers use an
-          application you register yourself; ChatGPT/Codex uses OpenAI's own
-          Codex client, which the picker warns about.
+          Sign in to <span class="font-medium">{{ connection.name }}</span> with
+          your account. Requests use the token as a bearer credential.
         </DialogDescription>
       </DialogHeader>
 
@@ -407,10 +413,10 @@ async function copy(value: string, what: string): Promise<void> {
         <div class="grid gap-3 rounded border p-3">
           <div class="flex items-center justify-between gap-3">
             <p class="text-sm font-medium">Connect an account</p>
-            <Badge variant="outline">bring your own client</Badge>
+            <Badge v-if="!pinnedClient" variant="outline">bring your own client</Badge>
           </div>
 
-          <div class="grid gap-2">
+          <div v-if="!pinnedClient" class="grid gap-2">
             <Label for="oauth-preset">Provider preset</Label>
             <Select
               :model-value="presetId"
@@ -619,9 +625,12 @@ async function copy(value: string, what: string): Promise<void> {
             <p class="text-xs">{{ loginError }}</p>
           </div>
 
-          <div v-if="!busy && !loginError && accounts.length" class="flex items-center gap-2 text-xs text-muted-foreground">
+          <div
+            v-if="!busy && !loginError && accounts.length"
+            class="flex items-center gap-2 text-xs text-muted-foreground"
+          >
             <CheckCircle2 class="size-3.5 text-emerald-500" />
-            Rotate between accounts by adding more than one.
+            {{ accounts.length }} account{{ accounts.length === 1 ? "" : "s" }} connected.
           </div>
 
           <div class="flex flex-wrap items-center gap-2">

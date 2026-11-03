@@ -40,6 +40,7 @@ const PROVIDER_TYPE_ICONS: Record<ProviderType, string> = {
   "anthropic-native": "anthropic",
   "command-code": "commandcode",
   "codebuddy-intl": "codebuddy-intl",
+  "openai-codex": "openai",
 };
 
 /** The glyph for a wire family, or `null` when it has none (monogram). */

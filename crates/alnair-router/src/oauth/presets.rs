@@ -245,6 +245,15 @@ impl ClientInputs {
             self.client_id = preset.client_id.to_string();
             self.client_secret = None;
         }
+        // A named preset owns its endpoints, so the dashboard never has to
+        // reproduce them. Only the generic entry takes operator-supplied URLs.
+        if preset.id != "generic" {
+            self.authorize_url = preset.authorize_url.to_string();
+            self.token_url = preset.token_url.to_string();
+            self.device_code_url = preset.device_code_url.map(str::to_string);
+            self.user_info_url = preset.user_info_url.map(str::to_string);
+            self.scopes = preset.scopes.to_string();
+        }
 
         let mut endpoints = self.into_endpoints()?;
         if preset.id != "generic" {

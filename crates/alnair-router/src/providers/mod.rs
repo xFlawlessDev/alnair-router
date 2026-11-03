@@ -29,6 +29,10 @@ pub enum ProviderAuth {
     ApiKey,
     /// Signed in with an OAuth account instead of a key; the connection has no
     /// `api_key` and the executor rotates `oauth_accounts`.
+    ///
+    /// The explicit rename matters: `rename_all = "snake_case"` renders this
+    /// variant as `o_auth`, which would not match the dashboard's `"oauth"`.
+    #[serde(rename = "oauth")]
     OAuth,
     /// Reachable without a key: a local server or an open gateway.
     None,
