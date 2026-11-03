@@ -230,7 +230,11 @@ impl Resolver {
                     .clone()
                     .unwrap_or_else(|| model.to_string());
 
-                out.push(target_from(connection, model, format!("alias:{prefix}")));
+                let mut target = target_from(connection, model, format!("alias:{prefix}"));
+                if alias.pricing_model.is_some() {
+                    target.pricing_model = alias.pricing_model.clone();
+                }
+                out.push(target);
                 return Ok(());
             }
         }
@@ -250,11 +254,11 @@ impl Resolver {
                     ))
                 })?;
 
-            out.push(target_from(
-                connection,
-                model,
-                format!("alias:{}", alias.prefix),
-            ));
+            let mut target = target_from(connection, model, format!("alias:{}", alias.prefix));
+            if alias.pricing_model.is_some() {
+                target.pricing_model = alias.pricing_model.clone();
+            }
+            out.push(target);
             return Ok(());
         }
 

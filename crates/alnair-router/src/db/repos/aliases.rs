@@ -12,6 +12,9 @@ pub struct Alias {
     pub prefix: String,
     pub connection_id: String,
     pub model_override: Option<String>,
+    /// Catalog id whose stored price bills this alias; `None` falls back to the
+    /// connection pin, then the requested model id.
+    pub pricing_model: Option<String>,
     pub enabled: i64,
     pub sort_order: i64,
     pub created_at: DateTime<Utc>,
@@ -30,6 +33,8 @@ pub struct CreateAlias {
     pub connection_id: String,
     #[serde(default)]
     pub model_override: Option<String>,
+    #[serde(default)]
+    pub pricing_model: Option<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -44,6 +49,8 @@ pub struct UpdateAlias {
     pub connection_id: Option<String>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub model_override: Option<Option<String>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub pricing_model: Option<Option<String>>,
     #[serde(default)]
     pub enabled: Option<bool>,
     #[serde(default)]
@@ -57,6 +64,14 @@ fn default_true() -> bool {
 /// Normalizes a prefix: trimmed, lowercase, no trailing slash.
 pub fn normalize_prefix(prefix: &str) -> String {
     prefix.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+/// Trims an optional text field and maps blank input to `None`.
+fn normalized_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 /// Validates a prefix shape (no whitespace, no slashes, non-empty).
@@ -110,21 +125,18 @@ impl AliasRepository {
         let prefix = validate_prefix(&input.prefix)?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        let model_override = input
-            .model_override
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(str::to_string);
+        let model_override = normalized_optional(input.model_override.as_deref());
+        let pricing_model = normalized_optional(input.pricing_model.as_deref());
 
         sqlx::query(
-            "INSERT INTO aliases (id, prefix, connection_id, model_override, enabled, sort_order, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO aliases (id, prefix, connection_id, model_override, pricing_model, enabled, sort_order, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&prefix)
         .bind(&input.connection_id)
         .bind(&model_override)
+        .bind(&pricing_model)
         .bind(i64::from(input.enabled))
         .bind(input.sort_order)
         .bind(now)
@@ -152,24 +164,25 @@ impl AliasRepository {
             .as_deref()
             .unwrap_or(&existing.connection_id);
         let model_override = match &input.model_override {
-            Some(value) => value
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .map(str::to_string),
+            Some(value) => normalized_optional(value.as_deref()),
             None => existing.model_override.clone(),
+        };
+        let pricing_model = match &input.pricing_model {
+            Some(value) => normalized_optional(value.as_deref()),
+            None => existing.pricing_model.clone(),
         };
         let enabled = input.enabled.unwrap_or(existing.is_enabled());
         let sort_order = input.sort_order.unwrap_or(existing.sort_order);
 
         sqlx::query(
             "UPDATE aliases
-             SET prefix = ?, connection_id = ?, model_override = ?, enabled = ?, sort_order = ?, updated_at = ?
+             SET prefix = ?, connection_id = ?, model_override = ?, pricing_model = ?, enabled = ?, sort_order = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(prefix)
         .bind(connection_id)
         .bind(&model_override)
+        .bind(&pricing_model)
         .bind(i64::from(enabled))
         .bind(sort_order)
         .bind(Utc::now())

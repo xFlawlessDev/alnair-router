@@ -41,6 +41,7 @@ fn alias(prefix: &str, connection_id: &str, model_override: Option<&str>) -> Ali
         prefix: prefix.to_string(),
         connection_id: connection_id.to_string(),
         model_override: model_override.map(str::to_string),
+        pricing_model: None,
         enabled: 1,
         sort_order: 0,
         created_at: Utc::now(),
@@ -114,6 +115,25 @@ fn alias_resolves_model_from_reference() {
     assert_eq!(targets[0].model, "glm-5.1");
     assert_eq!(targets[0].primary_key(), Some("key-c1"));
     assert_eq!(targets[0].source, "alias:glm");
+}
+
+#[test]
+fn alias_pricing_model_overrides_the_connection_pin() {
+    let mut catalog = catalog();
+    catalog.connections[0].pricing_model = Some("connection-pin".to_string());
+    catalog.aliases[0].pricing_model = Some("alias-pin".to_string());
+
+    let targets = resolver(&catalog).resolve("glm/glm-5.1").expect("resolve");
+    assert_eq!(targets[0].pricing_model.as_deref(), Some("alias-pin"));
+}
+
+#[test]
+fn connection_pricing_model_applies_without_an_alias_pin() {
+    let mut catalog = catalog();
+    catalog.connections[0].pricing_model = Some("connection-pin".to_string());
+
+    let targets = resolver(&catalog).resolve("glm/glm-5.1").expect("resolve");
+    assert_eq!(targets[0].pricing_model.as_deref(), Some("connection-pin"));
 }
 
 #[test]

@@ -192,6 +192,7 @@ async fn combo_falls_through_to_the_second_tier() {
             prefix: "dead".to_string(),
             connection_id: dead.id.clone(),
             model_override: None,
+            pricing_model: None,
             enabled: true,
             sort_order: 0,
         })
@@ -202,6 +203,7 @@ async fn combo_falls_through_to_the_second_tier() {
             prefix: "good".to_string(),
             connection_id: good.id.clone(),
             model_override: None,
+            pricing_model: None,
             enabled: true,
             sort_order: 1,
         })
@@ -290,6 +292,7 @@ async fn all_tiers_failing_reports_the_last_error() {
             prefix: "flaky".to_string(),
             connection_id: "flaky-id".to_string(),
             model_override: None,
+            pricing_model: None,
             enabled: true,
             sort_order: 0,
         })
@@ -353,6 +356,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             prefix: "slow".to_string(),
             connection_id: "ignored".to_string(),
             model_override: None,
+            pricing_model: None,
             enabled: true,
             sort_order: 0,
         })

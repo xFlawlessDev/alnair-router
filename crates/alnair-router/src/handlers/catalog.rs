@@ -61,7 +61,13 @@ impl CatalogEntry {
                 continue;
             };
 
-            let price = match &alias.model_override {
+            // Same precedence the executor uses: alias pin, connection pin, then the model id.
+            let pricing_key = alias
+                .pricing_model
+                .as_deref()
+                .or(connection.pricing_model.as_deref())
+                .or(alias.model_override.as_deref());
+            let price = match pricing_key {
                 Some(model) => state.pricing_cache.match_for(model).await,
                 None => None,
             };

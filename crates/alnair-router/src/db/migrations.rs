@@ -222,7 +222,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("latest migration");
-        assert_eq!(version, 25);
+        assert_eq!(version, 26);
 
         let stored: Vec<u8> =
             sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 1")
@@ -287,7 +287,7 @@ mod tests {
             .fetch_one(&db.pool)
             .await
             .expect("latest migration version");
-        assert_eq!(max_version, 25);
+        assert_eq!(max_version, 26);
     }
 
     #[tokio::test]

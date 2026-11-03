@@ -2,7 +2,7 @@
 
 use alnair_router::crypto::CredentialCipher;
 use alnair_router::db::Db;
-use alnair_router::db::repos::aliases::{AliasRepository, CreateAlias};
+use alnair_router::db::repos::aliases::{AliasRepository, CreateAlias, UpdateAlias};
 use alnair_router::db::repos::api_keys::{ApiKeyRepository, CreateApiKey, UpdateApiKey};
 use alnair_router::db::repos::combos::{ComboRepository, CreateCombo};
 use alnair_router::db::repos::connections::{
@@ -468,6 +468,7 @@ async fn alias_prefix_is_normalized_and_fetched() {
             prefix: "  GLM/  ".to_string(),
             connection_id: connection.id.clone(),
             model_override: None,
+            pricing_model: None,
             enabled: true,
             sort_order: 0,
         })
@@ -499,6 +500,7 @@ async fn alias_rejects_prefix_with_slash() {
             prefix: "bad/prefix".to_string(),
             connection_id: connection.id,
             model_override: None,
+            pricing_model: None,
             enabled: true,
             sort_order: 0,
         })
@@ -523,6 +525,7 @@ async fn alias_model_override_blank_is_stored_as_none() {
             prefix: "glm".to_string(),
             connection_id: connection.id,
             model_override: Some("   ".to_string()),
+            pricing_model: None,
             enabled: true,
             sort_order: 0,
         })
@@ -530,6 +533,43 @@ async fn alias_model_override_blank_is_stored_as_none() {
         .expect("alias");
 
     assert_eq!(alias.model_override, None);
+}
+
+#[tokio::test]
+async fn alias_pricing_model_round_trips_and_clears() {
+    let db = db().await;
+    let connections = connection_repo(&db);
+    let aliases = AliasRepository::new(db.pool.clone());
+    let connection = connections
+        .create(connection("main", "openai-compatible"))
+        .await
+        .expect("connection");
+
+    let created = aliases
+        .create(CreateAlias {
+            prefix: "glm".to_string(),
+            connection_id: connection.id,
+            model_override: Some("glm-4.6".to_string()),
+            pricing_model: Some("  zai/glm-4.6  ".to_string()),
+            enabled: true,
+            sort_order: 0,
+        })
+        .await
+        .expect("alias");
+    assert_eq!(created.pricing_model.as_deref(), Some("zai/glm-4.6"));
+
+    let cleared = aliases
+        .update(
+            &created.id,
+            UpdateAlias {
+                pricing_model: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("clear");
+    assert!(cleared.pricing_model.is_none());
+    assert_eq!(cleared.model_override.as_deref(), Some("glm-4.6"));
 }
 
 #[tokio::test]
@@ -547,6 +587,7 @@ async fn alias_delete_cascades_from_connection() {
             prefix: "glm".to_string(),
             connection_id: connection.id.clone(),
             model_override: None,
+            pricing_model: None,
             enabled: true,
             sort_order: 0,
         })

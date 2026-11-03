@@ -23,7 +23,13 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ApiError, api } from "@/lib/api";
-import type { Alias, AliasInput, Connection, UpstreamModel } from "@/types/api";
+import type {
+  Alias,
+  AliasInput,
+  Connection,
+  ModelPrice,
+  UpstreamModel,
+} from "@/types/api";
 
 const props = defineProps<{
   open: boolean;
@@ -39,6 +45,9 @@ const connectionId = ref("");
 const overrideMode = ref<OverrideMode>("none");
 const selectedModel = ref("");
 const modelOverride = ref("");
+/** Empty or "inherit" means billing falls back to the override or connection pin. */
+const pricingModel = ref("inherit");
+const prices = ref<ModelPrice[]>([]);
 const sortOrder = ref(0);
 const enabled = ref(true);
 const saving = ref(false);
@@ -59,6 +68,7 @@ watch(
     prefix.value = alias?.prefix ?? "";
     connectionId.value = alias?.connection_id ?? props.connections[0]?.id ?? "";
     modelOverride.value = alias?.model_override ?? "";
+    pricingModel.value = alias?.pricing_model ?? "inherit";
     overrideMode.value = alias?.model_override ? "custom" : "none";
     selectedModel.value = "";
     models.value = [];
@@ -66,6 +76,7 @@ watch(
     modelsNotice.value = null;
     sortOrder.value = alias?.sort_order ?? 0;
     enabled.value = alias ? alias.enabled !== 0 : true;
+    void loadPrices();
     if (connectionId.value) void loadModels();
   },
 );
@@ -73,6 +84,15 @@ watch(
 watch(connectionId, (id) => {
   if (props.open && id) void loadModels();
 });
+
+/** Loads the stored price rows the reference-price picker offers. */
+async function loadPrices(): Promise<void> {
+  try {
+    prices.value = await api.listPricing();
+  } catch {
+    prices.value = [];
+  }
+}
 
 /** Loads upstream models and upgrades a matching custom override to the picker. */
 async function loadModels(): Promise<void> {
@@ -124,6 +144,10 @@ async function save(): Promise<void> {
     prefix: trimmedPrefix,
     connection_id: connectionId.value,
     model_override: effectiveOverride(),
+    pricing_model:
+      pricingModel.value === "inherit" || !pricingModel.value
+        ? null
+        : pricingModel.value,
     sort_order: sortOrder.value,
     enabled: enabled.value,
   };
@@ -261,6 +285,29 @@ async function save(): Promise<void> {
             class="text-xs text-amber-600 dark:text-amber-400"
           >
             {{ modelsNotice }}
+          </p>
+        </div>
+
+        <div class="grid gap-2">
+          <Label>Reference price</Label>
+          <Select v-model="pricingModel">
+            <SelectTrigger id="alias-pricing-model" class="w-full">
+              <SelectValue placeholder="Inherit from model" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="inherit">Inherit from model</SelectItem>
+              <SelectItem
+                v-for="price in prices"
+                :key="`${price.model}:${price.source}`"
+                :value="price.model"
+              >
+                {{ price.model }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">
+            Stored price row used to bill requests through this prefix. Inherit
+            uses the connection's pricing model, then the model id.
           </p>
         </div>
 

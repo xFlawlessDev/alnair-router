@@ -303,6 +303,8 @@ export interface Alias {
   prefix: string;
   connection_id: ID;
   model_override: string | null;
+  /** Catalog id whose stored price bills this alias; null inherits. */
+  pricing_model: string | null;
   enabled: number;
   sort_order: number;
   created_at: string;
@@ -313,6 +315,7 @@ export interface AliasInput {
   prefix: string;
   connection_id: ID;
   model_override?: string | null;
+  pricing_model?: string | null;
   enabled?: boolean;
   sort_order?: number;
 }
