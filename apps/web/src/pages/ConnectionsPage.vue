@@ -155,6 +155,12 @@ async function onPresetQuickAdd(preset: ProviderPreset): Promise<void> {
       ? parseHeaders(source.custom_headers)
       : preset.default_headers,
     provider_id: preset.id,
+    // A search provider is only reachable by `/v1/search` once it carries a
+    // tier, so a quick-added search preset joins the first tier. Copies keep
+    // the tier of the connection they were duplicated from.
+    ...(preset.category === "search"
+      ? { search_tier: source?.search_tier ?? 1 }
+      : {}),
     ...(source?.api_key ? { api_key: source.api_key } : {}),
   };
 
@@ -219,6 +225,12 @@ function providerLabel(connection: Connection): string {
     presets.value.find((preset) => preset.id === connection.provider_id)
       ?.label ?? connection.provider_id
   );
+}
+
+/** Explains the search tier badge, including the path `/v1/search` uses. */
+function searchTitle(connection: Connection): string {
+  const path = connection.search_path ?? "/search";
+  return `Search fallback tier ${connection.search_tier}; /v1/search calls ${connection.base_url}${path}`;
 }
 
 /** Free connection name for a preset, suffixed when the base name is taken. */
@@ -468,6 +480,13 @@ onMounted(load);
                           :title="`${connection.account_count} extra key(s) rotate behind this connection`"
                         >
                           +{{ connection.account_count }} keys
+                        </Badge>
+                        <Badge
+                          v-if="connection.search_tier != null"
+                          variant="secondary"
+                          :title="searchTitle(connection)"
+                        >
+                          search tier {{ connection.search_tier }}
                         </Badge>
                       </div>
                     </div>

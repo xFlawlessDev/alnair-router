@@ -214,4 +214,89 @@ describe("ConnectionsPage", () => {
 
     unmount();
   });
+
+  it("puts a duplicated search provider into the first tier", async () => {
+    vi.mocked(api.listProviders).mockResolvedValue({
+      object: "list",
+      data: [
+        preset({ id: "openai", label: "[OI]" }),
+        preset({
+          id: "tavily",
+          label: "Tavily",
+          category: "search",
+          base_url: "https://api.tavily.com",
+          configured: 1,
+        }),
+      ],
+    });
+    vi.mocked(api.createConnection).mockResolvedValue(connection({}));
+
+    const { container, unmount } = await mount();
+
+    [...container.querySelectorAll("button")]
+      .find((candidate) => candidate.textContent?.includes("Add provider"))!
+      .click();
+    await settle();
+
+    document
+      .querySelector<HTMLButtonElement>(
+        'button[aria-label="Duplicate Tavily"]',
+      )!
+      .click();
+    await settle();
+
+    // Without a tier the router filters the connection out of `/v1/search`.
+    expect(api.createConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ provider_id: "tavily", search_tier: 1 }),
+    );
+
+    unmount();
+  });
+
+  it("leaves a duplicated chat provider out of the search tiers", async () => {
+    vi.mocked(api.listProviders).mockResolvedValue({
+      object: "list",
+      data: [
+        preset({ id: "openai", label: "[OI]", configured: 1 }),
+        preset({ id: "anthropic", label: "Anthropic" }),
+      ],
+    });
+    vi.mocked(api.createConnection).mockResolvedValue(connection({}));
+
+    const { container, unmount } = await mount();
+
+    [...container.querySelectorAll("button")]
+      .find((candidate) => candidate.textContent?.includes("Add provider"))!
+      .click();
+    await settle();
+
+    document
+      .querySelector<HTMLButtonElement>('button[aria-label="Duplicate [OI]"]')!
+      .click();
+    await settle();
+
+    const body = vi.mocked(api.createConnection).mock.calls[0][0];
+    expect(body).not.toHaveProperty("search_tier");
+
+    unmount();
+  });
+
+  it("shows the search tier of a connection that opted in", async () => {
+    vi.mocked(api.listConnections).mockResolvedValue([
+      ...rows,
+      connection({
+        id: "t",
+        name: "tavily-search",
+        provider_id: "tavily",
+        base_url: "https://api.tavily.com",
+        search_tier: 1,
+      }),
+    ]);
+
+    const { container, unmount } = await mount();
+
+    expect(container.textContent).toContain("search tier 1");
+
+    unmount();
+  });
 });

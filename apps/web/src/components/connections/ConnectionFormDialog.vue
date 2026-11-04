@@ -67,6 +67,7 @@ const enabled = ref(true);
 const connectTimeout = ref("");
 const idleTimeout = ref("");
 const pricingModel = ref("");
+const searchPath = ref("");
 const searchTier = ref("");
 const cacheRetention = ref("none");
 const authStyle = ref("api_key");
@@ -206,8 +207,8 @@ watch(
         ? String(connection.idle_timeout_ms)
         : "";
     pricingModel.value = connection?.pricing_model ?? "";
-    searchTier.value =
-      connection?.search_tier != null ? String(connection.search_tier) : "";
+    searchPath.value = connection?.search_path ?? "";
+    searchTier.value = initialSearchTier(connection, preset);
     cacheRetention.value = connection?.cache_retention ?? "none";
     authStyle.value = connection?.auth_style ?? "api_key";
     newAccountLabel.value = "";
@@ -319,6 +320,27 @@ function parseSearchTier(value: string): number | null {
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
 }
 
+/** Normalizes a search path to a leading slash; blank means the default `/search`. */
+function parseSearchPath(value: string): string | null {
+  const trimmed = value.trim().replace(/^\/+/, "");
+  return trimmed ? `/${trimmed}` : null;
+}
+
+/**
+ * Seeds the tier field. An existing connection keeps exactly what it stored. A
+ * new search provider starts in the first tier, because the router leaves a
+ * connection with no tier out of `/v1/search` entirely.
+ */
+function initialSearchTier(
+  connection: Connection | null,
+  preset: ProviderPreset | null,
+): string {
+  if (connection) {
+    return connection.search_tier != null ? String(connection.search_tier) : "";
+  }
+  return preset?.category === "search" ? "1" : "";
+}
+
 function addHeader(): void {
   headers.value.push({ key: "", value: "" });
 }
@@ -355,6 +377,16 @@ async function save(): Promise<void> {
     return;
   }
 
+  if (searchTier.value.trim() && parseSearchTier(searchTier.value) === null) {
+    toast.error("Search tier must be a whole number of 1 or higher");
+    return;
+  }
+
+  if (/\s/.test(searchPath.value.trim())) {
+    toast.error("Search path must not contain spaces");
+    return;
+  }
+
   const body = {
     name: name.value.trim(),
     provider_type: providerType.value,
@@ -364,6 +396,7 @@ async function save(): Promise<void> {
     connect_timeout_ms: parseTimeout(connectTimeout.value),
     idle_timeout_ms: parseTimeout(idleTimeout.value),
     pricing_model: pricingModel.value.trim() || null,
+    search_path: parseSearchPath(searchPath.value),
     search_tier: parseSearchTier(searchTier.value),
     cache_retention: cacheRetention.value,
     auth_style: authStyle.value,
@@ -597,6 +630,23 @@ async function save(): Promise<void> {
             Catalog id used to price this connection's requests. Set it when the
             upstream model id differs from the catalog (e.g. relay paths like
             <code>ocg/openai/gpt-5.6-luna</code>).
+          </p>
+        </div>
+
+        <div v-if="!oauthCreate" class="grid gap-2">
+          <Label for="connection-search-path">Search path (optional)</Label>
+          <Input
+            id="connection-search-path"
+            v-model="searchPath"
+            placeholder="/search"
+            autocapitalize="off"
+            spellcheck="false"
+          />
+          <p class="text-xs text-muted-foreground">
+            Path appended to the base URL for <code>/v1/search</code>. Leave it
+            empty for the default <code>/search</code>, and set it when the
+            provider serves search elsewhere (for example
+            <code>/web/search</code>).
           </p>
         </div>
 
