@@ -1686,6 +1686,94 @@ async fn playground_shrinks_a_bulky_tool_result_and_reports_each_step() {
 }
 
 #[tokio::test]
+async fn playground_leaves_markdown_with_a_horizontal_rule_untouched() {
+    let (app, _db) = app(false).await;
+    let markdown =
+        "# Title\n\nIntro paragraph here.\n\n---\n\n## Section\n\nBody text for the section.\n";
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [
+                { "role": "user", "content": "read this" },
+                { "role": "tool", "content": markdown, "tool_call_id": "c1" }
+            ]
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(body["after"][1]["content"].as_str(), Some(markdown));
+    let steps = body["steps"].as_array().expect("steps");
+    let rtk = steps
+        .iter()
+        .find(|step| step["saver"] == serde_json::json!("rtk"))
+        .expect("rtk step");
+    assert_eq!(rtk["applied"], serde_json::json!(false));
+}
+
+#[tokio::test]
+async fn playground_never_truncates_a_long_markdown_document() {
+    let (app, _db) = app(false).await;
+    let mut markdown =
+        String::from("# Release guide\n\nThis guide walks through a release.\n\n---\n\n");
+    for index in 0..140 {
+        markdown.push_str(&format!(
+            "## Step {index}\n\nThe operator picks the next candidate carefully.\n\n"
+        ));
+    }
+    assert!(
+        markdown.lines().count() > 250,
+        "must clear the truncate floor"
+    );
+
+    let response = raw_request_with_auth(
+        &app,
+        "POST",
+        "/api/token-saver/playground",
+        Some(serde_json::json!({
+            "messages": [
+                { "role": "user", "content": "read this" },
+                { "role": "tool", "content": markdown.clone(), "tool_call_id": "c1" }
+            ]
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+
+    assert_eq!(
+        body["after"][1]["content"].as_str(),
+        Some(markdown.as_str())
+    );
+    let steps = body["steps"].as_array().expect("steps");
+    let rtk = steps
+        .iter()
+        .find(|step| step["saver"] == serde_json::json!("rtk"))
+        .expect("rtk step");
+    assert_eq!(rtk["applied"], serde_json::json!(false));
+}
+
+#[tokio::test]
 async fn playground_reports_an_idle_pipeline_without_inventing_savings() {
     let (app, _db) = app(false).await;
 

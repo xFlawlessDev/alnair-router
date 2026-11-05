@@ -231,6 +231,22 @@ fn git_status(text: &str) -> String {
         return String::new();
     }
 
+    // A clean tree has no file buckets; the branch line must not keep the
+    // whole `git status` body alive when all it says is that nothing changed.
+    if clean
+        && staged.is_empty()
+        && modified.is_empty()
+        && untracked.is_empty()
+        && conflicts.is_empty()
+    {
+        return match out.into_iter().next() {
+            Some(branch) if branch.starts_with("* ") => {
+                format!("{} (clean — nothing to commit)", branch)
+            }
+            _ => "clean — nothing to commit".to_string(),
+        };
+    }
+
     out.join("\n")
 }
 
@@ -459,6 +475,13 @@ fn ls(text: &str) -> String {
         if line.starts_with("total ") {
             continue;
         }
+        // Only rows the detector would accept are rows. A line that merely
+        // starts with a dash (prose, a Markdown rule, a diff marker) has no
+        // columns to take a name from, and taking its last token is how a
+        // document used to be shredded into a column of trailing words.
+        if !is_ls_listing_row(line) {
+            continue;
+        }
 
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 2 {
@@ -532,6 +555,44 @@ fn ls(text: &str) -> String {
     }
 
     out.join("\n")
+}
+
+/// One `ls -l` row: a type character, at least seven columns, and the first
+/// column made of permission characters only.
+///
+/// The row contract is deliberately duplicated from the detector rather than
+/// exported: the filter must be safe when called with a kind the detector would
+/// no longer choose, which is exactly the state a stale cached decision leaves.
+fn is_ls_listing_row(line: &str) -> bool {
+    let trimmed = line.trim_end();
+    let mut chars = trimmed.chars();
+    let Some(kind) = chars.next() else {
+        return false;
+    };
+    if !matches!(kind, '-' | 'd' | 'l' | 'b' | 'c' | 'p' | 's') {
+        return false;
+    }
+
+    // Nine permission characters.
+    for _ in 0..9 {
+        if !matches!(
+            chars.next(),
+            Some('r' | 'w' | 'x' | '-' | 's' | 'S' | 't' | 'T')
+        ) {
+            return false;
+        }
+    }
+    // macOS appends an attribute marker before the separator.
+    if let Some(marker) = chars.clone().next()
+        && matches!(marker, '@' | '+' | '.')
+    {
+        chars.next();
+    }
+    if !chars.next().is_some_and(char::is_whitespace) {
+        return false;
+    }
+
+    trimmed.split_whitespace().count() >= 7
 }
 
 fn human_size(bytes: u64) -> String {
@@ -708,6 +769,25 @@ mod tests {
         }
         assert!(out.contains("README.md"));
         assert!(out.contains("Summary: 2 files, 0 dirs"));
+    }
+
+    #[test]
+    fn ls_ignores_lines_that_are_not_listing_rows() {
+        // The filter is called directly here: a decision cached before the
+        // detector was tightened must not shred a document into trailing words.
+        let text = "# Title\n\nIntro paragraph here.\n\n---\n\n## Section\n\nBody text.\n";
+        let out = apply(FilterKind::Ls, text);
+
+        assert!(!out.contains("Summary:"), "no listing was found: {out}");
+    }
+
+    #[test]
+    fn a_clean_git_status_on_a_branch_stays_compact() {
+        let text = "On branch main\nYour branch is up to date with 'origin/main'.\n\n\
+                    nothing to commit, working tree clean\n";
+        let out = apply(FilterKind::GitStatus, text);
+
+        assert_eq!(out, "* main (clean — nothing to commit)");
     }
 
     #[test]
