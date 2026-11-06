@@ -875,6 +875,56 @@ suite should tell you.
     Claude Code, Codex and Copilot session tokens are rejected by an
     Anthropic-shaped endpoint when sent as `x-api-key`.
 
+35. **An openai-compatible connection picks its wire API.** `connections.wire_api`
+    (migration `0029`, default `chat`) is `chat` for `{base_url}/chat/completions`
+    or `responses` for `{base_url}/responses`. It rides `ResolvedTarget` as a
+    `String` and converts once in `chat_backend::wire_api_from_str`, exactly like
+    `auth_style`. `OpenAiProvider::stream_with_transform` dispatches on it into
+    `providers/openai/responses/`, which builds the Responses body (`instructions`
+    for system messages, flat function tools, `max_output_tokens`, no
+    `presence_penalty`/`frequency_penalty`/`seed`/`stop`) and parses the typed
+    event sequence instead of chat deltas. A tool call is emitted once, from
+    `response.function_call_arguments.done`, because the deltas would otherwise
+    duplicate it. The repository rejects `responses` on every other provider
+    family: those stacks have exactly one contract, so the flag would be a
+    silent no-op. This is *not* the Codex provider — that one speaks a private
+    dialect of the same API with its own auth and identity headers.
+
+36. **Reasoning effort reaches every provider family, and the top tier is
+    spelled per dialect.** `ModelConfig::supports_thinking` was previously
+    opted in for CodeBuddy/Anthropic/Codex only, so a `reasoning_effort` sent to
+    an openai-compatible connection was mapped onto `ThinkingLevel` and then
+    dropped — the largest family silently lost the setting. The gate now
+    includes `OpenaiCompatible`, relying on the existing
+    retry-without-reasoning path (`should_retry_openai_without_reasoning`, and
+    its Responses counterpart `should_retry_responses_without_reasoning`, which
+    looks for the nested `reasoning` object the chat-shaped check cannot see) to
+    strip the field and resend when an upstream rejects it. `POST /v1/responses`
+    accepts `reasoning.effort`. OpenAI spells the top of the scale as two
+    distinct levels, `xhigh` and `max` (highest); `parse_thinking_level` maps
+    both onto `ThinkingLevel::Max`, and each dialect spells it its own way —
+    `xhigh` on chat completions, `max` on the Responses API. Sending `xhigh` to
+    `/responses` would ask for one tier less than the caller requested.
+    `temperature` and `top_p` are both documented Responses create parameters
+    and are forwarded; only `presence_penalty`, `frequency_penalty`, `seed` and
+    `stop` are absent from that schema and therefore dropped.
+
+37. **The cache share of the input cost is stored, and the prompt total follows
+    one convention.** `usage_records.cost_cache_usd` (migration `0030`) holds
+    the part of `cost_input_usd` billed at the cache-read/write rate. It is a
+    *slice* of input, never an extra charge: the breakdown shows it inside the
+    "Input" row (its hint reads "X uncached + Y cache read") so the parts still
+    sum to the stored total. Without it a cache-heavy workload reads wrong —
+    99% of a prompt cached looks like it was billed at the full input rate.
+
+    The same change fixed a real undercount: Anthropic reports the input
+    buckets separately, and the docs state total input is
+    `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`.
+    The provider used to store `input_tokens` alone, which dropped the two
+    cache buckets from `prompt_tokens` while still reporting the cache count —
+    so the dashboard divided cached by a total it was not part of. Every
+    provider now stores a prompt total that includes its cached tokens.
+
 ---
 
 ## 5. The `alnair-llm` crate — read this
