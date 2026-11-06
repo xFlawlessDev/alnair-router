@@ -345,6 +345,7 @@ mod tests {
                 pricing_model: None,
                 cache_retention: None,
                 auth_style: Some("bearer".to_string()),
+                wire_api: None,
                 web_fetch_mode: None,
                 web_fetch_path: None,
                 search_path: None,

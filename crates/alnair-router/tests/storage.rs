@@ -61,6 +61,7 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         pricing_model: None,
         cache_retention: None,
         auth_style: None,
+        wire_api: None,
         web_fetch_mode: None,
         web_fetch_path: None,
         search_path: None,
@@ -409,6 +410,11 @@ async fn provider_type_rebuild_keeps_children() {
     .execute(&db.pool)
     .await
     .expect("search-tier migration");
+
+    sqlx::raw_sql(include_str!("../migrations/0029_connection_wire_api.sql"))
+        .execute(&db.pool)
+        .await
+        .expect("wire-api migration");
 
     let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
         .fetch_all(&db.pool)
@@ -1754,6 +1760,7 @@ async fn connections_round_trip_a_pricing_model_pin() {
             pricing_model: Some("gpt-5.6-luna".to_string()),
             cache_retention: None,
             auth_style: None,
+            wire_api: None,
             web_fetch_mode: None,
             web_fetch_path: None,
             search_path: None,
@@ -1852,6 +1859,92 @@ async fn connections_round_trip_the_auth_style() {
         .await
         .expect("reset");
     assert_eq!(reset.auth_style, "api_key");
+}
+
+#[tokio::test]
+async fn unknown_wire_api_is_rejected() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let created = repo
+        .create(connection("wire-bogus", "openai-compatible"))
+        .await
+        .expect("create");
+
+    let result = repo
+        .update(
+            &created.id,
+            UpdateConnection {
+                wire_api: Some("graphql".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_err(), "an unknown wire_api must be rejected");
+}
+
+#[tokio::test]
+async fn connections_round_trip_the_wire_api() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let defaulted = repo
+        .create(connection("wire", "openai-compatible"))
+        .await
+        .expect("create");
+    assert_eq!(defaulted.wire_api, "chat", "chat completions by default");
+
+    let responses = repo
+        .update(
+            &defaulted.id,
+            UpdateConnection {
+                wire_api: Some("responses".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("switch to responses");
+    assert_eq!(responses.wire_api, "responses");
+
+    // A blank value falls back to the default rather than persisting garbage.
+    let reset = repo
+        .update(
+            &defaulted.id,
+            UpdateConnection {
+                wire_api: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("reset");
+    assert_eq!(reset.wire_api, "chat");
+}
+
+#[tokio::test]
+async fn the_responses_wire_api_is_rejected_on_a_non_openai_connection() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let anthropic = repo
+        .create(connection("claude", "anthropic-native"))
+        .await
+        .expect("create");
+
+    let result = repo
+        .update(
+            &anthropic.id,
+            UpdateConnection {
+                wire_api: Some("responses".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "only an openai-compatible connection speaks the Responses API"
+    );
 }
 
 #[tokio::test]

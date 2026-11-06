@@ -23,6 +23,7 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         pricing_model: None,
         cache_retention: "none".to_string(),
         auth_style: "api_key".to_string(),
+        wire_api: "chat".to_string(),
         web_fetch_mode: "local".to_string(),
         web_fetch_path: None,
         search_path: None,
@@ -165,6 +166,16 @@ fn auth_style_defaults_to_api_key() {
     let targets = resolver(&catalog).resolve("kr/anything").expect("resolve");
 
     assert_eq!(targets[0].auth_style, "api_key");
+}
+
+#[test]
+fn connection_wire_api_reaches_the_target() {
+    let mut catalog = catalog();
+    catalog.connections[1].wire_api = "responses".to_string();
+
+    let targets = resolver(&catalog).resolve("kr/anything").expect("resolve");
+
+    assert_eq!(targets[0].wire_api, "responses");
 }
 
 #[test]

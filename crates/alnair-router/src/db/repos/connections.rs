@@ -43,6 +43,10 @@ pub struct Connection {
     /// `bearer` (always `Authorization: Bearer`). OAuth/subscription session
     /// tokens need `bearer`; Anthropic-native upstreams otherwise reject them.
     pub auth_style: String,
+    /// Which OpenAI wire API this upstream speaks: `chat` for
+    /// `/chat/completions` or `responses` for `/responses`. Only meaningful on
+    /// an openai-compatible connection; the other families have one contract.
+    pub wire_api: String,
     /// Where `/v1/web/fetch` gets its content: `local` (the router fetches the
     /// URL itself, behind the SSRF guard) or `provider` (forwarded to this
     /// connection's extract endpoint). `provider` is how an operator reaches
@@ -125,6 +129,10 @@ pub struct CreateConnection {
     /// Credential presentation: `api_key` (default) or `bearer`.
     #[serde(default)]
     pub auth_style: Option<String>,
+    /// OpenAI wire API: `chat` (default) or `responses`. Rejected on any
+    /// provider type other than openai-compatible.
+    #[serde(default)]
+    pub wire_api: Option<String>,
     /// Where `/v1/web/fetch` gets its content: `local` (default) or `provider`.
     #[serde(default)]
     pub web_fetch_mode: Option<String>,
@@ -169,6 +177,9 @@ pub struct UpdateConnection {
     /// Set the credential presentation (`api_key`/`bearer`).
     #[serde(default)]
     pub auth_style: Option<String>,
+    /// Set the OpenAI wire API (`chat`/`responses`).
+    #[serde(default)]
+    pub wire_api: Option<String>,
     /// Set the fetch mode (`local`/`provider`).
     #[serde(default)]
     pub web_fetch_mode: Option<String>,
@@ -328,14 +339,15 @@ impl ConnectionRepository {
         };
         let auth_style =
             normalized_auth_style(input.auth_style.as_deref().or(default_auth_style))?.to_string();
+        let wire_api = normalized_wire_api(input.wire_api.as_deref(), &provider_type)?.to_string();
         let provider_id = preset.as_ref().map(|preset| preset.id.to_string());
 
         sqlx::query(
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
                  connect_timeout_ms, idle_timeout_ms, pricing_model, cache_retention,
-                 auth_style, web_fetch_mode, web_fetch_path, search_path, search_tier, provider_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 auth_style, wire_api, web_fetch_mode, web_fetch_path, search_path, search_tier, provider_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -351,6 +363,7 @@ impl ConnectionRepository {
             input.cache_retention.as_deref(),
         )?)
         .bind(&auth_style)
+        .bind(&wire_api)
         .bind(normalized_web_fetch_mode(input.web_fetch_mode.as_deref())?)
         .bind(normalized_model(input.web_fetch_path.as_deref()))
         .bind(normalized_model(input.search_path.as_deref()))
@@ -435,6 +448,10 @@ impl ConnectionRepository {
             Some(value) => normalized_auth_style(Some(value))?.to_string(),
             None => existing.auth_style.clone(),
         };
+        let wire_api = match &input.wire_api {
+            Some(value) => normalized_wire_api(Some(value), provider_type)?.to_string(),
+            None => existing.wire_api.clone(),
+        };
         let web_fetch_mode = match &input.web_fetch_mode {
             Some(value) => normalized_web_fetch_mode(Some(value))?.to_string(),
             None => existing.web_fetch_mode.clone(),
@@ -465,7 +482,7 @@ impl ConnectionRepository {
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
                  connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, cache_retention = ?,
-                 auth_style = ?, web_fetch_mode = ?, web_fetch_path = ?, search_path = ?, search_tier = ?, provider_id = ?, updated_at = ?
+                 auth_style = ?, wire_api = ?, web_fetch_mode = ?, web_fetch_path = ?, search_path = ?, search_tier = ?, provider_id = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -479,6 +496,7 @@ impl ConnectionRepository {
         .bind(pricing_model)
         .bind(&cache_retention)
         .bind(&auth_style)
+        .bind(&wire_api)
         .bind(&web_fetch_mode)
         .bind(&web_fetch_path)
         .bind(&search_path)
@@ -574,6 +592,32 @@ fn normalized_auth_style(value: Option<&str>) -> Result<&'static str> {
             "auth_style must be api_key or bearer (got '{other}')"
         ))),
     }
+}
+
+/// Validates the OpenAI wire API and rejects it on other provider families.
+///
+/// `chat` and `responses` describe two endpoints of the same upstream family,
+/// so a non-OpenAI connection carrying the flag would silently be ignored by
+/// the provider layer. Refusing it at write time keeps the stored row honest.
+fn normalized_wire_api(value: Option<&str>, provider_type: &str) -> Result<&'static str> {
+    let wire_api = match value.map(str::trim) {
+        None | Some("") | Some("chat") => "chat",
+        Some("responses") => "responses",
+        Some(other) => {
+            return Err(Error::BadRequest(format!(
+                "wire_api must be chat or responses (got '{other}')"
+            )));
+        }
+    };
+
+    if wire_api != "chat" && provider_type != "openai-compatible" {
+        return Err(Error::BadRequest(format!(
+            "wire_api 'responses' applies to openai-compatible connections only; \
+             this connection is {provider_type}"
+        )));
+    }
+
+    Ok(wire_api)
 }
 
 /// Validates and defaults where `/v1/web/fetch` gets its content.

@@ -124,6 +124,7 @@ mod tests {
             pricing_model: None,
             cache_retention: None,
             auth_style: Some("bearer".to_string()),
+            wire_api: None,
             web_fetch_mode: None,
             web_fetch_path: None,
 
@@ -226,7 +227,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("latest migration");
-        assert_eq!(version, 28);
+        assert_eq!(version, 30);
 
         let stored: Vec<u8> =
             sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = 1")
@@ -291,7 +292,7 @@ mod tests {
             .fetch_one(&db.pool)
             .await
             .expect("latest migration version");
-        assert_eq!(max_version, 28);
+        assert_eq!(max_version, 30);
     }
 
     #[tokio::test]

@@ -30,6 +30,8 @@ pub struct UsageRecord {
     pub cost_output_usd: f64,
     /// Reasoning premium over the output rate.
     pub cost_reasoning_usd: f64,
+    /// Part of cost_input_usd billed at the cache rate.
+    pub cost_cache_usd: f64,
     pub latency_ms: i64,
     /// Prompt tokens removed by RTK/Slimmer before dispatch; measured.
     pub saved_rtk_tokens: i64,
@@ -67,6 +69,8 @@ pub struct NewUsageRecord {
     pub cost_input_usd: f64,
     pub cost_output_usd: f64,
     pub cost_reasoning_usd: f64,
+    /// Part of cost_input_usd billed at the cache rate; 0 when unpriced.
+    pub cost_cache_usd: f64,
     pub latency_ms: u64,
     /// What the token-saving pipeline saved on this request. RTK and Headroom
     /// are measured; the directive columns are estimates derived from the
@@ -109,6 +113,8 @@ pub struct UsageSummary {
     pub cost_output_usd: f64,
     /// Reasoning premium over the output rate.
     pub cost_reasoning_usd: f64,
+    /// Part of cost_input_usd billed at the cache rate.
+    pub cost_cache_usd: f64,
     pub avg_latency_ms: f64,
 }
 
@@ -128,6 +134,7 @@ impl UsageSummary {
             cost_input_usd: self.cost_input_usd,
             cost_output_usd: self.cost_output_usd,
             cost_reasoning_usd: self.cost_reasoning_usd,
+            cost_cache_usd: self.cost_cache_usd,
             avg_latency_ms: self.avg_latency_ms,
             savings: totals,
         }
@@ -151,6 +158,7 @@ pub struct UsageSummaryWithSavings {
     pub cost_input_usd: f64,
     pub cost_output_usd: f64,
     pub cost_reasoning_usd: f64,
+    pub cost_cache_usd: f64,
     pub avg_latency_ms: f64,
     pub savings: SaverSummary,
 }
@@ -445,9 +453,9 @@ impl UsageRepository {
                 (id, created_at, api_key_id, requested_model, resolved_provider, resolved_model,
                  connection_name, attempt, status, prompt_tokens, completion_tokens, cached_tokens,
                  reasoning_tokens, cost_usd, cost_input_usd, cost_output_usd, cost_reasoning_usd,
-                 latency_ms, saved_rtk_tokens, saved_headroom_tokens, saved_terse_tokens,
-                 saved_caveman_tokens, saved_ponytail_tokens, saved_cost_usd)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 cost_cache_usd, latency_ms, saved_rtk_tokens, saved_headroom_tokens,
+                 saved_terse_tokens, saved_caveman_tokens, saved_ponytail_tokens, saved_cost_usd)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(Utc::now())
@@ -466,6 +474,7 @@ impl UsageRepository {
         .bind(entry.cost_input_usd)
         .bind(entry.cost_output_usd)
         .bind(entry.cost_reasoning_usd)
+        .bind(entry.cost_cache_usd)
         .bind(entry.latency_ms as i64)
         .bind(entry.saved_rtk_tokens as i64)
         .bind(entry.saved_headroom_tokens as i64)
@@ -527,6 +536,7 @@ impl UsageRepository {
                 COALESCE(SUM(cost_input_usd), 0.0) AS cost_input_usd,
                 COALESCE(SUM(cost_output_usd), 0.0) AS cost_output_usd,
                 COALESCE(SUM(cost_reasoning_usd), 0.0) AS cost_reasoning_usd,
+                COALESCE(SUM(cost_cache_usd), 0.0) AS cost_cache_usd,
                 COALESCE(AVG(latency_ms), 0.0) AS avg_latency_ms
              FROM usage_records
              WHERE (?1 IS NULL OR api_key_id = ?1)
@@ -838,6 +848,58 @@ mod tests {
         // Unknown keys are rejected rather than interpolated into the SQL.
         assert!(Sort::parse(Some("created_at; DROP TABLE usage_records"), None).is_err());
         assert!(Sort::parse(Some("cost"), Some("sideways")).is_err());
+    }
+
+    #[tokio::test]
+    async fn the_cache_share_of_input_cost_round_trips() {
+        let db = Db::connect_in_memory().await.expect("db");
+        let repository = UsageRepository::new(db.pool.clone());
+        repository
+            .record(NewUsageRecord {
+                requested_model: "cached".to_string(),
+                attempt: 1,
+                status: "ok".to_string(),
+                prompt_tokens: 10_000,
+                cached_tokens: 9_900,
+                cost_usd: 0.00515,
+                cost_input_usd: 0.00515,
+                cost_cache_usd: 0.00495,
+                latency_ms: 9,
+                ..Default::default()
+            })
+            .await
+            .expect("row");
+
+        let rows = repository
+            .list(10, 0, &UsageFilter::default(), Sort::default())
+            .await
+            .expect("rows");
+        assert_eq!(rows[0].cost_cache_usd, 0.00495);
+
+        // The summary has to carry it too, or the aggregate breakdown cannot
+        // show the cache slice at all.
+        let summary = repository
+            .summary(&UsageFilter::default())
+            .await
+            .expect("summary");
+        assert_eq!(summary.cost_cache_usd, 0.00495);
+        assert_eq!(summary.cost_input_usd, 0.00515);
+    }
+
+    #[tokio::test]
+    async fn a_row_without_a_cost_breakdown_reports_no_cache_share() {
+        let db = Db::connect_in_memory().await.expect("db");
+        let repository = UsageRepository::new(db.pool.clone());
+        repository.record(record("legacy", 1.0)).await.expect("row");
+
+        let rows = repository
+            .list(10, 0, &UsageFilter::default(), Sort::default())
+            .await
+            .expect("rows");
+        assert_eq!(
+            rows[0].cost_cache_usd, 0.0,
+            "a row predating the column keeps reading as it did"
+        );
     }
 
     #[tokio::test]

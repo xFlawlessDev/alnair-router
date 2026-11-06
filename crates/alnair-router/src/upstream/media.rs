@@ -175,6 +175,7 @@ mod tests {
             pricing_model: None,
             cache_retention: "none".to_string(),
             auth_style: auth_style.to_string(),
+            wire_api: "chat".to_string(),
             oauth_account_ids: Vec::new(),
             source: "alias:test".to_string(),
         }
