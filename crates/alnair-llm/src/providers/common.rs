@@ -12,6 +12,12 @@ pub(crate) struct TokenCosts {
     /// Premium for reasoning tokens over the output rate, reported separately so
     /// the router can store a cost breakdown. `None` when unpriced.
     pub(crate) reasoning_usd: Option<f64>,
+    /// The part of `input_usd` billed at the cache rate rather than the input
+    /// rate. Reported separately because a fully cached prompt can be almost
+    /// all of the input cost while looking like an ordinary input charge: on a
+    /// 99% cache hit the dashboard would otherwise claim the tokens cost the
+    /// full input rate. `None` when unpriced.
+    pub(crate) cache_usd: Option<f64>,
 }
 
 pub(crate) fn normalize_base_url(base_url: &str) -> String {
@@ -104,6 +110,7 @@ pub(crate) fn calculate_token_costs(
             input_usd: None,
             output_usd: None,
             reasoning_usd: None,
+            cache_usd: None,
         };
     };
 
@@ -117,6 +124,11 @@ pub(crate) fn calculate_token_costs(
     let cached_write_rate = rates
         .cache_write_per_million_usd
         .unwrap_or(rates.input_per_million_usd);
+    let cache_usd = input_tokens.map(|_| {
+        (cached_read_tokens.unwrap_or(0) as f64 * cached_read_rate
+            + cached_write_tokens.unwrap_or(0) as f64 * cached_write_rate)
+            / 1_000_000.0
+    });
     let input_usd = input_tokens.map(|_| {
         (uncached_input_tokens as f64 * rates.input_per_million_usd
             + cached_read_tokens.unwrap_or(0) as f64 * cached_read_rate
@@ -140,6 +152,7 @@ pub(crate) fn calculate_token_costs(
         input_usd,
         output_usd,
         reasoning_usd,
+        cache_usd,
     }
 }
 
@@ -214,6 +227,67 @@ mod tests {
             Some((60.0 * 2.0 + 40.0 * 0.5) / 1_000_000.0)
         );
         assert_eq!(costs.output_usd, Some(10.0 * 8.0 / 1_000_000.0));
+    }
+
+    #[test]
+    fn calculate_token_costs_reports_the_cache_portion_of_input() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 2.0,
+            output_per_million_usd: 8.0,
+            cache_read_per_million_usd: Some(0.5),
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
+        };
+
+        // 100 prompt tokens of which 40 are a cache read.
+        let costs = calculate_token_costs(Some(&rates), Some(100), Some(40), None, Some(10), None);
+
+        let cache = costs.cache_usd.expect("cache portion");
+        assert!(
+            (cache - 40.0 * 0.5 / 1_000_000.0).abs() < f64::EPSILON,
+            "the cache row must be the cached tokens at the cache rate, got {cache}"
+        );
+
+        // The cache portion is a slice of the input total, never an addition to
+        // it: input + output must still be the whole bill.
+        let input = costs.input_usd.expect("input");
+        assert!(
+            cache <= input,
+            "cache {cache} must not exceed input {input}"
+        );
+    }
+
+    #[test]
+    fn a_fully_cached_prompt_is_almost_all_cache_cost() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 2.0,
+            output_per_million_usd: 8.0,
+            cache_read_per_million_usd: Some(0.5),
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
+        };
+
+        // The case that made the dashboard misread: 99% of the prompt cached,
+        // so 96% of the input charge is cache rather than ordinary input.
+        let costs =
+            calculate_token_costs(Some(&rates), Some(10_000), Some(9_900), None, None, None);
+
+        let input = costs.input_usd.expect("input");
+        let cache = costs.cache_usd.expect("cache");
+        assert!(
+            cache / input > 0.95,
+            "nearly the whole input charge is cache, got {cache} of {input}"
+        );
+    }
+
+    #[test]
+    fn unpriced_models_report_no_cost_at_all() {
+        let costs = calculate_token_costs(None, Some(100), Some(40), None, Some(10), None);
+
+        assert!(costs.input_usd.is_none());
+        assert!(costs.output_usd.is_none());
+        assert!(costs.reasoning_usd.is_none());
+        assert!(costs.cache_usd.is_none());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use super::*;
 use crate::model_config::ThinkingLevel;
+use crate::providers::openai::request::should_retry_responses_without_reasoning;
 use crate::types::GenerationOptions;
 
 #[test]
@@ -565,6 +566,46 @@ fn does_not_retry_reasoning_auth_error() {
     assert!(!should_retry_openai_without_reasoning(
         reqwest::StatusCode::UNAUTHORIZED,
         r#"{"error":{"message":"Invalid API key for reasoning_effort request"}}"#,
+        &body,
+    ));
+}
+
+#[test]
+fn retries_when_the_responses_endpoint_rejects_the_reasoning_object() {
+    // The Responses body nests the effort, so the chat-shaped check cannot see
+    // it; this predicate is what keeps such an upstream usable.
+    let body = serde_json::json!({
+        "model": "gpt-5.1",
+        "input": [],
+        "reasoning": { "effort": "high" }
+    });
+    assert!(should_retry_responses_without_reasoning(
+        reqwest::StatusCode::BAD_REQUEST,
+        r#"{"error":{"message":"Unsupported parameter: 'reasoning' is not supported for this model."}}"#,
+        &body,
+    ));
+}
+
+#[test]
+fn does_not_retry_responses_when_no_reasoning_was_sent() {
+    let body = serde_json::json!({ "model": "gpt-5.1", "input": [] });
+    assert!(!should_retry_responses_without_reasoning(
+        reqwest::StatusCode::BAD_REQUEST,
+        r#"{"error":{"message":"Unsupported parameter: reasoning"}}"#,
+        &body,
+    ));
+}
+
+#[test]
+fn does_not_retry_a_responses_auth_error() {
+    let body = serde_json::json!({
+        "model": "gpt-5.1",
+        "input": [],
+        "reasoning": { "effort": "high" }
+    });
+    assert!(!should_retry_responses_without_reasoning(
+        reqwest::StatusCode::UNAUTHORIZED,
+        r#"{"error":{"message":"Invalid API key for reasoning request"}}"#,
         &body,
     ));
 }

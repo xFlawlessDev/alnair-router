@@ -571,6 +571,10 @@ pub enum LlmStreamChunk {
         cost_output_usd: Option<f64>,
         /// Reasoning premium over the output rate, reported separately.
         cost_reasoning_usd: Option<f64>,
+        /// The part of `cost_input_usd` billed at the cache rate. A nearly
+        /// cache-only prompt is almost entirely this figure, so it has to be
+        /// visible for the dashboard's cost breakdown to explain the total.
+        cost_cache_usd: Option<f64>,
     },
     Done(Option<String>),
 }

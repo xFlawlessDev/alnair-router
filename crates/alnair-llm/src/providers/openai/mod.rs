@@ -5,7 +5,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use tracing::warn;
 
-use crate::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel};
+use crate::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel, WireApi};
 use crate::provider::LlmProvider;
 use crate::providers::common::{
     calculate_token_costs, describe_non_json_body, is_html_content_type, normalize_base_url,
@@ -45,6 +45,23 @@ impl OpenAiProvider {
         use_streaming: bool,
         transform: fn(&mut serde_json::Value),
     ) -> BoxStream<'a, Result<LlmStreamChunk, ChatError>> {
+        // The Responses endpoint has its own body, event sequence and usage
+        // counters, so it is a separate arm rather than a rewrite of the chat
+        // request. A caller that explicitly asks for the chat shape (the
+        // CodeBuddy and Command Code wrappers) keeps it regardless of the
+        // connection's setting.
+        if matches!(config.wire_api, WireApi::Responses) {
+            return responses::stream(
+                &self.client,
+                config,
+                messages,
+                options,
+                tools,
+                use_streaming,
+                transform,
+            );
+        }
+
         let base_url = config.base_url.clone();
         let model = config.model_id.clone();
         let api_key = config.api_key.clone();
@@ -297,6 +314,7 @@ impl OpenAiProvider {
                             cost_input_usd: costs.input_usd,
                             cost_output_usd: costs.output_usd,
                             cost_reasoning_usd: costs.reasoning_usd,
+                            cost_cache_usd: costs.cache_usd,
                         });
                     }
                     yield Ok(LlmStreamChunk::Done(finish_reason_for_tool_calls(
@@ -480,6 +498,7 @@ impl OpenAiProvider {
                             cost_input_usd: costs.input_usd,
                             cost_output_usd: costs.output_usd,
                             cost_reasoning_usd: costs.reasoning_usd,
+                            cost_cache_usd: costs.cache_usd,
                         });
                     }
                 }
@@ -588,6 +607,7 @@ fn openai_reasoning_effort(level: Option<ThinkingLevel>) -> Option<&'static str>
 
 mod chunks;
 mod request;
+pub mod responses;
 
 use chunks::*;
 use request::*;

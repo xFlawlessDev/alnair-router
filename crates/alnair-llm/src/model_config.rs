@@ -20,6 +20,21 @@ pub enum AuthStyle {
     Bearer,
 }
 
+/// Which OpenAI wire API an openai-compatible upstream speaks.
+///
+/// The two endpoints carry the same conversation but disagree on the request
+/// body, the SSE event names and the usage counters, so the choice is a
+/// per-connection property rather than something to sniff per request.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WireApi {
+    /// `POST {base_url}/chat/completions`.
+    #[default]
+    Chat,
+    /// `POST {base_url}/responses`.
+    Responses,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {
     pub provider_type: ProviderType,
@@ -28,6 +43,10 @@ pub struct ModelConfig {
     pub api_key: Option<String>,
     #[serde(default)]
     pub auth_style: AuthStyle,
+    /// Which OpenAI wire API to call. Ignored by every provider other than
+    /// [`ProviderType::OpenaiCompatible`].
+    #[serde(default)]
+    pub wire_api: WireApi,
     #[serde(default)]
     pub custom_headers: BTreeMap<String, String>,
     /// The `chatgpt_account_id` claim of a ChatGPT/Codex OAuth bearer. The
@@ -189,6 +208,7 @@ impl ModelConfig {
             model_id: model_id.into(),
             api_key,
             auth_style: AuthStyle::default(),
+            wire_api: WireApi::default(),
             custom_headers: BTreeMap::new(),
             chatgpt_account_id: None,
             supports_vision: false,
@@ -210,6 +230,7 @@ impl ModelConfig {
             model_id: model_id.into(),
             api_key,
             auth_style: AuthStyle::default(),
+            wire_api: WireApi::default(),
             custom_headers: BTreeMap::new(),
             chatgpt_account_id: None,
             supports_vision: false,

@@ -26,6 +26,19 @@ pub(super) fn anthropic_usage_chunk(
         .get("cache_creation_input_tokens")
         .and_then(|value| value.as_u64());
     let eval_count = usage.get("output_tokens").and_then(|value| value.as_u64());
+
+    // Anthropic reports the three input buckets separately: total input is
+    // `input_tokens + cache_creation + cache_read`. Every other provider
+    // reports a prompt total that *includes* its cached count, so the router
+    // stores one convention. Leaving `input_tokens` alone undercounted the
+    // prompt by the two cache buckets and made the dashboard read the cached
+    // share against a prompt total the cache counts were not part of.
+    let prompt_eval_count = prompt_eval_count.map(|prompt| {
+        prompt
+            .saturating_add(cached_prompt_eval_count.unwrap_or(0))
+            .saturating_add(cached_write_count.unwrap_or(0))
+    });
+
     // Anthropic bills thinking as output tokens and reports no separate count.
     let costs = calculate_token_costs(
         rates,
@@ -45,6 +58,7 @@ pub(super) fn anthropic_usage_chunk(
         cost_input_usd: costs.input_usd,
         cost_output_usd: costs.output_usd,
         cost_reasoning_usd: costs.reasoning_usd,
+        cost_cache_usd: costs.cache_usd,
     }
 }
 

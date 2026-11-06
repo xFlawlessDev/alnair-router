@@ -16,6 +16,7 @@ fn config() -> ModelConfig {
         model_id: "gpt-5.5".to_string(),
         api_key: Some("jwt".to_string()),
         auth_style: crate::model_config::AuthStyle::Bearer,
+        wire_api: crate::model_config::WireApi::Chat,
         custom_headers: Default::default(),
         chatgpt_account_id: Some("acct-1".to_string()),
         supports_vision: false,

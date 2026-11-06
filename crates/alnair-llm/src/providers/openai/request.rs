@@ -266,6 +266,34 @@ pub(super) fn should_retry_openai_without_reasoning(
             || body.contains("invalid"))
 }
 
+/// The Responses counterpart of [`should_retry_openai_without_reasoning`].
+///
+/// The Responses body nests the effort under `reasoning`, so the chat check
+/// never matches it: it looks for a top-level `reasoning_effort` that this wire
+/// format does not have. An upstream that implements the endpoint but not the
+/// reasoning parameter would otherwise fail the whole turn.
+pub(super) fn should_retry_responses_without_reasoning(
+    status: reqwest::StatusCode,
+    body: &str,
+    request_body: &serde_json::Value,
+) -> bool {
+    if !status.is_client_error() || request_body.get("reasoning").is_none() {
+        return false;
+    }
+
+    let body = body.to_ascii_lowercase();
+    if is_non_retryable_provider_rejection(&body) {
+        return false;
+    }
+
+    body.contains("reasoning")
+        && (body.contains("unsupported")
+            || body.contains("unrecognized")
+            || body.contains("unknown")
+            || body.contains("not supported")
+            || body.contains("invalid"))
+}
+
 pub(super) fn is_non_retryable_provider_rejection(body: &str) -> bool {
     body.contains("api key")
         || body.contains("authentication")

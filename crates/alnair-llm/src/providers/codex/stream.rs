@@ -213,6 +213,7 @@ fn response_usage(response: &Value, rates: Option<&ModelCostRates>) -> Option<Ll
         cost_input_usd: costs.input_usd,
         cost_output_usd: costs.output_usd,
         cost_reasoning_usd: costs.reasoning_usd,
+        cost_cache_usd: costs.cache_usd,
     })
 }
 

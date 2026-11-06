@@ -16,7 +16,7 @@ pub mod types;
 
 pub use model_config::{
     AuthStyle, CacheRetention, LlmStreamOptions, ModelConfig, ModelCostRates, ThinkingLevel,
-    known_cost_rates,
+    WireApi, known_cost_rates,
 };
 pub use provider::{LlmProvider, ProviderRegistry, provider_type_to_key};
 pub use providers::{

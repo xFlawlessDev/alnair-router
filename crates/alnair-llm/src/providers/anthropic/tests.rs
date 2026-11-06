@@ -427,10 +427,12 @@ fn stream_parser_reads_message_delta_usage() {
         .expect("usage event");
 
     assert!(!terminal);
+    // Anthropic reports the input buckets separately; the router stores the
+    // total prompt (10 + 4 cached) so every provider shares one convention.
     assert!(matches!(
         chunks.first(),
         Some(LlmStreamChunk::Usage {
-            prompt_eval_count: Some(10),
+            prompt_eval_count: Some(14),
             cached_prompt_eval_count: Some(4),
             eval_count: Some(2),
             ..
@@ -459,10 +461,12 @@ fn stream_usage_merges_message_start_and_final_delta() {
     .expect("delta");
 
     assert!(terminal);
+    // message_start reports 100 input + 20 cache-read; the merged prompt is
+    // the documented total of both buckets.
     assert!(matches!(
         chunks.first(),
         Some(LlmStreamChunk::Usage {
-            prompt_eval_count: Some(100),
+            prompt_eval_count: Some(120),
             cached_prompt_eval_count: Some(20),
             eval_count: Some(50),
             ..
