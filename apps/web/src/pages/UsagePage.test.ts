@@ -58,6 +58,7 @@ const record = (index: number): UsageRecord => ({
   cost_input_usd: 0.004,
   cost_output_usd: 0.006,
   cost_reasoning_usd: 0,
+  cost_cache_usd: 0.004,
   latency_ms: 100,
 });
 
@@ -73,6 +74,7 @@ const summary = (overrides: Partial<UsageSummary> = {}): UsageSummary => ({
   cost_input_usd: 0,
   cost_output_usd: 0,
   cost_reasoning_usd: 0,
+  cost_cache_usd: 0,
   avg_latency_ms: 0,
   savings: {
     requests: 0,

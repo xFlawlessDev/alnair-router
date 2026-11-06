@@ -5,6 +5,7 @@ import UsageBreakdownPopover, {
   type BreakdownRow,
 } from "@/components/usage/UsageBreakdownPopover.vue";
 import {
+  cacheRate,
   formatCompact,
   formatCost,
   formatLatency,
@@ -27,6 +28,8 @@ interface SummaryBreakdown {
   totalFormat: "tokens" | "cost";
   rows: BreakdownRow[];
   byModel?: BreakdownRow[];
+  /** Show each row's share of the total. */
+  showPercent?: boolean;
 }
 
 interface SummaryItem {
@@ -73,6 +76,7 @@ const items = computed<SummaryItem[]>(() => {
       { label: "Requests", value: "-", hint: "No data yet" },
       { label: "Tokens", value: "-", hint: "Prompt + completion" },
       { label: "Cost", value: "-", hint: "Recorded spend" },
+      { label: "Cache hit", value: "-", hint: "Cached share of prompt" },
       { label: "Avg latency", value: "-", hint: "Across attempts" },
     ];
   }
@@ -96,7 +100,15 @@ const items = computed<SummaryItem[]>(() => {
   );
 
   const costRows: BreakdownRow[] = [
-    { label: "Input", value: summary.cost_input_usd, format: "cost" },
+    {
+      label: "Input",
+      value: summary.cost_input_usd,
+      format: "cost",
+      hint:
+        summary.cost_cache_usd > 0
+          ? `${formatCost(summary.cost_input_usd - summary.cost_cache_usd)} uncached + ${formatCost(summary.cost_cache_usd)} cache read`
+          : "Prompt tokens at the input rate.",
+    },
     {
       label: "Output",
       value: summary.cost_output_usd,
@@ -151,6 +163,26 @@ const items = computed<SummaryItem[]>(() => {
       },
     },
     {
+      label: "Cache hit",
+      value: cacheRate(summary.cached_tokens, summary.prompt_tokens),
+      hint: `${formatCompact(summary.cached_tokens)} of ${formatCompact(summary.prompt_tokens)} prompt tokens billed at the cache-read rate`,
+      breakdown: {
+        title: "Prompt token cache",
+        // The denominator is the prompt, so each row's share is its slice of it
+        // and the cached row's percentage is the headline rate.
+        total: summary.prompt_tokens,
+        totalFormat: "tokens",
+        showPercent: true,
+        rows: [
+          { label: "Cached read", value: summary.cached_tokens },
+          {
+            label: "Uncached",
+            value: Math.max(0, summary.prompt_tokens - summary.cached_tokens),
+          },
+        ],
+      },
+    },
+    {
       label: "Avg latency",
       value: formatLatency(summary.avg_latency_ms),
       hint: "Across all attempts",
@@ -160,7 +192,7 @@ const items = computed<SummaryItem[]>(() => {
 </script>
 
 <template>
-  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
     <Card v-for="item in items" :key="item.label">
       <CardHeader class="pb-2">
         <CardTitle class="text-sm font-medium text-muted-foreground">{{
@@ -176,6 +208,7 @@ const items = computed<SummaryItem[]>(() => {
             :total-format="item.breakdown.totalFormat"
             :rows="item.breakdown.rows"
             :by-model="item.breakdown.byModel"
+            :show-percent="item.breakdown.showPercent ?? false"
           >
             {{ item.value }}
           </UsageBreakdownPopover>

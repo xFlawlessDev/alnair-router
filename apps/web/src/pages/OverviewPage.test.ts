@@ -116,6 +116,7 @@ describe("OverviewPage version check", () => {
       cost_input_usd: 0,
       cost_output_usd: 0,
       cost_reasoning_usd: 0,
+      cost_cache_usd: 0,
       avg_latency_ms: 0,
       savings: {
         requests: 0,

@@ -24,6 +24,7 @@ const connection = (overrides: Partial<Connection>): Connection => ({
   pricing_model: null,
   cache_retention: "none",
   auth_style: "api_key",
+  wire_api: "chat",
   web_fetch_mode: "local",
   web_fetch_path: null,
   search_path: null,

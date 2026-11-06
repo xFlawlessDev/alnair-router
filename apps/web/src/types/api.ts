@@ -93,6 +93,12 @@ export interface Connection {
   /** Credential presentation: "api_key" (provider default) or "bearer". */
   auth_style: string;
   /**
+   * Which OpenAI wire API this upstream speaks: "chat" for
+   * `/chat/completions` or "responses" for `/responses`. Only meaningful on an
+   * openai-compatible connection.
+   */
+  wire_api: WireApi;
+  /**
    * Where `/v1/web/fetch` gets its content: "local" (the router fetches the
    * URL itself, behind the SSRF guard) or "provider" (forwarded to
    * `web_fetch_path` on this connection, for pages that need JS rendering).
@@ -126,6 +132,8 @@ export interface ConnectionInput {
   cache_retention?: string | null;
   /** Send the credential as Authorization: Bearer instead of x-api-key. */
   auth_style?: string | null;
+  /** OpenAI wire API: "chat" (default) or "responses". */
+  wire_api?: WireApi | null;
   /** Where `/v1/web/fetch` gets its content: "local" (default) or "provider". */
   web_fetch_mode?: string | null;
   /** Extract path for a provider fetch, e.g. "/v1/scrape". */
@@ -137,6 +145,16 @@ export interface ConnectionInput {
   /** Preset to derive the endpoint and wire family from. */
   provider_id?: string | null;
 }
+
+/**
+ * Which OpenAI wire API an openai-compatible connection calls.
+ *
+ * `chat` posts to `/chat/completions`; `responses` posts to `/responses`,
+ * whose request body, SSE events and usage counters differ.
+ */
+export type WireApi = "chat" | "responses";
+
+export const WIRE_APIS: WireApi[] = ["chat", "responses"];
 
 /** Tier a provider preset belongs to; the picker groups by this. */
 export type ProviderCategory =
@@ -561,6 +579,8 @@ export interface UsageRecord {
   cost_output_usd: number;
   /** Reasoning premium over the output rate. */
   cost_reasoning_usd: number;
+  /** Part of cost_input_usd billed at the cache rate rather than the input rate. */
+  cost_cache_usd: number;
   latency_ms: number;
 }
 
@@ -576,6 +596,8 @@ export interface UsageSummary {
   cost_input_usd: number;
   cost_output_usd: number;
   cost_reasoning_usd: number;
+  /** Part of cost_input_usd billed at the cache rate. */
+  cost_cache_usd: number;
   avg_latency_ms: number;
   /** Token-saver rollup for the same window. */
   savings: SavingsSummary;

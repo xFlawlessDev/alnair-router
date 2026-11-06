@@ -33,6 +33,7 @@ import {
   type ConnectionInput,
   type ProviderPreset,
   type ProviderType,
+  type WireApi,
 } from "@/types/api";
 
 const props = defineProps<{
@@ -71,6 +72,7 @@ const searchPath = ref("");
 const searchTier = ref("");
 const cacheRetention = ref("none");
 const authStyle = ref("api_key");
+const wireApi = ref<WireApi>("chat");
 const saving = ref(false);
 
 /** Codex sign-in that runs inside the create dialog once the row exists. */
@@ -175,6 +177,11 @@ const oauthCreate = computed(() => !isEdit.value && isOAuth.value);
  */
 const oauthLocked = computed(() => isEdit.value && isOAuth.value);
 
+/** The path the router appends to `base_url` for the selected wire API. */
+const wireApiEndpoint = computed(() =>
+  wireApi.value === "responses" ? "/responses" : "/chat/completions",
+);
+
 watch(
   () => props.open,
   (open) => {
@@ -211,6 +218,7 @@ watch(
     searchTier.value = initialSearchTier(connection, preset);
     cacheRetention.value = connection?.cache_retention ?? "none";
     authStyle.value = connection?.auth_style ?? "api_key";
+    wireApi.value = connection?.wire_api ?? "chat";
     newAccountLabel.value = "";
     newAccountKey.value = "";
     accounts.value = [];
@@ -400,6 +408,11 @@ async function save(): Promise<void> {
     search_tier: parseSearchTier(searchTier.value),
     cache_retention: cacheRetention.value,
     auth_style: authStyle.value,
+    // Only an openai-compatible connection calls an OpenAI wire API; the other
+    // families carry their own single contract, and the router rejects the flag
+    // anywhere else.
+    wire_api:
+      providerType.value === "openai-compatible" ? wireApi.value : "chat",
   };
 
   saving.value = true;
@@ -544,7 +557,8 @@ async function save(): Promise<void> {
           />
           <p class="text-xs text-muted-foreground">
             Must include the API version path: the router appends
-            <code>/chat/completions</code>, so this usually ends with
+            <code>{{ wireApiEndpoint }}</code
+            >, so this usually ends with
             <code>/v1</code>.
           </p>
         </div>
@@ -684,6 +698,28 @@ async function save(): Promise<void> {
             Anthropic <code>cache_control</code> breakpoints. Leave off for
             OpenAI-compatible endpoints that reject the extra field. The 1-hour
             option sends the extended-cache-ttl beta header.
+          </p>
+        </div>
+
+        <div
+          v-if="!oauthCreate && providerType === 'openai-compatible'"
+          class="grid gap-2"
+        >
+          <Label>Wire API</Label>
+          <Select v-model="wireApi">
+            <SelectTrigger id="connection-wire-api" class="w-full">
+              <SelectValue placeholder="Chat completions" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="chat">Chat completions</SelectItem>
+              <SelectItem value="responses">Responses</SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">
+            Which OpenAI endpoint the router calls. <code>Chat completions</code>
+            appends <code>/chat/completions</code>; <code>Responses</code>
+            appends <code>/responses</code> and speaks its event stream instead.
+            Pick <code>Responses</code> only when the provider implements it.
           </p>
         </div>
 

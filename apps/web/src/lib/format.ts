@@ -97,3 +97,15 @@ export function successRate(ok: number, total: number): string {
   if (!total) return "—";
   return `${((ok / total) * 100).toFixed(1)}%`;
 }
+
+/**
+ * Share of prompt tokens that came from a cache hit, e.g. `42.0%`.
+ *
+ * `cached` is already included in `prompt`, so this is a proportion of the
+ * prompt rather than a separate bucket. Returns `—` when no prompt tokens were
+ * recorded, which reads better than a misleading `0.0%`.
+ */
+export function cacheRate(cached: number, prompt: number): string {
+  if (!prompt) return "—";
+  return `${((cached / prompt) * 100).toFixed(1)}%`;
+}

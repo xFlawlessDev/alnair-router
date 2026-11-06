@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  cacheRate,
   formatCost,
   formatDateTime,
   formatDuration,
@@ -111,6 +112,24 @@ describe("successRate", () => {
 
   it("renders no data as a dash", () => {
     expect(successRate(0, 0)).toBe("—");
+  });
+});
+
+describe("cacheRate", () => {
+  it("reports the cached share of the prompt", () => {
+    expect(cacheRate(420, 1000)).toBe("42.0%");
+  });
+
+  it("caps a fully cached prompt at 100%", () => {
+    expect(cacheRate(1000, 1000)).toBe("100.0%");
+  });
+
+  it("renders no prompt tokens as a dash rather than 0.0%", () => {
+    expect(cacheRate(0, 0)).toBe("—");
+  });
+
+  it("renders a prompt with no cache hits as 0.0%", () => {
+    expect(cacheRate(0, 500)).toBe("0.0%");
   });
 });
 

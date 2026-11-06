@@ -94,10 +94,28 @@ function tokenRows(record: UsageRecord): BreakdownRow[] {
   );
 }
 
-/** Cost rows: input, output and the reasoning premium that make up the total. */
+/**
+ * Cost rows: input, output and the reasoning premium that make up the total.
+ *
+ * Input is split again when any of it was billed at the cache rate. The cache
+ * figure is a *slice* of input, not an extra line: adding it as a sibling row
+ * would make the parts stop summing to the total. It is folded back into
+ * "Input" here so the breakdown still adds up.
+ */
 function costRows(record: UsageRecord): BreakdownRow[] {
+  const cache = record.cost_cache_usd ?? 0;
+  const input = record.cost_input_usd;
+
   const rows: BreakdownRow[] = [
-    { label: "Input", value: record.cost_input_usd, format: "cost" },
+    {
+      label: "Input",
+      value: input,
+      format: "cost",
+      hint:
+        cache > 0
+          ? `${formatCost(input - cache)} uncached + ${formatCost(cache)} cache read`
+          : "Prompt tokens at the input rate.",
+    },
     {
       label: "Output",
       value: record.cost_output_usd,
