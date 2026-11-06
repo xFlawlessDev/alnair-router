@@ -10,6 +10,48 @@ fn request(input: serde_json::Value) -> ResponsesRequest {
 }
 
 #[test]
+fn a_reasoning_effort_reaches_the_generation_options() {
+    let request: ResponsesRequest = serde_json::from_value(json!({
+        "model": "gpt-5.1",
+        "input": "hi",
+        "reasoning": { "effort": "high", "summary": "auto" },
+    }))
+    .expect("valid request");
+
+    assert_eq!(
+        request.reasoning.and_then(|reasoning| reasoning.effort),
+        Some("high".to_string())
+    );
+}
+
+#[test]
+fn a_request_without_reasoning_carries_no_effort() {
+    let request: ResponsesRequest = serde_json::from_value(json!({
+        "model": "gpt-5.1",
+        "input": "hi",
+    }))
+    .expect("valid request");
+
+    assert!(request.reasoning.is_none());
+}
+
+#[test]
+fn the_responses_shape_is_still_accepted_with_only_input() {
+    // `reasoning` is optional; an older client must keep working untouched.
+    let request: ResponsesRequest = serde_json::from_value(json!({
+        "model": "gpt-5.1",
+        "input": [{ "role": "user", "content": "hi" }],
+        "temperature": 0.3,
+        "top_p": 0.9,
+    }))
+    .expect("valid request");
+
+    assert_eq!(request.temperature, Some(0.3));
+    assert_eq!(request.top_p, Some(0.9));
+    assert!(request.reasoning.is_none());
+}
+
+#[test]
 fn plain_string_input_becomes_one_user_message() {
     let request = request(json!("hello"));
     let messages = build_messages(&request).expect("messages");

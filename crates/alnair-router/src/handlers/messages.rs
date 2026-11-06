@@ -108,6 +108,7 @@ async fn complete_response(
                 cost_input_usd: usage.cost_input_usd,
                 cost_output_usd: usage.cost_output_usd,
                 cost_reasoning_usd: usage.cost_reasoning_usd,
+                cost_cache_usd: usage.cost_cache_usd,
                 latency_ms,
                 ..Default::default()
             }

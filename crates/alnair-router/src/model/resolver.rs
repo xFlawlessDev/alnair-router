@@ -42,6 +42,9 @@ pub struct ResolvedTarget {
     /// How the credential is presented: `api_key` (provider default) or
     /// `bearer`. OAuth/subscription session tokens require `bearer`.
     pub auth_style: String,
+    /// OpenAI wire API this connection speaks: `chat` or `responses`. Only read
+    /// for an openai-compatible target.
+    pub wire_api: String,
     /// OAuth accounts backing this target, in rotation order, when the
     /// connection authenticates with OAuth instead of a static key. Only ids
     /// travel here; the executor resolves each token just in time so the cached
@@ -322,6 +325,7 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         pricing_model: connection.pricing_model.clone(),
         cache_retention: connection.cache_retention.clone(),
         auth_style: connection.auth_style.clone(),
+        wire_api: connection.wire_api.clone(),
         oauth_account_ids: connection.oauth_account_ids.clone(),
         source,
     }

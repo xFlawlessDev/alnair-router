@@ -72,6 +72,7 @@ fn codex_requests_carry_the_account_id_and_thinking_support() {
         "gpt-5.5",
         Some(&token),
         AuthStyle::Bearer,
+        WireApi::Chat,
         BTreeMap::new(),
         None,
         false,
@@ -87,6 +88,7 @@ fn codex_requests_carry_the_account_id_and_thinking_support() {
         "gpt-5.5",
         Some(&token),
         AuthStyle::Bearer,
+        WireApi::Chat,
         BTreeMap::new(),
         None,
         false,
@@ -136,6 +138,7 @@ fn media_parts_are_rejected_on_a_non_openai_provider() {
         None,
         CacheRetention::None,
         AuthStyle::ApiKey,
+        WireApi::Chat,
     );
 
     let error = match result {
@@ -169,6 +172,7 @@ fn web_search_options_are_rejected_on_a_non_openai_provider() {
         None,
         CacheRetention::None,
         AuthStyle::ApiKey,
+        WireApi::Chat,
     );
 
     let error = match result {
@@ -219,6 +223,73 @@ fn cache_retention_maps_onto_the_provider_enum() {
     assert_eq!(cache_retention_from_str("short"), CacheRetention::Short);
     assert_eq!(cache_retention_from_str("long"), CacheRetention::Long);
     assert_eq!(cache_retention_from_str("bogus"), CacheRetention::None);
+}
+
+#[test]
+fn wire_api_maps_onto_the_provider_enum() {
+    assert_eq!(wire_api_from_str("chat"), WireApi::Chat);
+    assert_eq!(wire_api_from_str("responses"), WireApi::Responses);
+    assert_eq!(
+        wire_api_from_str("bogus"),
+        WireApi::Chat,
+        "an unknown value keeps today's /chat/completions behaviour"
+    );
+}
+
+#[test]
+fn an_openai_compatible_connection_can_carry_reasoning_effort() {
+    // Without this gate the effort a client sends is silently dropped for the
+    // whole family, which is the largest one.
+    let config = model_config(
+        ProviderType::OpenaiCompatible,
+        "https://api.openai.com/v1",
+        "gpt-5.1",
+        Some("sk-test"),
+        AuthStyle::Bearer,
+        WireApi::Chat,
+        BTreeMap::new(),
+        None,
+        false,
+    );
+
+    assert!(config.supports_thinking);
+}
+
+#[test]
+fn effort_tiers_reach_the_provider_including_xhigh_and_max() {
+    // `xhigh` and `max` are two distinct OpenAI levels; both land on the
+    // provider's top tier, and each dialect then spells it for its endpoint.
+    // Asserted through the serialized wire value, because that is the contract.
+    for (input, expected) in [
+        ("minimal", "minimal"),
+        ("low", "low"),
+        ("medium", "medium"),
+        ("high", "high"),
+        ("xhigh", "max"),
+        ("max", "max"),
+    ] {
+        let options = GenerationOptions {
+            thinking_level: Some(input.to_string()),
+            ..Default::default()
+        }
+        .to_stream_options(RetryPolicy::default());
+
+        assert_eq!(
+            serde_json::to_value(options.thinking_level).expect("serialize"),
+            serde_json::json!(expected),
+            "tier {input} must reach the provider as {expected}"
+        );
+    }
+
+    let unknown = GenerationOptions {
+        thinking_level: Some("paranoid".to_string()),
+        ..Default::default()
+    }
+    .to_stream_options(RetryPolicy::default());
+    assert!(
+        unknown.thinking_level.is_none(),
+        "an unknown tier sends no effort rather than guessing"
+    );
 }
 
 #[test]

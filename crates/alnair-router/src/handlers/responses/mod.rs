@@ -33,6 +33,10 @@ pub struct ResponsesRequest {
     pub temperature: Option<f64>,
     #[serde(default)]
     pub top_p: Option<f64>,
+    /// Reasoning configuration. Only `effort` is honoured, and it becomes the
+    /// thinking level handed to the provider.
+    #[serde(default)]
+    pub reasoning: Option<ResponsesReasoning>,
     #[serde(default)]
     pub stream: bool,
     /// Function tools in the Responses shape: flat, with `name` and
@@ -41,6 +45,17 @@ pub struct ResponsesRequest {
     pub tools: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub tool_choice: Option<serde_json::Value>,
+}
+
+/// `reasoning` accepts the documented object; `summary` and `mode` are read
+/// past because neither changes what the router forwards.
+#[derive(Debug, Deserialize)]
+pub struct ResponsesReasoning {
+    /// `none|minimal|low|medium|high|xhigh|max`. Anything else is ignored, so an
+    /// upstream-only value degrades to "no effort sent" rather than a 400 that
+    /// would take down the whole turn.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 /// `input` accepts a bare string or the item list the Responses API defines.
@@ -117,6 +132,10 @@ pub async fn responses(
         temperature: request.temperature,
         top_p: request.top_p,
         max_tokens: request.max_output_tokens,
+        thinking_level: request
+            .reasoning
+            .as_ref()
+            .and_then(|reasoning| reasoning.effort.clone()),
         ..Default::default()
     };
 
@@ -192,6 +211,7 @@ async fn complete_response(
                 cost_input_usd: usage.cost_input_usd,
                 cost_output_usd: usage.cost_output_usd,
                 cost_reasoning_usd: usage.cost_reasoning_usd,
+                cost_cache_usd: usage.cost_cache_usd,
                 latency_ms,
                 ..Default::default()
             }

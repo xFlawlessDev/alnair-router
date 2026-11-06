@@ -19,7 +19,7 @@ use crate::pricing::Price;
 use alnair_llm::{
     AuthStyle, CacheRetention, ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions,
     Message, MessageContent, MessageToolCall, ModelConfig, ModelCostRates, ProviderType,
-    TextContentPart, ThinkingLevel,
+    TextContentPart, ThinkingLevel, WireApi,
 };
 
 /// Re-exported provider registry, so callers never name `alnair_llm` directly.
@@ -164,6 +164,8 @@ pub struct TokenUsage {
     pub cost_output_usd: f64,
     /// Reasoning premium over the output rate, in USD.
     pub cost_reasoning_usd: f64,
+    /// The part of `cost_input_usd` billed at the cache rate, in USD.
+    pub cost_cache_usd: f64,
     /// Total cost in USD: input + output + reasoning.
     pub cost_usd: f64,
 }
@@ -255,13 +257,18 @@ pub struct GenerationOptions {
 }
 
 /// Parses a thinking effort string into the provider enum, ignoring unknowns.
+///
+/// OpenAI's own vocabulary is `none|minimal|low|medium|high|xhigh|max`, where
+/// `xhigh` and `max` are distinct levels and `max` is the highest. The provider
+/// layer has one top tier ([`ThinkingLevel::Max`]), so `xhigh` also lands there;
+/// each dialect then spells it the way its endpoint documents.
 fn parse_thinking_level(value: Option<&str>) -> Option<ThinkingLevel> {
     match value? {
         "minimal" => Some(ThinkingLevel::Minimal),
         "low" => Some(ThinkingLevel::Low),
         "medium" => Some(ThinkingLevel::Medium),
         "high" => Some(ThinkingLevel::High),
-        "max" => Some(ThinkingLevel::Max),
+        "xhigh" | "max" => Some(ThinkingLevel::Max),
         _ => None,
     }
 }
@@ -295,6 +302,18 @@ pub fn auth_style_from_str(value: &str) -> AuthStyle {
     match value {
         "bearer" => AuthStyle::Bearer,
         _ => AuthStyle::ApiKey,
+    }
+}
+
+/// Maps a connection's stored wire-api value onto the provider enum.
+///
+/// Anything unrecognised falls back to `/chat/completions`, which is what every
+/// OpenAI-compatible endpoint serves, so a bad value degrades to today's
+/// behaviour rather than failing the request.
+pub fn wire_api_from_str(value: &str) -> WireApi {
+    match value {
+        "responses" => WireApi::Responses,
+        _ => WireApi::Chat,
     }
 }
 
@@ -390,13 +409,23 @@ fn model_config(
     model: &str,
     api_key: Option<&str>,
     auth_style: AuthStyle,
+    wire_api: WireApi,
     custom_headers: BTreeMap<String, String>,
     price: Option<Price>,
     supports_cache_control: bool,
 ) -> ModelConfig {
+    // Reasoning-capable providers get the effort forwarded. OpenAI-compatible
+    // upstreams are included because the subset that implements reasoning (the
+    // GPT-5 family, vLLM builds with a reasoning parser, most gateways) reads
+    // `reasoning_effort` or `reasoning.effort`; the subset that does not is
+    // handled by the provider's retry-without-reasoning path, which strips the
+    // field and resends rather than failing the turn.
     let supports_thinking = matches!(
         provider_type,
-        ProviderType::CodeBuddyIntl | ProviderType::AnthropicNative | ProviderType::OpenAiCodex
+        ProviderType::OpenaiCompatible
+            | ProviderType::CodeBuddyIntl
+            | ProviderType::AnthropicNative
+            | ProviderType::OpenAiCodex
     );
 
     // The Codex backend needs the ChatGPT account id, which is a claim of the
@@ -413,6 +442,7 @@ fn model_config(
         model_id: model.to_string(),
         api_key: api_key.map(str::to_string),
         auth_style,
+        wire_api,
         custom_headers,
         chatgpt_account_id,
         supports_vision: false,
@@ -490,6 +520,7 @@ pub fn stream(
     price: Option<Price>,
     cache_retention: CacheRetention,
     auth_style: AuthStyle,
+    wire_api: WireApi,
 ) -> Result<ChunkStream> {
     let provider_type = provider_type_from_str(provider_type)?;
 
@@ -532,6 +563,7 @@ pub fn stream(
         model,
         api_key,
         auth_style,
+        wire_api,
         custom_headers,
         price,
         !matches!(cache_retention, CacheRetention::None),
@@ -608,6 +640,7 @@ fn to_stream_chunk(
             cost_input_usd,
             cost_output_usd,
             cost_reasoning_usd,
+            cost_cache_usd,
             ..
         }) => Ok(StreamChunk::Usage(TokenUsage {
             prompt_tokens: prompt_eval_count.unwrap_or(0),
@@ -617,6 +650,7 @@ fn to_stream_chunk(
             cost_input_usd: cost_input_usd.unwrap_or(0.0),
             cost_output_usd: cost_output_usd.unwrap_or(0.0),
             cost_reasoning_usd: cost_reasoning_usd.unwrap_or(0.0),
+            cost_cache_usd: cost_cache_usd.unwrap_or(0.0),
             cost_usd: cost_input_usd.unwrap_or(0.0)
                 + cost_output_usd.unwrap_or(0.0)
                 + cost_reasoning_usd.unwrap_or(0.0),

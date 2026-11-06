@@ -298,6 +298,7 @@ impl Executor {
                     price,
                     chat_backend::cache_retention_from_str(&target.cache_retention),
                     chat_backend::auth_style_from_str(&target.auth_style),
+                    chat_backend::wire_api_from_str(&target.wire_api),
                 );
 
                 let stream = match built {
@@ -489,7 +490,10 @@ fn failed_attempt(
 
 #[cfg(test)]
 mod tests {
-    use super::KeyRotator;
+    use super::{Executor, KeyRotator, StreamChunk};
+    use crate::model::resolver::ResolvedTarget;
+    use crate::upstream::chat_backend;
+    use std::sync::Arc;
 
     #[test]
     fn key_rotator_cycles_offsets_per_connection() {
@@ -513,5 +517,190 @@ mod tests {
         let rotator = KeyRotator::default();
         assert_eq!(rotator.next("c1", 0), 0);
         assert_eq!(rotator.next("c1", 0), 0);
+    }
+
+    fn response(bytes: &[u8]) -> Vec<u8> {
+        bytes.to_vec()
+    }
+
+    /// What the fake upstream does after writing the body.
+    #[derive(Clone, Copy)]
+    enum Ending {
+        /// The full event sequence, closed cleanly.
+        Complete,
+        /// The socket dies after the text delta, before `response.completed`.
+        Truncated,
+        /// The event sequence, then EOF without `response.completed`.
+        NoTerminal,
+    }
+
+    /// Answers `POST /v1/responses` with a fixed event sequence. Any other path
+    /// gets a 404, so a request that still went to `/chat/completions` shows up
+    /// as a failed attempt rather than passing.
+    async fn responses_upstream(ending: Ending) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("addr");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buffer = vec![0u8; 8192];
+            let read = socket.read(&mut buffer).await.expect("read");
+            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+
+            if request.starts_with("POST /v1/responses ") {
+                socket
+                    .write_all(&response(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+                    ))
+                    .await
+                    .expect("headers");
+
+                let events: &[&str] = match ending {
+                    Ending::Complete | Ending::NoTerminal => &[
+                        r#"{"type":"response.created","response":{"id":"resp_1"}}"#,
+                        r#"{"type":"response.output_text.delta","delta":"hola"}"#,
+                        r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call-1","name":"read_file","arguments":"{\"path\":\"a\"}"}}"#,
+                        r#"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":4}}}"#,
+                    ],
+                    Ending::Truncated => &[
+                        r#"{"type":"response.created","response":{"id":"resp_1"}}"#,
+                        r#"{"type":"response.output_text.delta","delta":"hola"}"#,
+                    ],
+                };
+                let last = match ending {
+                    Ending::NoTerminal => events.len() - 1,
+                    _ => events.len(),
+                };
+                for event in &events[..last] {
+                    socket
+                        .write_all(format!("data: {event}\n\n").as_bytes())
+                        .await
+                        .expect("event");
+                }
+                if matches!(ending, Ending::Complete) {
+                    socket.write_all(b"data: [DONE]\n\n").await.expect("done");
+                }
+            } else {
+                socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                    )
+                    .await
+                    .expect("404");
+            }
+            let _ = socket.shutdown().await;
+        });
+
+        format!("http://{address}/v1")
+    }
+
+    fn target(base_url: String, wire_api: &str) -> ResolvedTarget {
+        ResolvedTarget {
+            connection_id: "c1".to_string(),
+            connection_name: "responses-upstream".to_string(),
+            provider_type: "openai-compatible".to_string(),
+            base_url,
+            search_path: None,
+            search_tier: None,
+            model: "gpt-5.1".to_string(),
+            api_keys: vec!["sk-test".to_string()],
+            custom_headers: Default::default(),
+            connect_timeout_ms: Some(5_000),
+            idle_timeout_ms: Some(5_000),
+            pricing_model: None,
+            cache_retention: "none".to_string(),
+            auth_style: "api_key".to_string(),
+            wire_api: wire_api.to_string(),
+            oauth_account_ids: Vec::new(),
+            source: "alias:test".to_string(),
+        }
+    }
+
+    /// Drains the stream and describes what came back, in order.
+    async fn drain(
+        executor: &Executor,
+        target: &ResolvedTarget,
+    ) -> Result<Vec<StreamChunk>, crate::error::Error> {
+        use futures::StreamExt;
+
+        let executed = executor
+            .stream(
+                std::slice::from_ref(target),
+                vec![chat_backend::message_text("user", "hola")],
+                None,
+                None,
+                true,
+            )
+            .await?;
+
+        let mut chunks = Vec::new();
+        let mut stream = executed.stream;
+        while let Some(chunk) = stream.next().await {
+            chunks.push(chunk?);
+        }
+        Ok(chunks)
+    }
+
+    #[tokio::test]
+    async fn the_responses_wire_api_reaches_the_responses_endpoint() {
+        let executor = Executor::new(Arc::new(chat_backend::default_registry()));
+        let target = target(responses_upstream(Ending::Complete).await, "responses");
+
+        let chunks = drain(&executor, &target).await.expect("a completed turn");
+
+        assert!(matches!(&chunks[0], StreamChunk::Text(text) if text == "hola"));
+        assert!(matches!(
+            &chunks[1],
+            StreamChunk::ToolCall { id, name, .. } if id == "call-1" && name == "read_file"
+        ));
+        assert!(matches!(
+            &chunks[2],
+            StreamChunk::Usage(usage) if usage.prompt_tokens == 10 && usage.completion_tokens == 4
+        ));
+        assert!(
+            matches!(&chunks[3], StreamChunk::Done(reason) if reason.as_deref() == Some("stop"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_responses_socket_that_dies_mid_turn_fails_the_attempt() {
+        let executor = Executor::new(Arc::new(chat_backend::default_registry()));
+        let target = target(responses_upstream(Ending::Truncated).await, "responses");
+
+        let result = drain(&executor, &target).await;
+
+        // Only the text delta arrived, so the executor's first-chunk peek saw a
+        // failure and there is no second tier to fall through to.
+        assert!(result.is_err(), "a truncated turn is not a served answer");
+    }
+
+    #[tokio::test]
+    async fn a_responses_stream_without_a_terminal_event_is_not_served_as_complete() {
+        let executor = Executor::new(Arc::new(chat_backend::default_registry()));
+        let target = target(responses_upstream(Ending::NoTerminal).await, "responses");
+
+        let result = drain(&executor, &target).await;
+
+        // The attempt succeeded (the first chunk arrived), so the failure
+        // surfaces on the live stream rather than as a fall-through.
+        let error = result.expect_err("a socket that dies mid-turn is not a complete answer");
+        assert!(error.to_string().contains("terminal event"), "got: {error}");
+    }
+
+    #[tokio::test]
+    async fn the_chat_wire_api_does_not_use_the_responses_endpoint() {
+        let executor = Executor::new(Arc::new(chat_backend::default_registry()));
+        let target = target(responses_upstream(Ending::Complete).await, "chat");
+
+        let result = drain(&executor, &target).await;
+
+        assert!(
+            result.is_err(),
+            "a chat-wired connection must not call /responses"
+        );
     }
 }
