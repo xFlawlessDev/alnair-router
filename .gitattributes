@@ -1,0 +1,42 @@
+# Line-ending policy.
+#
+# This repository had no .gitattributes and `core.autocrlf` is false, so git
+# stored whatever bytes a tool wrote. Commits from Windows editors left CRLF in
+# a handful of blobs (see `git log -- crates/alnair-router/src/upstream/probe.rs`),
+# which made one-line edits show up as whole-file rewrites.
+#
+# Everything textual is stored as LF. Checkout also uses LF on every platform:
+# the Rust and Node toolchains both accept it, and a uniform repository avoids
+# the mixed-ending churn entirely.
+* text=auto eol=lf
+
+# Binary assets: never diff, never convert.
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.webp  binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bmp   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.zip   binary
+*.gz    binary
+*.tgz   binary
+*.tar   binary
+*.pdf   binary
+*.wasm  binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
+
+# Windows batch scripts must keep CRLF: cmd.exe reads a bare LF as part of the
+# line. Powershell is not affected — `install.ps1` is fetched with `irm | iex`
+# and never touches disk — so it stays LF like any other text file.
+*.bat text eol=crlf
+*.cmd text eol=crlf
