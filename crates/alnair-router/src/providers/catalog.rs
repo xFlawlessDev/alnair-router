@@ -11,6 +11,10 @@ use super::{ProviderPreset, api_key, free_tier, local, search, subscription};
 
 /// Web search APIs behind an API key. Each base URL is the provider root, and
 /// the router appends `/search`, so the endpoints match `POST {base}/search`.
+///
+/// The extract pair is the endpoint and body shape the same vendor serves for a
+/// provider fetch: Exa nests the URL under `urls` at `/contents`, Firecrawl
+/// takes a bare `url` at `/v1/scrape`, and Tavily takes `urls` at `/extract`.
 pub(super) fn search_presets() -> Vec<ProviderPreset> {
     vec![
         search(
@@ -19,6 +23,7 @@ pub(super) fn search_presets() -> Vec<ProviderPreset> {
             "https://api.exa.ai",
             "https://dashboard.exa.ai/api-keys",
             Some("Neural and keyword web search; accepts a Bearer key."),
+            Some(("/contents", "urls")),
         ),
         search(
             "firecrawl",
@@ -26,6 +31,7 @@ pub(super) fn search_presets() -> Vec<ProviderPreset> {
             "https://api.firecrawl.dev/v2",
             "https://www.firecrawl.dev/app/api-keys",
             Some("Web search that can also return page content as markdown."),
+            Some(("/scrape", "target")),
         ),
         search(
             "tavily",
@@ -33,6 +39,7 @@ pub(super) fn search_presets() -> Vec<ProviderPreset> {
             "https://api.tavily.com",
             "https://app.tavily.com/home",
             Some("Search tuned for LLM agents; returns ranked snippets."),
+            Some(("/extract", "urls")),
         ),
     ]
 }

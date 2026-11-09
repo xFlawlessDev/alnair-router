@@ -415,7 +415,14 @@ so a proxied request still shows up against its key and connection.
 `/v1/search` treats `model` as a hint: a reference that names no connection
 falls through to the configured search tiers rather than failing, so a harness
 that echoes its chat model still reaches a search provider. A malformed
-reference is still a `400`.
+reference is still a `400`. A search connection only receives traffic once it
+carries a `search_tier`, and the built-in search presets supply one.
+
+`/v1/web/fetch` fetches locally unless the named connection sets
+`web_fetch_mode = "provider"`, in which case the URL goes to that connection's
+`web_fetch_path`. `web_fetch_shape` picks the body the endpoint expects:
+`target` (a `url` field, as Firecrawl's `/scrape` takes) or `urls` (as Tavily's
+`/extract` and Exa's `/contents` require).
 
 > **`/v1/web/fetch` caveat.** Unlike the other proxied endpoints it fetches an
 > arbitrary URL server-side rather than through a configured connection, so its

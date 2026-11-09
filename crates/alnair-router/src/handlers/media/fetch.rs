@@ -14,26 +14,31 @@ use crate::upstream::media::MediaProxy;
 /// Maximum redirects followed by `/v1/web/fetch`.
 const MAX_FETCH_REDIRECTS: usize = 5;
 
-/// A provider extract request: the URL to read and the format to return.
+/// A provider extract request: the URL to read, the format to return, and how
+/// the provider names the target in its body.
 pub(super) struct ProviderFetch<'a> {
     pub target: &'a ResolvedTarget,
     /// Path appended to the connection's base URL, e.g. `/v1/scrape`.
     pub path: &'a str,
+    /// Body shape: `target` (a `url` field) or `urls` (a `urls` array). `None`
+    /// keeps the historical `target` body.
+    pub shape: Option<&'a str>,
     pub url: &'a str,
     pub format: &'a str,
 }
 
 /// Forwards a fetch to a connection's own extract endpoint.
 ///
-/// The request body is the one shape the major extract providers accept —
-/// `{ "url": …, "format": … }` — and the reply is normalized into the same
-/// envelope `/v1/web/fetch` returns locally, so a client can switch between the
-/// two modes without changing how it reads the response.
+/// The reply is normalized into the same envelope `/v1/web/fetch` returns
+/// locally, so a client can switch between the two modes without changing how
+/// it reads the response.
+///
+/// The request body is not standardized: Firecrawl's `/v1/scrape` takes
+/// `{ "url": … }`, while Tavily's `/extract` and Exa's `/contents` take
+/// `{ "urls": [ … ] }` and reject a bare `url` with a 422. The connection's
+/// `web_fetch_shape` picks which one to send.
 pub(super) async fn provider_fetch(request: ProviderFetch<'_>) -> Result<Response> {
-    let body = serde_json::json!({
-        "url": request.url,
-        "format": request.format,
-    });
+    let body = provider_fetch_body(request.shape, request.url, request.format);
 
     let response = MediaProxy::new()
         .post_json(request.target, request.path, &body)
@@ -67,6 +72,24 @@ pub(super) async fn provider_fetch(request: ProviderFetch<'_>) -> Result<Respons
         .header(axum::http::header::CONTENT_TYPE, "application/json")
         .body(axum::body::Body::from(payload))
         .map_err(|error| Error::Internal(error.to_string()))
+}
+
+/// Builds the extract request body for a connection's chosen shape.
+///
+/// `urls` sends `{"urls": [url], "format": …}`, which Tavily's `/extract` and
+/// Exa's `/contents` require. Every other value — including an unset one —
+/// sends the historical `{"url": url, "format": …}` Firecrawl accepts.
+fn provider_fetch_body(shape: Option<&str>, url: &str, format: &str) -> serde_json::Value {
+    match shape {
+        Some("urls") => serde_json::json!({
+            "urls": [url],
+            "format": format,
+        }),
+        _ => serde_json::json!({
+            "url": url,
+            "format": format,
+        }),
+    }
 }
 
 /// Maps an extract reply onto `{ url, title, content: { format, text, length } }`.
@@ -344,6 +367,31 @@ async fn render_fetch_response(response: reqwest::Response) -> Result<Response> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_urls_shape_matches_the_providers_that_require_it() {
+        // Tavily's `/extract` and Exa's `/contents` reject a bare `url` with a
+        // 422, so the connection has to be able to ask for this body.
+        let body = provider_fetch_body(Some("urls"), "https://a", "markdown");
+
+        assert_eq!(body["urls"][0], "https://a");
+        assert_eq!(body["format"], "markdown");
+        assert!(
+            body.get("url").is_none(),
+            "urls and url must not both go out"
+        );
+    }
+
+    #[test]
+    fn the_default_shape_stays_the_firecrawl_body() {
+        for shape in [None, Some("target")] {
+            let body = provider_fetch_body(shape, "https://b", "text");
+
+            assert_eq!(body["url"], "https://b");
+            assert_eq!(body["format"], "text");
+            assert!(body.get("urls").is_none());
+        }
+    }
 
     #[test]
     fn firecrawl_style_extract_is_normalized() {

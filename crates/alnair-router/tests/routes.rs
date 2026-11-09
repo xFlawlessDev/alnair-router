@@ -6295,3 +6295,100 @@ async fn retrieve_model_returns_one_model_object() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["type"], "not_found_error");
 }
+
+/// Tavily's `/extract` takes `urls` and rejects a bare `url` with a 422, so a
+/// connection that stored the `urls` shape must send that body — and the reply,
+/// which nests the text in `results[0].raw_content`, must still normalize.
+#[tokio::test]
+async fn web_fetch_sends_the_shape_the_provider_requires() {
+    let (app, _db) = app(false).await;
+
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = captured.clone();
+    let router = axum::Router::new().route(
+        "/extract",
+        axum::routing::post(move |body: axum::Json<serde_json::Value>| {
+            let sink = sink.clone();
+            async move {
+                let body = body.0;
+                // Tavily refuses a body without `urls`, which is exactly what
+                // the old `url` payload did.
+                if body.get("urls").is_none() {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        axum::Json(serde_json::json!({
+                            "detail": [{ "loc": ["body", "urls"], "msg": "Field required" }]
+                        })),
+                    );
+                }
+                sink.lock().expect("capture lock").push(body);
+                (
+                    StatusCode::OK,
+                    axum::Json(serde_json::json!({
+                        "results": [{ "url": "https://example.com", "raw_content": "tavily body" }]
+                    })),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    let (status, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "tavily-extract",
+            "provider_type": "openai-compatible",
+            "base_url": format!("http://{address}"),
+            "api_key": "tvly-test",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {connection}");
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    let (status, body) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/connections/{connection_id}"),
+        serde_json::json!({ "web_fetch_mode": "provider", "web_fetch_path": "/extract", "web_fetch_shape": "urls" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+
+    let (status, alias) = json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({
+            "prefix": "tav",
+            "connection_id": connection_id,
+            "model_override": "tavily"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {alias}");
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/web/fetch",
+        serde_json::json!({ "model": "tav", "url": "https://example.com" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(body["content"]["text"], "tavily body");
+
+    let sent = captured.lock().expect("capture lock");
+    assert_eq!(sent[0]["urls"][0], "https://example.com");
+    assert_eq!(sent[0]["format"], "markdown");
+    assert!(sent[0].get("url").is_none(), "only `urls` may be sent");
+}

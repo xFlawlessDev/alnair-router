@@ -26,6 +26,7 @@ fn connection(id: &str, name: &str, provider_type: &str, base_url: &str) -> Conn
         wire_api: "chat".to_string(),
         web_fetch_mode: "local".to_string(),
         web_fetch_path: None,
+        web_fetch_shape: None,
         search_path: None,
         search_tier: None,
         provider_id: None,

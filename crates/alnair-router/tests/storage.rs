@@ -65,6 +65,7 @@ fn connection(name: &str, provider_type: &str) -> CreateConnection {
         wire_api: None,
         web_fetch_mode: None,
         web_fetch_path: None,
+        web_fetch_shape: None,
         search_path: None,
         search_tier: None,
         provider_id: None,
@@ -416,6 +417,13 @@ async fn provider_type_rebuild_keeps_children() {
         .execute(&db.pool)
         .await
         .expect("wire-api migration");
+
+    sqlx::raw_sql(include_str!(
+        "../migrations/0032_connection_web_fetch_shape.sql"
+    ))
+    .execute(&db.pool)
+    .await
+    .expect("web-fetch-shape migration");
 
     let aliases: Vec<(String,)> = sqlx::query_as("SELECT prefix FROM aliases")
         .fetch_all(&db.pool)
@@ -1849,6 +1857,7 @@ async fn connections_round_trip_a_pricing_model_pin() {
             wire_api: None,
             web_fetch_mode: None,
             web_fetch_path: None,
+            web_fetch_shape: None,
             search_path: None,
             search_tier: None,
             provider_id: None,
@@ -1937,6 +1946,7 @@ async fn connections_round_trip_the_auth_style() {
                 auth_style: Some(String::new()),
                 web_fetch_mode: None,
                 web_fetch_path: None,
+                web_fetch_shape: None,
                 search_path: None,
                 search_tier: None,
                 ..Default::default()
@@ -2050,6 +2060,7 @@ async fn unknown_auth_style_is_rejected() {
                 auth_style: Some("bogus".to_string()),
                 web_fetch_mode: None,
                 web_fetch_path: None,
+                web_fetch_shape: None,
                 search_path: None,
                 search_tier: None,
                 ..Default::default()
@@ -2105,4 +2116,55 @@ async fn usage_cost_breakdown_round_trips_and_sums() {
     assert!((summary.cost_output_usd - 1.5).abs() < f64::EPSILON);
     assert!((summary.cost_reasoning_usd - 0.5).abs() < f64::EPSILON);
     assert_eq!(summary.reasoning_tokens, 10);
+}
+
+/// Creating a connection from the Tavily preset must give it a tier and the
+/// extract endpoint its API actually serves, so a plain "add Tavily" in the
+/// dashboard is reachable by both `/v1/search` and `/v1/web/fetch`.
+#[tokio::test]
+async fn a_search_preset_fills_its_tier_and_extract_endpoint() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let created = repo
+        .create(CreateConnection {
+            provider_id: Some("tavily".to_string()),
+            api_key: Some("tvly-test".to_string()),
+            // An empty base URL lets the preset supply the endpoint.
+            base_url: String::new(),
+            provider_type: String::new(),
+            ..connection("tavily-defaults", "")
+        })
+        .await
+        .expect("create");
+
+    assert_eq!(created.base_url, "https://api.tavily.com");
+    assert_eq!(created.search_tier, Some(1));
+    assert_eq!(created.web_fetch_path.as_deref(), Some("/extract"));
+    assert_eq!(created.web_fetch_shape.as_deref(), Some("urls"));
+}
+
+/// An explicit field always beats the preset, so an operator overriding the
+/// path is not silently reset on save.
+#[tokio::test]
+async fn explicit_fields_win_over_preset_defaults() {
+    let db = db().await;
+    let repo = connection_repo(&db);
+
+    let created = repo
+        .create(CreateConnection {
+            name: "tavily-override".to_string(),
+            provider_id: Some("tavily".to_string()),
+            api_key: Some("tvly-test".to_string()),
+            search_tier: Some(3),
+            web_fetch_path: Some("/custom/extract".to_string()),
+            ..connection("placeholder", "openai-compatible")
+        })
+        .await
+        .expect("create");
+
+    assert_eq!(created.search_tier, Some(3));
+    assert_eq!(created.web_fetch_path.as_deref(), Some("/custom/extract"));
+    // The shape was not overridden, so the preset still supplies it.
+    assert_eq!(created.web_fetch_shape.as_deref(), Some("urls"));
 }

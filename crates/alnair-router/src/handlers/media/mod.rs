@@ -395,10 +395,16 @@ pub async fn web_fetch(
         .connections()
         .get(&target.connection_id)
         .await?
-        .map(|connection| (connection.web_fetch_mode, connection.web_fetch_path))
+        .map(|connection| {
+            (
+                connection.web_fetch_mode,
+                connection.web_fetch_path,
+                connection.web_fetch_shape,
+            )
+        })
         .unwrap_or_default();
 
-    let (mode, path) = mode;
+    let (mode, path, shape) = mode;
     if mode != "provider" {
         // The connection exists but fetches locally; behave exactly as before.
         return local_web_fetch(Json(body)).await;
@@ -423,6 +429,7 @@ pub async fn web_fetch(
     let result = fetch::provider_fetch(fetch::ProviderFetch {
         target: &target,
         path: &path,
+        shape: shape.as_deref(),
         url: &url,
         format,
     })

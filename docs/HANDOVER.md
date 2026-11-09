@@ -240,6 +240,14 @@ a shape the router does not recognize keeps the whole upstream body under `raw`
 rather than reporting an empty page. `local` stays the default, so no existing
 connection changes behaviour.
 
+The extract **body** is not standardized either, which is what `web_fetch_shape`
+exists for. Firecrawl's `/v1/scrape` takes `{ "url": … }` (`target`), while
+Tavily's `/extract` and Exa's `/contents` require `{ "urls": [ … ] }` and answer
+a bare `url` with a `422`. The search presets ship the right pair for their own
+API — Exa `/contents`+`urls`, Firecrawl `/scrape`+`target`, Tavily
+`/extract`+`urls` — so adding a provider from the picker produces a fetch that
+works without hand-editing the connection.
+
 ### Built-in web search
 
 `POST /v1/chat/completions` accepts OpenAI's `web_search_options` and replays it

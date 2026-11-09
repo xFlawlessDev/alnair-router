@@ -92,6 +92,44 @@ fn search_presets_are_key_based_hosted_endpoints() {
     }
 }
 
+/// A search preset is useless without a tier — the router filters untiered
+/// connections out of `/v1/search` — and an extract endpoint must match the
+/// body shape that endpoint accepts, or the fetch is a guaranteed 422.
+#[test]
+fn search_presets_carry_a_tier_and_a_matching_extract_shape() {
+    let search: Vec<_> = presets()
+        .into_iter()
+        .filter(|preset| preset.category == ProviderCategory::Search)
+        .collect();
+    assert!(!search.is_empty(), "search presets should exist");
+
+    for preset in &search {
+        assert_eq!(
+            preset.default_search_tier,
+            Some(1),
+            "{} must default into a search tier",
+            preset.id
+        );
+
+        let (path, shape) = match (
+            preset.default_web_fetch_path,
+            preset.default_web_fetch_shape,
+        ) {
+            (Some(path), Some(shape)) => (path, shape),
+            _ => panic!("{} needs an extract path and shape", preset.id),
+        };
+        assert!(path.starts_with('/'), "{} path needs a slash", preset.id);
+
+        // The two vendors that name the target with a `urls` array.
+        let expected = if matches!(preset.id, "exa" | "tavily") {
+            "urls"
+        } else {
+            "target"
+        };
+        assert_eq!(shape, expected, "{} extract shape", preset.id);
+    }
+}
+
 /// Only the presets whose endpoint is account-specific may ship a placeholder.
 #[test]
 fn only_templated_presets_contain_placeholders() {

@@ -55,6 +55,9 @@ pub struct Connection {
     /// Path appended to `base_url` for a provider fetch, e.g. `/v1/scrape`.
     /// NULL means the router cannot serve provider fetches for this connection.
     pub web_fetch_path: Option<String>,
+    /// Wire shape of a provider fetch body: NULL (the original `url` field),
+    /// `target` (`url`) or `urls` (`urls: [...]`, which Tavily and Exa require).
+    pub web_fetch_shape: Option<String>,
     /// Path appended to `base_url` for a search request. NULL means `/search`.
     pub search_path: Option<String>,
     /// Search fallback tier: NULL leaves the connection out of `/v1/search`
@@ -139,6 +142,9 @@ pub struct CreateConnection {
     /// Extract path for a provider fetch, e.g. `/v1/scrape`.
     #[serde(default)]
     pub web_fetch_path: Option<String>,
+    /// Wire shape of the provider fetch body: `target` (default) or `urls`.
+    #[serde(default)]
+    pub web_fetch_shape: Option<String>,
     /// Search path appended to `base_url`, e.g. `/web/search`. Defaults to `/search`.
     #[serde(default)]
     pub search_path: Option<String>,
@@ -186,6 +192,9 @@ pub struct UpdateConnection {
     /// Set or clear the provider extract path.
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub web_fetch_path: Option<Option<String>>,
+    /// Set or clear the provider fetch body shape (`target`/`urls`).
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub web_fetch_shape: Option<Option<String>>,
     /// Set or clear the search path (`None` restores the default `/search`).
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub search_path: Option<Option<String>>,
@@ -342,12 +351,34 @@ impl ConnectionRepository {
         let wire_api = normalized_wire_api(input.wire_api.as_deref(), &provider_type)?.to_string();
         let provider_id = preset.as_ref().map(|preset| preset.id.to_string());
 
+        // A preset fills the values that make its endpoint reachable, but an
+        // explicit field in the request always wins. A search preset without a
+        // tier never receives a `/v1/search` request, so its default matters.
+        let search_tier = match input.search_tier {
+            Some(tier) => search_tier_value(Some(tier))?,
+            None => preset
+                .as_ref()
+                .and_then(|preset| preset.default_search_tier),
+        };
+        let web_fetch_path = normalized_model(input.web_fetch_path.as_deref()).or_else(|| {
+            preset
+                .as_ref()
+                .and_then(|preset| preset.default_web_fetch_path.map(str::to_string))
+        });
+        let web_fetch_shape = normalized_web_fetch_shape(input.web_fetch_shape.as_deref())?
+            .or_else(|| {
+                preset
+                    .as_ref()
+                    .and_then(|preset| preset.default_web_fetch_shape.map(str::to_string))
+            });
+
         sqlx::query(
             "INSERT INTO connections
                 (id, name, provider_type, base_url, api_key, custom_headers, enabled,
                  connect_timeout_ms, idle_timeout_ms, pricing_model, cache_retention,
-                 auth_style, wire_api, web_fetch_mode, web_fetch_path, search_path, search_tier, provider_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 auth_style, wire_api, web_fetch_mode, web_fetch_path, web_fetch_shape,
+                 search_path, search_tier, provider_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -365,9 +396,10 @@ impl ConnectionRepository {
         .bind(&auth_style)
         .bind(&wire_api)
         .bind(normalized_web_fetch_mode(input.web_fetch_mode.as_deref())?)
-        .bind(normalized_model(input.web_fetch_path.as_deref()))
+        .bind(&web_fetch_path)
+        .bind(&web_fetch_shape)
         .bind(normalized_model(input.search_path.as_deref()))
-        .bind(search_tier_value(input.search_tier)?)
+        .bind(search_tier)
         .bind(&provider_id)
         .bind(now)
         .bind(now)
@@ -460,6 +492,10 @@ impl ConnectionRepository {
             Some(value) => normalized_model(value.as_deref()),
             None => existing.web_fetch_path.clone(),
         };
+        let web_fetch_shape = match &input.web_fetch_shape {
+            Some(value) => normalized_web_fetch_shape(value.as_deref())?,
+            None => existing.web_fetch_shape.clone(),
+        };
         let search_path = match &input.search_path {
             Some(value) => normalized_model(value.as_deref()),
             None => existing.search_path.clone(),
@@ -482,7 +518,8 @@ impl ConnectionRepository {
             "UPDATE connections
              SET name = ?, provider_type = ?, base_url = ?, api_key = ?, custom_headers = ?, enabled = ?,
                  connect_timeout_ms = ?, idle_timeout_ms = ?, pricing_model = ?, cache_retention = ?,
-                 auth_style = ?, wire_api = ?, web_fetch_mode = ?, web_fetch_path = ?, search_path = ?, search_tier = ?, provider_id = ?, updated_at = ?
+                 auth_style = ?, wire_api = ?, web_fetch_mode = ?, web_fetch_path = ?,
+                 web_fetch_shape = ?, search_path = ?, search_tier = ?, provider_id = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -499,6 +536,7 @@ impl ConnectionRepository {
         .bind(&wire_api)
         .bind(&web_fetch_mode)
         .bind(&web_fetch_path)
+        .bind(&web_fetch_shape)
         .bind(&search_path)
         .bind(search_tier)
         .bind(&provider_id)
@@ -627,6 +665,23 @@ fn normalized_web_fetch_mode(value: Option<&str>) -> Result<&'static str> {
         Some("provider") => Ok("provider"),
         Some(other) => Err(Error::BadRequest(format!(
             "web_fetch_mode must be local or provider (got '{other}')"
+        ))),
+    }
+}
+
+/// Validates the wire shape of a provider fetch body.
+///
+/// `target` is the historical `{ "url": … }` body Firecrawl accepts; `urls` is
+/// `{ "urls": [ … ] }`, which Tavily and Exa require and reject as a 422
+/// otherwise. An unset value stays `NULL` so the column records "never chosen"
+/// rather than silently rewriting a stored row.
+fn normalized_web_fetch_shape(value: Option<&str>) -> Result<Option<String>> {
+    match value.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some("target") => Ok(Some("target".to_string())),
+        Some("urls") => Ok(Some("urls".to_string())),
+        Some(other) => Err(Error::BadRequest(format!(
+            "web_fetch_shape must be target or urls (got '{other}')"
         ))),
     }
 }

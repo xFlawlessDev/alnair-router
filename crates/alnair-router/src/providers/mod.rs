@@ -91,6 +91,13 @@ pub struct ProviderPreset {
     /// [`ProviderAuth::OAuth`]. The dashboard opens that login directly instead
     /// of asking for endpoints.
     pub oauth_preset: Option<&'static str>,
+    /// Default `search_tier` for a new connection from this preset. Search
+    /// providers need a tier to be reachable by `/v1/search` at all.
+    pub default_search_tier: Option<i64>,
+    /// Default `web_fetch_path` for a provider fetch, e.g. `/extract`.
+    pub default_web_fetch_path: Option<&'static str>,
+    /// Default `web_fetch_shape` matching that extract endpoint.
+    pub default_web_fetch_shape: Option<&'static str>,
 }
 
 /// A preset plus how many connections currently use it.
@@ -141,6 +148,9 @@ fn subscription(
         note,
         risk_notice,
         oauth_preset: Some(oauth_preset),
+        default_search_tier: None,
+        default_web_fetch_path: None,
+        default_web_fetch_shape: None,
     }
 }
 
@@ -188,14 +198,19 @@ fn free_tier(
 
 /// A key-based web search API. Its base URL is the provider root, and the
 /// router appends `/search` for search requests.
+///
+/// `extract` names the endpoint and body shape this provider serves for a
+/// provider fetch, because `/v1/search` and `/v1/web/fetch` do not share a
+/// contract across vendors.
 fn search(
     id: &'static str,
     label: &'static str,
     base_url: &'static str,
     api_key_url: &'static str,
     note: Option<&'static str>,
+    extract: Option<(&'static str, &'static str)>,
 ) -> ProviderPreset {
-    provider(
+    let mut preset = provider(
         id,
         label,
         "openai-compatible",
@@ -204,7 +219,15 @@ fn search(
         ProviderAuth::ApiKey,
         api_key_url,
         note,
-    )
+    );
+    // A search provider is only reachable by `/v1/search` once it carries a
+    // tier, so every search preset joins the first one.
+    preset.default_search_tier = Some(1);
+    if let Some((path, shape)) = extract {
+        preset.default_web_fetch_path = Some(path);
+        preset.default_web_fetch_shape = Some(shape);
+    }
+    preset
 }
 
 /// A server the user runs themselves; keyless and always OpenAI-compatible.
@@ -247,5 +270,8 @@ fn provider(
         note,
         risk_notice: None,
         oauth_preset: None,
+        default_search_tier: None,
+        default_web_fetch_path: None,
+        default_web_fetch_shape: None,
     }
 }

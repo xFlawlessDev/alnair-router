@@ -182,6 +182,7 @@ mod tests {
                 wire_api: None,
                 web_fetch_mode: None,
                 web_fetch_path: None,
+                web_fetch_shape: None,
                 search_path: None,
                 search_tier: None,
                 provider_id: None,
