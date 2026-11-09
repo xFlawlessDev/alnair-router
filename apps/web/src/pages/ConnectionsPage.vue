@@ -340,7 +340,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="editorial-page">
     <PageHeader
       title="Connections"
       description="Upstream endpoints the router can dispatch to. Aliases and combos reference these."
@@ -412,7 +412,7 @@ onMounted(load);
 
           <div
             v-if="view === 'grid'"
-            class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+            class="editorial-directory grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
           >
             <ConnectionCard
               v-for="connection in bucket.items"
@@ -433,7 +433,7 @@ onMounted(load);
             />
           </div>
 
-          <Card v-else>
+          <Card v-else class="editorial-panel editorial-table">
             <Table>
               <TableHeader>
                 <TableRow>

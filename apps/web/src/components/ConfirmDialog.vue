@@ -27,7 +27,7 @@ const emit = defineEmits<{ "update:open": [boolean]; confirm: [] }>();
 
 <template>
   <AlertDialog :open="open" @update:open="emit('update:open', $event)">
-    <AlertDialogContent>
+    <AlertDialogContent class="border-t-4 border-t-destructive bg-card">
       <AlertDialogHeader>
         <AlertDialogTitle>{{ title }}</AlertDialogTitle>
         <AlertDialogDescription>{{ description }}</AlertDialogDescription>

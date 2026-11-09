@@ -23,12 +23,14 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <Card>
-    <CardHeader class="flex flex-row items-start justify-between gap-4">
+  <Card class="editorial-panel">
+    <CardHeader class="flex flex-wrap items-start justify-between gap-4">
       <div class="grid gap-1">
-        <CardTitle>Plans &amp; templates</CardTitle>
+        <CardTitle class="editorial-section-title"
+          >Plans &amp; templates</CardTitle
+        >
         <CardDescription
-          >Set the rules once, slap them on any key.</CardDescription
+          >Define reusable rules and apply them to keys.</CardDescription
         >
       </div>
       <Button variant="outline" @click="emit('create')"

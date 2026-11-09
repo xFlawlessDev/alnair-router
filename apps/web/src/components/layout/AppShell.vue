@@ -14,9 +14,13 @@ const isPublic = computed(() => route.meta.public === true);
 </script>
 
 <template>
-  <div v-if="isPublic" class="flex min-h-svh flex-col bg-muted/30">
+  <a href="#main-content" class="skip-to-content">Skip to content</a>
+  <div
+    v-if="isPublic"
+    class="paper-workspace flex min-h-svh flex-col bg-background"
+  >
     <header
-      class="flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4 sm:px-6"
+      class="flex min-h-16 shrink-0 flex-wrap items-center gap-2 border-b-2 border-foreground bg-card px-4 py-3 sm:px-6"
     >
       <Logo class="size-6" />
       <span class="font-semibold">Alnair Router</span>
@@ -27,22 +31,50 @@ const isPublic = computed(() => route.meta.public === true);
         <ThemeToggle />
       </div>
     </header>
-    <main class="mx-auto w-full max-w-4xl flex-1 px-4 py-8 sm:px-6">
+    <main
+      id="main-content"
+      class="editorial-content mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-10"
+      tabindex="-1"
+    >
       <RouterView />
     </main>
   </div>
 
   <SidebarProvider v-else>
     <AppSidebar />
-    <SidebarInset class="min-h-svh overflow-hidden md:h-svh">
+    <SidebarInset class="paper-workspace min-h-svh overflow-hidden md:h-svh">
       <AppHeader />
-      <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <div class="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <main
+        id="main-content"
+        class="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        tabindex="-1"
+      >
+        <div
+          class="editorial-content mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
+        >
           <RouterView />
         </div>
-      </div>
+      </main>
     </SidebarInset>
   </SidebarProvider>
 
   <Toaster position="bottom-right" rich-colors />
 </template>
+
+<style scoped>
+.skip-to-content {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 100;
+  transform: translateY(-150%);
+  border: 2px solid var(--foreground);
+  padding: 0.75rem 1rem;
+  background: var(--card);
+  color: var(--foreground);
+  font-weight: 700;
+}
+.skip-to-content:focus {
+  transform: translateY(0);
+}
+</style>

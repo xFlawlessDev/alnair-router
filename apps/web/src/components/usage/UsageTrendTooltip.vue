@@ -25,7 +25,7 @@ const rows = computed(() =>
 </script>
 
 <template>
-  <Card class="max-w-[18rem] text-sm">
+  <Card class="tooltip-sticker max-w-[18rem] text-sm">
     <CardHeader v-if="title" class="border-b p-3">
       <CardTitle>{{ title }}</CardTitle>
     </CardHeader>
@@ -53,3 +53,12 @@ const rows = computed(() =>
     </CardContent>
   </Card>
 </template>
+
+<style scoped>
+.tooltip-sticker {
+  border: 3px solid var(--editorial-paper);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 3px 3px 0 var(--editorial-navy);
+}
+</style>

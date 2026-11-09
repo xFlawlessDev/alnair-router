@@ -12,7 +12,7 @@ defineProps<{
 
 <template>
   <div
-    class="rounded-lg border border-border/70 bg-card px-4 py-3.5 transition-colors has-[[data-state=checked]]:border-primary/40 has-[[data-state=checked]]:bg-primary/[0.03]"
+    class="min-w-0 rounded-lg border border-border/70 bg-card px-4 py-3.5 transition-colors has-[[data-state=checked]]:border-primary/40 has-[[data-state=checked]]:bg-primary/[0.03]"
   >
     <div class="flex items-start justify-between gap-6">
       <div class="grid min-w-0 gap-1">
@@ -27,7 +27,7 @@ defineProps<{
 
         <p
           v-if="description || $slots.description"
-          class="text-xs leading-relaxed text-pretty text-muted-foreground"
+          class="text-xs leading-relaxed text-pretty break-words text-muted-foreground"
         >
           <slot name="description">{{ description }}</slot>
         </p>

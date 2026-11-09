@@ -270,21 +270,22 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="flex flex-col gap-8">
+  <div class="editorial-page">
     <PageHeader
       title="Overview"
       description="Router status, configuration, and usage at a glance."
     >
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load">
-          <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
+          <RefreshCw :class="loading ? 'motion-safe:animate-spin' : ''" />
+          Refresh
         </Button>
       </template>
     </PageHeader>
 
-    <div class="flex flex-wrap items-center gap-2">
+    <div class="editorial-toolbar">
       <button
-        class="inline-flex w-fit items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs transition-colors hover:bg-accent"
+        class="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs break-all transition-colors hover:bg-accent"
         title="Copy base URL"
         @click="copyBaseUrl"
       >
@@ -304,7 +305,7 @@ onMounted(load);
         {{ initState.require_api_key ? "Key required" : "Auth open" }}
       </Badge>
       <button
-        class="inline-flex w-fit items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs transition-colors hover:bg-accent"
+        class="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-md border bg-muted px-2.5 py-1 font-mono text-xs break-all transition-colors hover:bg-accent"
         title="Copy self-service usage URL"
         data-testid="my-usage-copy"
         @click="copyMeUrl"
@@ -336,7 +337,7 @@ onMounted(load);
     <template v-else>
       <Card v-if="partialError" class="border-amber-500/40">
         <CardContent class="flex items-center gap-2 p-4 text-sm">
-          <CircleAlert class="size-4 text-amber-500" />
+          <CircleAlert class="size-4 editorial-warning" />
           <span class="text-muted-foreground">{{ partialError }}</span>
           <Button variant="ghost" size="sm" class="ml-auto" @click="load">
             Retry
@@ -350,7 +351,7 @@ onMounted(load);
         data-testid="update-banner"
       >
         <CardContent class="flex flex-wrap items-center gap-2 p-4 text-sm">
-          <ArrowUpCircle class="size-4 text-emerald-500" />
+          <ArrowUpCircle class="size-4 editorial-success" />
           <span>
             <span class="font-medium"
               >v{{ update.latest_version }} is available</span
@@ -379,8 +380,8 @@ onMounted(load);
         </CardContent>
       </Card>
 
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Card class="editorial-panel editorial-lead">
           <CardHeader class="pb-2">
             <CardTitle
               class="flex items-center gap-2 text-sm font-medium text-muted-foreground"
@@ -390,7 +391,10 @@ onMounted(load);
           </CardHeader>
           <CardContent>
             <Skeleton v-if="loading" class="h-8 w-24" />
-            <p v-else class="text-2xl font-semibold tracking-tight">
+            <p
+              v-else
+              class="editorial-sticker editorial-sticker--accent editorial-sticker--status"
+            >
               {{ healthy ? "Healthy" : "Degraded" }}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
@@ -403,7 +407,7 @@ onMounted(load);
           </CardContent>
         </Card>
 
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader class="pb-2">
             <CardTitle
               class="flex items-center gap-2 text-sm font-medium text-muted-foreground"
@@ -413,7 +417,7 @@ onMounted(load);
           </CardHeader>
           <CardContent>
             <Skeleton v-if="loading" class="h-8 w-20" />
-            <p v-else class="text-2xl font-semibold tracking-tight">
+            <p v-else class="editorial-number">
               {{
                 initState
                   ? `${initState.enabled_connections} / ${initState.connections}`
@@ -426,7 +430,7 @@ onMounted(load);
           </CardContent>
         </Card>
 
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader class="pb-2">
             <CardTitle
               class="flex items-center gap-2 text-sm font-medium text-muted-foreground"
@@ -436,9 +440,11 @@ onMounted(load);
           </CardHeader>
           <CardContent>
             <Skeleton v-if="loading" class="h-8 w-24" />
-            <p v-else class="text-2xl font-semibold tracking-tight">
+            <p v-else class="editorial-number">
               {{ activity ? formatNumber(inFlight) : "…" }}
-              <span v-if="inFlight" class="text-base font-normal text-amber-500"
+              <span
+                v-if="inFlight"
+                class="text-base font-normal editorial-warning"
                 >in flight</span
               >
             </p>
@@ -452,7 +458,7 @@ onMounted(load);
           </CardContent>
         </Card>
 
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader class="pb-2">
             <CardTitle
               class="flex items-center gap-2 text-sm font-medium text-muted-foreground"
@@ -462,7 +468,7 @@ onMounted(load);
           </CardHeader>
           <CardContent>
             <Skeleton v-if="loading" class="h-8 w-20" />
-            <p v-else class="text-2xl font-semibold tracking-tight">
+            <p v-else class="editorial-number">
               {{ activity ? formatDuration(activity.uptime_ms) : "…" }}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
@@ -481,10 +487,10 @@ onMounted(load);
         </Card>
       </div>
 
-      <Card v-if="recentErrors.length">
+      <Card v-if="recentErrors.length" class="editorial-panel">
         <CardHeader class="pb-3">
           <CardTitle class="flex items-center gap-2 text-base">
-            <CircleAlert class="size-4 text-amber-500" /> Recent problems
+            <CircleAlert class="size-4 editorial-warning" /> Recent problems
             <Badge variant="outline">{{ recentErrors.length }}</Badge>
           </CardTitle>
           <CardDescription
@@ -524,7 +530,7 @@ onMounted(load);
         </CardContent>
       </Card>
 
-      <Card v-if="initState && !initState.initialized">
+      <Card v-if="initState && !initState.initialized" class="editorial-panel">
         <CardHeader>
           <CardTitle>Getting started</CardTitle>
           <CardDescription>
@@ -562,9 +568,9 @@ onMounted(load);
         </CardContent>
       </Card>
 
-      <Card v-if="initState?.require_api_key === false">
+      <Card v-if="initState?.require_api_key === false" class="editorial-panel">
         <CardContent class="flex items-center gap-2 p-4 text-sm">
-          <KeyRound class="size-4 text-amber-500" />
+          <KeyRound class="size-4 editorial-warning" />
           <span class="text-muted-foreground"
             >Client auth is open — every request to <code>/v1</code> is accepted
             without a key.</span
@@ -579,7 +585,7 @@ onMounted(load);
 
       <section class="flex flex-col gap-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <h2 class="text-lg font-semibold tracking-tight">Usage</h2>
+          <h2 class="editorial-section-title">Usage</h2>
           <Select v-model="range" @update:model-value="reloadUsage">
             <SelectTrigger class="w-44">
               <SelectValue />
@@ -610,13 +616,14 @@ onMounted(load);
       </section>
 
       <section class="flex flex-col gap-4">
-        <h2 class="text-lg font-semibold tracking-tight">Models</h2>
+        <h2 class="editorial-section-title">Models</h2>
 
         <p
           v-if="loading"
           class="flex items-center gap-2 text-sm text-muted-foreground"
         >
-          <RefreshCw class="size-4 animate-spin" /> Loading the model catalog…
+          <RefreshCw class="size-4 motion-safe:animate-spin" /> Loading the
+          model catalog…
         </p>
 
         <EmptyState
@@ -652,7 +659,7 @@ onMounted(load);
             Nothing matches "{{ modelSearch.trim() }}".
           </p>
 
-          <Card v-else>
+          <Card v-else class="editorial-panel editorial-table">
             <Table class="table-fixed">
               <TableHeader>
                 <TableRow>

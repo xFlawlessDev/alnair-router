@@ -55,8 +55,8 @@ function pickType(value: unknown): void {
 </script>
 
 <template>
-  <div class="flex flex-wrap items-end gap-3 rounded-lg border p-3">
-    <div class="grid min-w-56 flex-1 gap-1.5">
+  <div class="editorial-toolbar flex flex-wrap items-end gap-3 p-3">
+    <div class="grid min-w-0 flex-1 basis-56 gap-1.5">
       <Label for="connection-search" class="text-xs text-muted-foreground"
         >Search</Label
       >
@@ -114,7 +114,7 @@ function pickType(value: unknown): void {
       </Select>
     </div>
 
-    <div class="ml-auto flex items-end gap-3">
+    <div class="flex flex-wrap items-end gap-3">
       <span class="pb-2 text-xs text-muted-foreground"
         >{{ shown }} of {{ total }}</span
       >

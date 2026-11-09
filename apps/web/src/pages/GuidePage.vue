@@ -108,15 +108,16 @@ const errors = [
 </script>
 
 <template>
-  <div class="flex max-w-4xl flex-col gap-6">
+  <div class="editorial-page max-w-4xl">
     <PageHeader
       title="API Guide"
       description="Point any OpenAI- or Anthropic-compatible client at the router and use it like a provider."
     />
 
-    <Card>
+    <Card class="editorial-panel editorial-lead">
       <CardHeader>
-        <CardTitle>Quick start</CardTitle>
+        <p class="editorial-kicker text-muted-foreground">01 / API guide</p>
+        <CardTitle class="editorial-section-title">Quick start</CardTitle>
         <CardDescription>
           The default bind is <code>http://127.0.0.1:7878</code>, so the
           OpenAI-compatible base URL is <code>http://127.0.0.1:7878/v1</code>.
@@ -125,7 +126,7 @@ const errors = [
         </CardDescription>
       </CardHeader>
       <CardContent class="grid gap-3 text-sm">
-        <pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs">
+        <pre class="editorial-code overflow-x-auto p-4 text-xs">
 curl http://127.0.0.1:7878/v1/chat/completions \
   -H 'authorization: Bearer &lt;router-key&gt;' \
   -H 'content-type: application/json' \
@@ -134,7 +135,7 @@ curl http://127.0.0.1:7878/v1/chat/completions \
           SDKs work unchanged: set <code>base_url</code> to the router and use
           the router key as the API key.
         </p>
-        <pre class="overflow-x-auto rounded-md bg-muted p-3 text-xs">
+        <pre class="editorial-code overflow-x-auto p-4 text-xs">
 from openai import OpenAI
 
 client = OpenAI(base_url="http://127.0.0.1:7878/v1", api_key="&lt;router-key&gt;")
@@ -146,9 +147,10 @@ stream = client.chat.completions.create(
       </CardContent>
     </Card>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
-        <CardTitle>Model references</CardTitle>
+        <p class="editorial-kicker text-muted-foreground">02 / API guide</p>
+        <CardTitle class="editorial-section-title">Model references</CardTitle>
         <CardDescription>
           The <code>model</code> field resolves against aliases, combos and the
           default connection.
@@ -175,9 +177,10 @@ stream = client.chat.completions.create(
       </CardContent>
     </Card>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
-        <CardTitle>Endpoints</CardTitle>
+        <p class="editorial-kicker text-muted-foreground">03 / API guide</p>
+        <CardTitle class="editorial-section-title">Endpoints</CardTitle>
         <CardDescription>
           The router speaks both wire protocols, so existing clients keep
           working.
@@ -185,7 +188,7 @@ stream = client.chat.completions.create(
       </CardHeader>
       <CardContent class="grid gap-4">
         <div class="grid gap-2">
-          <h3 class="text-sm font-medium">OpenAI-compatible</h3>
+          <h3 class="editorial-kicker">OpenAI-compatible</h3>
           <ul class="grid gap-2">
             <li
               v-for="[endpoint, description] in openAiEndpoints"
@@ -200,7 +203,7 @@ stream = client.chat.completions.create(
           </ul>
         </div>
         <div class="grid gap-2">
-          <h3 class="text-sm font-medium">Anthropic-compatible</h3>
+          <h3 class="editorial-kicker">Anthropic-compatible</h3>
           <ul class="grid gap-2">
             <li
               v-for="[endpoint, description] in anthropicEndpoints"
@@ -217,9 +220,12 @@ stream = client.chat.completions.create(
       </CardContent>
     </Card>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
-        <CardTitle>Streaming, failover and headers</CardTitle>
+        <p class="editorial-kicker text-muted-foreground">04 / API guide</p>
+        <CardTitle class="editorial-section-title"
+          >Streaming, failover and headers</CardTitle
+        >
         <CardDescription
           >What happens after the router resolves the model
           reference.</CardDescription
@@ -246,9 +252,10 @@ stream = client.chat.completions.create(
       </CardContent>
     </Card>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
-        <CardTitle>Errors and limits</CardTitle>
+        <p class="editorial-kicker text-muted-foreground">05 / API guide</p>
+        <CardTitle class="editorial-section-title">Errors and limits</CardTitle>
         <CardDescription>
           Failures return an OpenAI-style envelope:
           <code>{ "error": { message, type, code } }</code>.

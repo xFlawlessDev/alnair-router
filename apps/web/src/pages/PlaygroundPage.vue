@@ -58,11 +58,11 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-8">
+  <div class="editorial-page">
     <PageHeader title="Playground" :description="description" />
 
     <Tabs v-model="tab">
-      <TabsList>
+      <TabsList class="w-full justify-start sm:w-fit">
         <TabsTrigger value="chat">Chat</TabsTrigger>
         <TabsTrigger value="token-saver">Token Saver</TabsTrigger>
       </TabsList>

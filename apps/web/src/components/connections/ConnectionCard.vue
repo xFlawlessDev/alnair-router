@@ -44,8 +44,9 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <Card class="gap-0">
+  <Card class="editorial-panel gap-0">
     <CardContent class="flex flex-col gap-3 p-4">
+      <p class="editorial-kicker border-b pb-2">Provider connection</p>
       <div class="flex items-start gap-2">
         <ProviderIcon
           :id="connection.provider_id"
@@ -54,7 +55,7 @@ const emit = defineEmits<{
           class="mt-0.5 text-muted-foreground"
         />
         <span
-          class="min-w-0 flex-1 truncate font-medium"
+          class="min-w-0 flex-1 break-words text-base font-bold"
           :title="connection.name"
         >
           {{ connection.name }}
@@ -82,7 +83,7 @@ const emit = defineEmits<{
       </div>
 
       <code
-        class="truncate text-xs text-muted-foreground"
+        class="break-all border-y py-3 text-xs text-muted-foreground"
         :title="connection.base_url"
       >
         {{ connection.base_url }}

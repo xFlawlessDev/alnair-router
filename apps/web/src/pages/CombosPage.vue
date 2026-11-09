@@ -16,18 +16,9 @@ import EmptyState from "@/components/EmptyState.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import ComboFormDialog from "@/components/combos/ComboFormDialog.vue";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { ApiError, api } from "@/lib/api";
 import { formatDateTime, isEnabled } from "@/lib/format";
 import type { Alias, ComboWithEntries } from "@/types/api";
@@ -124,7 +115,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="editorial-page">
     <PageHeader
       title="Combos"
       description="Named fallback chains. Each tier is tried in order until one emits content."
@@ -158,110 +149,85 @@ onBeforeUnmount(() => {
       </template>
     </EmptyState>
 
-    <Card v-else>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Fallback tiers</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Enabled</TableHead>
-            <TableHead>Updated</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableRow v-for="combo in combos" :key="combo.combo.id">
-            <TableCell>
-              <div class="flex flex-col gap-1">
-                <div class="flex items-center gap-1">
-                  <code
-                    class="rounded bg-muted px-1.5 py-0.5 text-sm font-medium"
-                    :title="combo.combo.name"
-                    >{{ combo.combo.name }}</code
-                  >
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    :aria-label="`Copy ${combo.combo.name}`"
-                    :title="`Copy ${combo.combo.name}`"
-                    @click="copyCombo(combo)"
-                  >
-                    <Check
-                      v-if="copiedId === combo.combo.id"
-                      class="text-primary"
-                    />
-                    <Copy v-else />
-                  </Button>
-                </div>
-                <span
-                  v-if="combo.combo.description"
-                  class="max-w-64 truncate text-xs text-muted-foreground"
-                  :title="combo.combo.description"
-                >
-                  {{ combo.combo.description }}
-                </span>
-              </div>
-            </TableCell>
-            <TableCell>
-              <div
-                v-if="combo.entries.length"
-                class="flex flex-wrap items-center gap-1"
-              >
-                <Badge
-                  v-for="(entry, index) in combo.entries"
-                  :key="entry.id"
-                  variant="outline"
-                  class="gap-1.5 font-normal"
-                  :title="`Tier ${index + 1}: ${entry.model_ref}`"
-                >
-                  <span
-                    class="flex size-4 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums"
-                    >{{ index + 1 }}</span
-                  >
-                  <span class="font-mono text-xs">{{ entry.model_ref }}</span>
-                </Badge>
-              </div>
-              <span v-else class="text-xs text-muted-foreground">No tiers</span>
-            </TableCell>
-            <TableCell
-              ><StatusBadge :enabled="isEnabled(combo.combo.enabled)"
-            /></TableCell>
-            <TableCell>
-              <Switch
-                :model-value="isEnabled(combo.combo.enabled)"
-                :aria-label="`Toggle ${combo.combo.name}`"
-                @update:model-value="toggleEnabled(combo)"
-              />
-            </TableCell>
-            <TableCell class="text-xs text-muted-foreground">
-              {{ formatDateTime(combo.combo.updated_at) }}
-            </TableCell>
-            <TableCell class="text-right">
-              <div class="flex justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  :aria-label="`Edit ${combo.combo.name}`"
-                  @click="openEdit(combo)"
-                >
-                  <Pencil />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="text-destructive hover:text-destructive"
-                  :aria-label="`Delete ${combo.combo.name}`"
-                  @click="deleting = combo"
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </Card>
+    <div v-else class="editorial-directory grid gap-3">
+      <article
+        v-for="(combo, index) in combos"
+        :key="combo.combo.id"
+        class="editorial-panel grid gap-4 border p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+      >
+        <div class="min-w-0">
+          <p class="editorial-kicker mb-3 border-b pb-2">
+            Combo / {{ String(index + 1).padStart(2, "0") }}
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <code class="break-all text-base font-bold">{{
+              combo.combo.name
+            }}</code>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              :aria-label="`Copy ${combo.combo.name}`"
+              @click="copyCombo(combo)"
+              ><Check
+                v-if="copiedId === combo.combo.id"
+                class="text-primary" /><Copy v-else
+            /></Button>
+            <StatusBadge :enabled="isEnabled(combo.combo.enabled)" />
+          </div>
+          <p
+            v-if="combo.combo.description"
+            class="mt-2 break-words text-sm text-muted-foreground"
+          >
+            {{ combo.combo.description }}
+          </p>
+          <p class="mt-3 text-xs text-muted-foreground">
+            Updated {{ formatDateTime(combo.combo.updated_at) }}
+          </p>
+        </div>
+        <div class="min-w-0">
+          <p class="editorial-kicker mb-2">Fallback order</p>
+          <ol v-if="combo.entries.length" class="grid gap-1">
+            <li
+              v-for="(entry, index) in combo.entries"
+              :key="entry.id"
+              class="flex items-start gap-2 border-b py-1 text-sm"
+            >
+              <span class="font-bold tabular-nums">{{
+                String(index + 1).padStart(2, "0")
+              }}</span>
+              <code class="min-w-0 break-all">{{ entry.model_ref }}</code>
+            </li>
+          </ol>
+          <span v-else class="text-sm text-muted-foreground">No tiers</span>
+        </div>
+        <div
+          class="flex items-center gap-2 border-t pt-3 md:flex-col md:items-end md:border-t-0 md:pt-0"
+        >
+          <Switch
+            :model-value="isEnabled(combo.combo.enabled)"
+            :aria-label="`Toggle ${combo.combo.name}`"
+            @update:model-value="toggleEnabled(combo)"
+          />
+          <div class="flex gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              :aria-label="`Edit ${combo.combo.name}`"
+              @click="openEdit(combo)"
+              ><Pencil
+            /></Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="text-destructive hover:text-destructive"
+              :aria-label="`Delete ${combo.combo.name}`"
+              @click="deleting = combo"
+              ><Trash2
+            /></Button>
+          </div>
+        </div>
+      </article>
+    </div>
 
     <ComboFormDialog
       v-model:open="formOpen"

@@ -110,7 +110,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="flex flex-col gap-6 pb-20">
+  <div class="editorial-page pb-20">
     <PageHeader
       title="Settings"
       description="Runtime configuration stored in the router database. Changes apply immediately and survive restarts."
@@ -155,7 +155,10 @@ onMounted(load);
       </div>
     </div>
 
-    <div v-else class="grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-8">
+    <div
+      v-else
+      class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-8"
+    >
       <SettingsNav
         :entries="entries"
         :active="active"
@@ -180,7 +183,7 @@ onMounted(load);
         class="pointer-events-none sticky bottom-4 z-20 flex justify-center"
       >
         <div
-          class="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-xl border bg-background/95 px-4 py-3 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          class="editorial-savebar pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-3 px-4 py-3"
         >
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium">

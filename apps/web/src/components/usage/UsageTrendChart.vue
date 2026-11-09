@@ -35,12 +35,12 @@ const MAX_SERIES = 6;
 const MAX_FILLED_BUCKETS = 400;
 
 const PALETTE = [
-  "oklch(0.62 0.17 255)",
-  "oklch(0.68 0.15 150)",
-  "oklch(0.74 0.15 75)",
-  "oklch(0.62 0.19 25)",
-  "oklch(0.64 0.18 310)",
-  "oklch(0.7 0.12 200)",
+  "var(--primary)",
+  "#ecc45b",
+  "#bd4b32",
+  "#418576",
+  "#8060a0",
+  "#5386ad",
 ];
 const OTHER_COLOR = "oklch(0.7 0.02 250)";
 
@@ -233,11 +233,11 @@ function formatValueTick(tick: number | Date): string {
 </script>
 
 <template>
-  <Card>
+  <Card class="editorial-panel">
     <CardHeader>
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="space-y-1.5">
-          <CardTitle class="text-base">Usage over time</CardTitle>
+          <CardTitle class="editorial-section-title">Usage over time</CardTitle>
           <CardDescription>
             {{ bucket === "hour" ? "Hourly" : "Daily" }} buckets, stacked by
             model.
@@ -263,57 +263,69 @@ function formatValueTick(tick: number | Date): string {
       </div>
     </CardHeader>
     <CardContent>
-      <VisXYContainer
-        v-if="series.length"
-        :data="series"
-        :height="240"
-        :margin="{ top: 12, right: 12, bottom: 32, left: 52 }"
-        :x-domain="xDomain"
-        :y-domain="[0, undefined]"
-      >
-        <VisStackedBar
-          :x="(point: TrendPoint) => point.x"
-          :y="yAccessors"
-          :color="colorFor"
-          :data-step="bucketSpanMs"
-          :bar-padding="0.2"
-          :bar-max-width="48"
-          :rounded-corners="2"
-        />
-        <VisAxis
-          type="x"
-          :tick-format="formatTick"
-          :grid-line="false"
-          :tick-line="false"
-          :domain-line="false"
-        />
-        <VisAxis
-          type="y"
-          :tick-format="formatValueTick"
-          :grid-line="false"
-          :tick-line="false"
-          :domain-line="false"
-          :num-ticks="4"
-        />
-        <ChartCrosshair
-          :colors="seriesDefs.map((def) => def.color)"
-          index="label"
-          :items="tooltipItems"
-          :custom-tooltip="UsageTrendTooltip"
-        />
-      </VisXYContainer>
+      <div v-if="series.length" class="chart-sticker">
+        <VisXYContainer
+          :style="{
+            '--vis-axis-label-color': 'var(--muted-foreground)',
+            '--vis-axis-tick-label-color': 'var(--muted-foreground)',
+            '--vis-dark-axis-label-color': 'var(--muted-foreground)',
+            '--vis-dark-axis-tick-label-color': 'var(--muted-foreground)',
+            '--vis-stacked-bar-stroke-color': 'var(--foreground)',
+            '--vis-dark-stacked-bar-stroke-color': 'var(--foreground)',
+            '--vis-stacked-bar-stroke-width': '1px',
+            '--vis-stacked-bar-hover-stroke-color': 'var(--foreground)',
+            '--vis-stacked-bar-hover-stroke-width': '2px',
+          }"
+          :data="series"
+          :height="240"
+          :margin="{ top: 12, right: 12, bottom: 32, left: 52 }"
+          :x-domain="xDomain"
+          :y-domain="[0, undefined]"
+        >
+          <VisStackedBar
+            :x="(point: TrendPoint) => point.x"
+            :y="yAccessors"
+            :color="colorFor"
+            :data-step="bucketSpanMs"
+            :bar-padding="0.2"
+            :bar-max-width="48"
+            :rounded-corners="2"
+          />
+          <VisAxis
+            type="x"
+            :tick-format="formatTick"
+            :grid-line="false"
+            :tick-line="false"
+            :domain-line="false"
+          />
+          <VisAxis
+            type="y"
+            :tick-format="formatValueTick"
+            :grid-line="false"
+            :tick-line="false"
+            :domain-line="false"
+            :num-ticks="4"
+          />
+          <ChartCrosshair
+            :colors="seriesDefs.map((def) => def.color)"
+            index="label"
+            :items="tooltipItems"
+            :custom-tooltip="UsageTrendTooltip"
+          />
+        </VisXYContainer>
+      </div>
       <p v-else class="py-12 text-center text-sm text-muted-foreground">
         No usage in this window.
       </p>
 
       <div
         v-if="seriesDefs.length"
-        class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5"
+        class="mt-5 flex flex-wrap items-center gap-2"
       >
         <span
           v-for="def in seriesDefs"
           :key="def.label"
-          class="flex max-w-[14rem] min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+          class="legend-cutout flex max-w-[14rem] min-w-0 items-center gap-1.5 text-xs text-foreground"
         >
           <span
             class="size-2.5 shrink-0 rounded-sm"
@@ -325,3 +337,23 @@ function formatValueTick(tick: number | Date): string {
     </CardContent>
   </Card>
 </template>
+
+<style scoped>
+.chart-sticker {
+  min-width: 0;
+  padding: 0.75rem 0.5rem 0;
+  border: 4px solid var(--editorial-paper);
+  border-top: 6px solid #2448a6;
+  border-radius: 4px;
+  background: var(--card);
+  box-shadow: 3px 3px 0 var(--editorial-navy);
+}
+
+.legend-cutout {
+  padding: 0.25rem 0.5rem;
+  border: 2px solid var(--editorial-paper);
+  border-radius: 3px;
+  background: var(--background);
+  box-shadow: 1px 2px 0 var(--editorial-navy);
+}
+</style>

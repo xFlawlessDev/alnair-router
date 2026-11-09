@@ -26,9 +26,11 @@ const customized = computed(() =>
 </script>
 
 <template>
-  <Card>
+  <Card class="editorial-panel editorial-lead min-w-0">
     <CardHeader>
-      <CardTitle class="flex flex-wrap items-center gap-2 text-base">
+      <CardTitle
+        class="editorial-section-title flex flex-wrap items-center gap-2"
+      >
         <slot name="title">{{ section.label }}</slot>
         <Badge v-if="customized" variant="secondary" class="font-normal">
           Customized

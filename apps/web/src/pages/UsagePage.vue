@@ -328,7 +328,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="editorial-page">
     <PageHeader
       title="Usage"
       description="One row per upstream attempt, failures included."
@@ -338,7 +338,7 @@ onUnmounted(() => {
           <span class="relative flex size-2">
             <span
               v-if="live && !staleError"
-              class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75"
+              class="absolute inline-flex size-full motion-safe:animate-ping rounded-full bg-emerald-500 opacity-75"
             />
             <span
               class="relative inline-flex size-2 rounded-full"
@@ -362,7 +362,8 @@ onUnmounted(() => {
           {{ live ? "Pause" : "Resume" }}
         </Button>
         <Button variant="outline" :disabled="loading" @click="load()">
-          <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
+          <RefreshCw :class="loading ? 'motion-safe:animate-spin' : ''" />
+          Refresh
         </Button>
       </template>
     </PageHeader>
@@ -382,12 +383,14 @@ onUnmounted(() => {
       </CardContent>
     </Card>
 
-    <Card>
+    <UsageSummaryCards :summary="summary" />
+
+    <Card class="editorial-panel">
       <CardHeader
         class="flex-row flex-wrap items-center justify-between gap-3 pb-3"
       >
         <div>
-          <CardTitle class="text-base">Live activity</CardTitle>
+          <CardTitle class="editorial-section-title">Live activity</CardTitle>
           <CardDescription>
             Providers around the router; the animated edge marks the route
             currently in use.
@@ -423,8 +426,6 @@ onUnmounted(() => {
       </CardContent>
     </Card>
 
-    <UsageSummaryCards :summary="summary" />
-
     <UsageTrendChart
       v-if="trend.length"
       :points="trend"
@@ -432,6 +433,15 @@ onUnmounted(() => {
       :since="rangeToSince(range)"
       :until="null"
     />
+
+    <div
+      class="flex flex-wrap items-baseline justify-between gap-2 border-b-2 border-foreground pb-2"
+    >
+      <h2 class="editorial-section-title">Request ledger</h2>
+      <p class="text-sm text-muted-foreground">
+        Filter and inspect upstream attempts
+      </p>
+    </div>
 
     <UsageFilterBar
       :keys="keys"
@@ -449,7 +459,7 @@ onUnmounted(() => {
       @clear="clearFilters"
     />
 
-    <div class="flex flex-wrap items-center gap-3">
+    <div class="editorial-toolbar">
       <Select v-model.number="limit" @update:model-value="applyFilters">
         <SelectTrigger class="w-32" aria-label="Rows per page">
           <SelectValue />
@@ -520,7 +530,7 @@ onUnmounted(() => {
       </template>
     </EmptyState>
 
-    <Card v-else>
+    <Card v-else class="editorial-panel editorial-table">
       <UsageTable
         :records="records"
         :keys="keys"

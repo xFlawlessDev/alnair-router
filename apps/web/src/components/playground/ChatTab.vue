@@ -214,7 +214,7 @@ function clear(): void {
 
 <template>
   <div class="flex flex-col gap-4">
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Sparkles class="size-4" />
@@ -319,9 +319,11 @@ function clear(): void {
       </CardContent>
     </Card>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
-        <CardTitle>Savers for this run</CardTitle>
+        <CardTitle class="editorial-section-title"
+          >Savers for this run</CardTitle
+        >
         <CardDescription>
           The pipeline runs on every message you send, exactly as it would for a
           client.
@@ -340,7 +342,7 @@ function clear(): void {
     <Card class="flex min-h-80 flex-col">
       <CardHeader class="flex-row items-center justify-between gap-4">
         <div>
-          <CardTitle>Transcript</CardTitle>
+          <CardTitle class="editorial-section-title">Transcript</CardTitle>
           <CardDescription>
             Recorded as usage, so these completions appear on the Usage page and
             in the Console feed.

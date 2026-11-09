@@ -16,8 +16,10 @@ import {
   ref,
 } from "vue";
 import { toast } from "vue-sonner";
+import PageHeader from "@/components/PageHeader.vue";
 import UsageSummaryCards from "@/components/UsageSummaryCards.vue";
 import BudgetCard from "@/components/usage/BudgetCard.vue";
+import UsageShareCard from "@/components/usage/UsageShareCard.vue";
 import UsageBreakdownPopover, {
   type BreakdownRow,
 } from "@/components/usage/UsageBreakdownPopover.vue";
@@ -291,19 +293,21 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="editorial-page">
     <div
       v-if="!connected"
       class="mx-auto flex w-full max-w-md flex-col gap-4 py-4 sm:py-12"
     >
-      <Card>
-        <CardHeader class="items-center gap-3 text-center">
+      <Card class="editorial-panel">
+        <CardHeader class="items-start gap-3 text-left">
           <div
-            class="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+            class="editorial-sticker editorial-sticker--accent flex size-12 items-center justify-center"
           >
             <KeyRound class="size-6" />
           </div>
-          <CardTitle class="text-lg">Connect your API key</CardTitle>
+          <CardTitle class="editorial-section-title"
+            >Connect your API key</CardTitle
+          >
           <CardDescription>
             Paste a router-issued key (starts with <code>sk-router-</code>) to
             see your own usage. Ask the router operator if you do not have one.
@@ -334,7 +338,7 @@ onUnmounted(() => {
               />
               <button
                 type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                class="absolute right-0 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 :aria-label="reveal ? 'Hide API key' : 'Show API key'"
                 @click="reveal = !reveal"
               >
@@ -342,7 +346,7 @@ onUnmounted(() => {
                 <Eye v-else class="size-4" />
               </button>
             </div>
-            <p v-if="connectError" class="text-xs text-destructive">
+            <p v-if="connectError" class="text-sm text-destructive">
               {{ connectError }}
             </p>
             <p v-else class="text-xs text-muted-foreground">
@@ -363,13 +367,19 @@ onUnmounted(() => {
     </div>
 
     <template v-else>
+      <PageHeader
+        title="My usage"
+        description="Usage and available models for your connected API key."
+      />
       <div
-        class="sticky top-0 z-10 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:-mx-6 sm:px-6"
+        class="editorial-toolbar flex flex-wrap items-center justify-between gap-3"
       >
-        <div class="flex items-center gap-2">
-          <Badge variant="secondary">{{
-            usage?.key.name ?? "Connected key"
-          }}</Badge>
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge
+            variant="secondary"
+            class="max-w-full break-all whitespace-normal"
+            >{{ usage?.key.name ?? "Connected key" }}</Badge
+          >
           <code v-if="usage" class="text-xs text-muted-foreground"
             >{{ usage.key.prefix }}…</code
           >
@@ -431,6 +441,8 @@ onUnmounted(() => {
 
         <BudgetCard v-if="usage" :spend="usage.spend" :budget="usage.budget" />
 
+        <UsageShareCard v-if="usage" :usage="usage" :disabled="loading" />
+
         <UsageTrendChart
           v-if="usage"
           :points="usage.timeseries"
@@ -439,15 +451,18 @@ onUnmounted(() => {
           :until="until"
         />
 
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader>
-            <CardTitle class="text-base">By model</CardTitle>
+            <CardTitle class="editorial-section-title">By model</CardTitle>
             <CardDescription>
               Every upstream attempt billed to this key in the selected window.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Table v-if="usage?.models.length" class="table-fixed">
+            <Table
+              v-if="usage?.models.length"
+              class="min-w-[42rem] table-fixed"
+            >
               <TableHeader>
                 <TableRow>
                   <TableHead class="w-[38%]">Model</TableHead>
@@ -498,7 +513,7 @@ onUnmounted(() => {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader>
             <CardTitle class="flex items-center gap-2 text-base">
               <Boxes class="size-4" /> Models you can use
@@ -545,7 +560,7 @@ onUnmounted(() => {
               </Button>
             </div>
 
-            <Table v-if="catalogRows.length" class="table-fixed">
+            <Table v-if="catalogRows.length" class="min-w-[42rem] table-fixed">
               <TableHeader>
                 <TableRow>
                   <TableHead class="w-[36%]">Model</TableHead>

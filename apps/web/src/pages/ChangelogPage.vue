@@ -39,8 +39,8 @@ const search = ref("");
 function groupStyle(group: string): { icon: unknown; class: string } {
   const label = group.toLowerCase();
   if (label.includes("feature"))
-    return { icon: Sparkles, class: "text-emerald-500" };
-  if (label.includes("fix")) return { icon: Wand2, class: "text-amber-500" };
+    return { icon: Sparkles, class: "editorial-success" };
+  if (label.includes("fix")) return { icon: Wand2, class: "editorial-warning" };
   return { icon: ScrollText, class: "text-muted-foreground" };
 }
 
@@ -102,7 +102,7 @@ onMounted(() => checkForUpdates());
 </script>
 
 <template>
-  <div class="flex max-w-4xl flex-col gap-6">
+  <div class="editorial-page max-w-4xl">
     <PageHeader
       title="Changelog"
       description="Release notes for alnair-router, bundled with this build."
@@ -119,7 +119,7 @@ onMounted(() => checkForUpdates());
       </template>
     </PageHeader>
 
-    <Card>
+    <Card class="editorial-panel editorial-lead">
       <CardHeader class="pb-3">
         <CardTitle class="flex items-center gap-2 text-base">
           <ArrowUpCircle class="size-4" /> Version
@@ -161,12 +161,12 @@ onMounted(() => checkForUpdates());
 
           <template v-else-if="update?.latest_version">
             <Badge variant="outline">
-              <CircleCheck class="size-3 text-emerald-500" /> Up to date
+              <CircleCheck class="size-3 editorial-success" /> Up to date
             </Badge>
           </template>
 
           <Badge v-else-if="update?.error" variant="outline">
-            <CircleAlert class="size-3 text-amber-500" /> Check failed
+            <CircleAlert class="size-3 editorial-warning" /> Check failed
           </Badge>
         </div>
 
@@ -224,9 +224,15 @@ onMounted(() => checkForUpdates());
     </EmptyState>
 
     <template v-else>
-      <Card v-for="release in releases" :key="release.version">
+      <Card
+        v-for="release in releases"
+        :key="release.version"
+        class="editorial-panel"
+      >
         <CardHeader class="pb-3">
-          <CardTitle class="flex flex-wrap items-center gap-2 text-base">
+          <CardTitle
+            class="editorial-section-title flex flex-wrap items-center gap-2"
+          >
             {{
               release.version === "Unreleased"
                 ? "Unreleased"

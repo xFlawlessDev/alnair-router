@@ -210,21 +210,21 @@ function timeLabel(value: string): string {
 }
 
 function levelTone(level: string): string {
-  if (level === "error") return "bg-red-500/15 text-red-400";
-  if (level === "warn") return "bg-amber-500/15 text-amber-400";
-  return "bg-sky-500/15 text-sky-400";
+  if (level === "error") return "bg-destructive/15 text-destructive";
+  if (level === "warn") return "bg-muted editorial-warning";
+  return "bg-primary/15 text-foreground";
 }
 
 function gutterClass(level: string): string {
-  if (level === "error") return "border-l-2 border-l-red-500/70";
-  if (level === "warn") return "border-l-2 border-l-amber-500/70";
+  if (level === "error") return "border-l-2 border-l-destructive";
+  if (level === "warn") return "border-l-2 border-l-primary";
   return "border-l-2 border-l-transparent";
 }
 
 function statusClass(status: number): string {
-  if (status >= 500) return "text-red-400";
-  if (status >= 400) return "text-amber-400";
-  return "text-emerald-400";
+  if (status >= 500) return "text-destructive";
+  if (status >= 400) return "editorial-warning";
+  return "text-foreground";
 }
 
 /** One event as a single line, for pasting into a bug report. */
@@ -260,7 +260,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-col gap-6 md:h-[calc(100svh-9rem)]">
+  <div class="editorial-page min-h-0 md:h-[calc(100svh-9rem)]">
     <PageHeader
       title="Console"
       description="Live API transfer log: requests, upstream attempts, keys, and limits."
@@ -270,7 +270,7 @@ onUnmounted(() => {
           <span class="relative flex size-2">
             <span
               v-if="!paused && !staleError"
-              class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75"
+              class="absolute inline-flex size-full motion-safe:animate-ping rounded-full bg-emerald-500 opacity-75"
             />
             <span
               class="relative inline-flex size-2 rounded-full"
@@ -332,7 +332,10 @@ onUnmounted(() => {
       </CardContent>
     </Card>
 
-    <Card v-else class="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <Card
+      v-else
+      class="editorial-panel flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
       <div class="flex flex-wrap items-center gap-2 border-b px-3 py-2">
         <Terminal class="size-3.5 shrink-0 text-muted-foreground" />
         <span class="text-xs text-muted-foreground">{{ eventSummary }}</span>
@@ -384,29 +387,29 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- The feed keeps a dark surface in both themes: it reads as a terminal
-           log rather than a table, which is what this page is for. -->
-      <div class="flex min-h-0 flex-1 flex-col bg-zinc-950">
+      <div class="flex min-h-0 flex-1 flex-col bg-card">
         <div
           v-if="inFlight.length"
-          class="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2"
+          class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2"
         >
           <span
-            class="flex items-center gap-1.5 text-xs font-medium text-emerald-400"
+            class="flex items-center gap-1.5 text-xs font-medium text-foreground"
           >
-            <Loader2 class="size-3 animate-spin" />
+            <Loader2 class="size-3 motion-safe:animate-spin" />
             {{ inFlight.length }} in flight
           </span>
           <span
             v-for="(attempt, index) in inFlight"
             :key="`${attempt.connection_id}-${attempt.model}-${attempt.tier}-${index}`"
-            class="flex items-center gap-1.5 rounded-md bg-zinc-900 px-2 py-0.5 font-mono text-[11px] text-zinc-300"
+            class="flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] text-foreground"
             :title="`tier ${attempt.tier} · ${attempt.source}`"
           >
             <span class="truncate">{{ attempt.connection }}</span>
-            <span class="text-zinc-500">/</span>
-            <span class="truncate text-zinc-400">{{ attempt.model }}</span>
-            <span class="text-zinc-500 tabular-nums">{{
+            <span class="text-muted-foreground">/</span>
+            <span class="truncate text-muted-foreground">{{
+              attempt.model
+            }}</span>
+            <span class="text-muted-foreground tabular-nums">{{
               elapsedLabel(attempt.elapsed_ms)
             }}</span>
           </span>
@@ -424,11 +427,17 @@ onUnmounted(() => {
             <div
               v-for="row in 10"
               :key="row"
-              class="flex items-center gap-2 border-b border-zinc-900 px-3 py-1.5"
+              class="flex items-center gap-2 border-b border-border px-3 py-1.5"
             >
-              <span class="h-3 w-20 animate-pulse rounded bg-zinc-800" />
-              <span class="h-3 w-10 animate-pulse rounded bg-zinc-800" />
-              <span class="h-3 flex-1 animate-pulse rounded bg-zinc-800" />
+              <span
+                class="h-3 w-20 motion-safe:animate-pulse rounded bg-muted"
+              />
+              <span
+                class="h-3 w-10 motion-safe:animate-pulse rounded bg-muted"
+              />
+              <span
+                class="h-3 flex-1 motion-safe:animate-pulse rounded bg-muted"
+              />
             </div>
           </template>
 
@@ -437,17 +446,17 @@ onUnmounted(() => {
             class="flex h-full flex-col items-center justify-center gap-2 px-6 py-10 text-center"
           >
             <span
-              class="flex size-10 items-center justify-center rounded-full bg-zinc-900 text-zinc-500"
+              class="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground"
             >
               <SearchX v-if="filtering" class="size-5" />
               <Activity v-else class="size-5" />
             </span>
-            <p class="font-sans text-sm text-zinc-300">
+            <p class="font-sans text-sm text-foreground">
               {{
                 filtering ? "No events match this filter" : "No activity yet"
               }}
             </p>
-            <p class="max-w-sm font-sans text-xs text-zinc-500">
+            <p class="max-w-sm font-sans text-xs text-muted-foreground">
               <template v-if="filtering">
                 {{ counts.all }} events are buffered, none of them match the
                 current level or search.
@@ -460,7 +469,7 @@ onUnmounted(() => {
             <button
               v-if="filtering"
               type="button"
-              class="underline underline-offset-4 transition-colors hover:text-zinc-100"
+              class="underline underline-offset-4 transition-colors hover:text-foreground"
               @click="clearFilters"
             >
               Clear filters
@@ -471,16 +480,16 @@ onUnmounted(() => {
             <div
               v-for="event in events"
               :key="event.seq"
-              class="border-b border-zinc-900 last:border-b-0"
+              class="border-b border-border last:border-b-0"
               :class="gutterClass(event.level)"
             >
               <button
                 type="button"
-                class="flex w-full items-start gap-2 px-2 py-1.5 text-left transition-colors hover:bg-zinc-900/60 focus-visible:bg-zinc-900/60 focus-visible:outline-none"
+                class="flex min-h-11 w-full items-start gap-2 px-2 py-2 text-left transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
                 :aria-expanded="isExpanded(event.seq)"
                 @click="toggleExpanded(event.seq)"
               >
-                <span class="shrink-0 text-zinc-500 tabular-nums">{{
+                <span class="shrink-0 text-muted-foreground tabular-nums">{{
                   timeLabel(event.at)
                 }}</span>
                 <span
@@ -490,26 +499,26 @@ onUnmounted(() => {
                   {{ event.level }}
                 </span>
                 <span
-                  class="hidden w-32 shrink-0 truncate text-zinc-400 sm:block"
+                  class="hidden w-32 shrink-0 truncate text-muted-foreground sm:block"
                   :title="event.kind"
                   >{{ event.kind }}</span
                 >
                 <span
-                  class="hidden w-24 shrink-0 truncate text-zinc-400 lg:block"
+                  class="hidden w-24 shrink-0 truncate text-muted-foreground lg:block"
                   :title="event.connection ?? ''"
                   >{{ event.connection ?? "—" }}</span
                 >
                 <span
-                  class="hidden w-28 shrink-0 truncate text-zinc-500 xl:block"
+                  class="hidden w-28 shrink-0 truncate text-muted-foreground xl:block"
                   :title="event.model ?? ''"
                   >{{ event.model ?? "—" }}</span
                 >
-                <span class="min-w-0 flex-1 break-words text-zinc-100">{{
+                <span class="min-w-0 flex-1 break-words text-foreground">{{
                   event.message
                 }}</span>
                 <span
                   v-if="event.latency_ms != null"
-                  class="shrink-0 text-zinc-500 tabular-nums"
+                  class="shrink-0 text-muted-foreground tabular-nums"
                   >{{ event.latency_ms }}ms</span
                 >
                 <span
@@ -522,13 +531,13 @@ onUnmounted(() => {
 
               <div
                 v-if="isExpanded(event.seq)"
-                class="grid gap-2 border-t border-zinc-900 bg-zinc-900/40 px-3 py-2"
+                class="grid gap-2 border-t border-border bg-muted/40 px-3 py-2"
               >
-                <p class="break-words whitespace-pre-wrap text-zinc-200">
+                <p class="break-words whitespace-pre-wrap text-foreground">
                   {{ event.message }}
                 </p>
                 <div
-                  class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500"
+                  class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground"
                 >
                   <span>seq {{ event.seq }}</span>
                   <span>{{ event.kind }}</span>
@@ -543,7 +552,7 @@ onUnmounted(() => {
                   <Button
                     variant="ghost"
                     size="xs"
-                    class="ml-auto text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+                    class="ml-auto text-foreground hover:bg-muted hover:text-foreground"
                     @click="copyEvent(event)"
                   >
                     <Copy /> Copy line

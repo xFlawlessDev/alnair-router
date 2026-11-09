@@ -189,7 +189,7 @@ onMounted(refresh);
 </script>
 
 <template>
-  <div class="flex flex-col gap-6 pb-20">
+  <div class="editorial-page pb-20">
     <PageHeader title="Token Saving" :description="description">
       <template #actions>
         <!-- The range only narrows the savings window, so it stays off the
@@ -224,13 +224,13 @@ onMounted(refresh);
     </PageHeader>
 
     <Tabs v-model="tab" class="gap-6">
-      <TabsList>
+      <TabsList class="w-full justify-start sm:w-fit">
         <TabsTrigger value="savings">Savings</TabsTrigger>
         <TabsTrigger value="configuration">Configuration</TabsTrigger>
       </TabsList>
 
       <TabsContent value="savings" class="flex flex-col gap-4">
-        <Card v-if="usageError" class="border-destructive/40">
+        <Card v-if="usageError" class="editorial-panel border-destructive/40">
           <CardHeader>
             <CardTitle class="text-destructive">Cannot load savings</CardTitle>
             <CardDescription>{{ usageError }}</CardDescription>
@@ -239,7 +239,7 @@ onMounted(refresh);
 
         <template v-else>
           <div class="grid gap-4 sm:grid-cols-3">
-            <Card>
+            <Card class="editorial-panel">
               <CardHeader class="pb-2">
                 <CardDescription>
                   Tokens saved · {{ rangeLabel }}
@@ -247,7 +247,7 @@ onMounted(refresh);
               </CardHeader>
               <CardContent>
                 <Skeleton v-if="usageLoading" class="h-8 w-24" />
-                <p v-else class="text-2xl font-semibold tabular-nums">
+                <p v-else class="editorial-number">
                   {{ formatCompact(totalSaved) }}
                 </p>
                 <p class="pt-1 text-xs text-muted-foreground">
@@ -257,13 +257,13 @@ onMounted(refresh);
               </CardContent>
             </Card>
 
-            <Card>
+            <Card class="editorial-panel">
               <CardHeader class="pb-2">
                 <CardDescription>Cost avoided</CardDescription>
               </CardHeader>
               <CardContent>
                 <Skeleton v-if="usageLoading" class="h-8 w-24" />
-                <p v-else class="text-2xl font-semibold tabular-nums">
+                <p v-else class="editorial-number">
                   {{ formatCost(savings?.saved_cost_usd ?? 0) }}
                 </p>
                 <p class="pt-1 text-xs text-muted-foreground">
@@ -272,13 +272,13 @@ onMounted(refresh);
               </CardContent>
             </Card>
 
-            <Card>
+            <Card class="editorial-panel">
               <CardHeader class="pb-2">
                 <CardDescription>Prompt tokens avoided</CardDescription>
               </CardHeader>
               <CardContent>
                 <Skeleton v-if="usageLoading" class="h-8 w-24" />
-                <p v-else class="text-2xl font-semibold tabular-nums">
+                <p v-else class="editorial-number">
                   {{ saveRate === null ? "—" : `${saveRate.toFixed(1)}%` }}
                 </p>
                 <p class="pt-1 text-xs text-muted-foreground">
@@ -288,9 +288,11 @@ onMounted(refresh);
             </Card>
           </div>
 
-          <Card>
+          <Card class="editorial-panel">
             <CardHeader>
-              <CardTitle>Configured savers</CardTitle>
+              <CardTitle class="editorial-section-title"
+                >Configured savers</CardTitle
+              >
               <CardDescription>
                 Set under
                 <button
@@ -319,9 +321,11 @@ onMounted(refresh);
             </CardContent>
           </Card>
 
-          <Card>
+          <Card class="editorial-panel">
             <CardHeader>
-              <CardTitle>Breakdown by saver</CardTitle>
+              <CardTitle class="editorial-section-title"
+                >Breakdown by saver</CardTitle
+              >
               <CardDescription>
                 One row per saver that contributed in this window.
               </CardDescription>
@@ -430,7 +434,7 @@ onMounted(refresh);
         class="pointer-events-none sticky bottom-4 z-20 flex justify-center"
       >
         <div
-          class="pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-3 rounded-xl border bg-background/95 px-4 py-3 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80"
+          class="editorial-savebar pointer-events-auto flex w-full max-w-3xl flex-wrap items-center gap-3 px-4 py-3"
         >
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium">Unsaved changes</p>

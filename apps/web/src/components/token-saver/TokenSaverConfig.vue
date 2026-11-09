@@ -173,7 +173,9 @@ watch(
           <span
             v-if="headroomResult"
             class="flex items-center gap-1.5 text-xs"
-            :class="headroomResult.ok ? 'text-emerald-500' : 'text-amber-500'"
+            :class="
+              headroomResult.ok ? 'editorial-success' : 'editorial-warning'
+            "
           >
             <CircleCheck v-if="headroomResult.ok" class="size-3.5" />
             <CircleAlert v-else class="size-3.5" />

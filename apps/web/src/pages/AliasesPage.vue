@@ -25,14 +25,6 @@ import ImportAliasesDialog from "@/components/aliases/ImportAliasesDialog.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { ApiError, api } from "@/lib/api";
 import { formatDateTime, isEnabled } from "@/lib/format";
 import type { Alias, Connection } from "@/types/api";
@@ -166,7 +158,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="editorial-page">
     <PageHeader
       title="Aliases"
       description="Prefixes that map model references like glm/glm-4.6 to a connection."
@@ -213,114 +205,97 @@ onBeforeUnmount(() => {
       </template>
     </EmptyState>
 
-    <Card v-else>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Prefix</TableHead>
-            <TableHead>Connection</TableHead>
-            <TableHead>Model override</TableHead>
-            <TableHead>Sort order</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Enabled</TableHead>
-            <TableHead>Updated</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableRow v-for="alias in aliases" :key="alias.id">
-            <TableCell>
-              <div class="flex items-center gap-1">
-                <code
-                  class="rounded bg-muted px-1.5 py-0.5 text-xs"
-                  :title="`Copy ${aliasReference(alias)}`"
-                  >{{ alias.prefix }}/</code
-                >
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  :aria-label="`Copy ${aliasReference(alias)}`"
-                  :title="`Copy ${aliasReference(alias)}`"
-                  @click="copyAlias(alias)"
-                >
-                  <Check v-if="copiedId === alias.id" class="text-primary" />
-                  <Copy v-else />
-                </Button>
-              </div>
-            </TableCell>
-            <TableCell>
-              {{
+    <div v-else class="editorial-directory grid gap-3">
+      <article
+        v-for="(alias, index) in aliases"
+        :key="alias.id"
+        class="editorial-panel grid gap-4 border p-4 sm:grid-cols-[minmax(0,1fr)_auto]"
+      >
+        <div class="grid min-w-0 gap-3">
+          <p class="editorial-kicker border-b pb-2">
+            Alias / {{ String(index + 1).padStart(2, "0") }}
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <code class="break-all text-base font-bold"
+              >{{ alias.prefix }}/</code
+            >
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              :aria-label="`Copy ${aliasReference(alias)}`"
+              @click="copyAlias(alias)"
+            >
+              <Check v-if="copiedId === alias.id" class="text-primary" />
+              <Copy v-else />
+            </Button>
+            <StatusBadge :enabled="isEnabled(alias.enabled)" />
+          </div>
+          <div class="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <span class="editorial-kicker block">Connection</span
+              ><span class="break-words">{{
                 connectionNames.get(alias.connection_id) ??
                 "(missing connection)"
-              }}
-            </TableCell>
-            <TableCell>
-              <code v-if="alias.model_override" class="text-xs">{{
+              }}</span>
+            </div>
+            <div>
+              <span class="editorial-kicker block">Model override</span
+              ><code v-if="alias.model_override" class="break-all">{{
                 alias.model_override
-              }}</code>
-              <span v-else class="text-muted-foreground">—</span>
-            </TableCell>
-            <TableCell class="text-muted-foreground">{{
-              alias.sort_order
-            }}</TableCell>
-            <TableCell
-              ><StatusBadge :enabled="isEnabled(alias.enabled)"
-            /></TableCell>
-            <TableCell>
-              <Switch
-                :model-value="isEnabled(alias.enabled)"
-                :aria-label="`Toggle ${alias.prefix}`"
-                @update:model-value="toggleEnabled(alias)"
-              />
-            </TableCell>
-            <TableCell class="text-xs text-muted-foreground">
-              {{ formatDateTime(alias.updated_at) }}
-            </TableCell>
-            <TableCell class="text-right">
-              <div class="flex justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  :aria-label="`Chat test ${alias.prefix}`"
-                  :title="`Run a real completion through ${alias.prefix}/`"
-                  @click="openChat(alias)"
-                >
-                  <MessageSquare />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  :disabled="testingId === alias.id"
-                  :aria-label="`Test ${alias.prefix}`"
-                  :title="`Test ${alias.prefix}`"
-                  @click="runTest(alias)"
-                >
-                  <Loader2 v-if="testingId === alias.id" class="animate-spin" />
-                  <Activity v-else />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  :aria-label="`Edit ${alias.prefix}`"
-                  @click="openEdit(alias)"
-                >
-                  <Pencil />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="text-destructive hover:text-destructive"
-                  :aria-label="`Delete ${alias.prefix}`"
-                  @click="deleting = alias"
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </Card>
+              }}</code
+              ><span v-else class="text-muted-foreground">None</span>
+            </div>
+          </div>
+          <p class="text-xs text-muted-foreground">
+            Sort order {{ alias.sort_order }} · Updated
+            {{ formatDateTime(alias.updated_at) }}
+          </p>
+        </div>
+        <div
+          class="flex flex-wrap items-center gap-2 border-t pt-3 sm:flex-col sm:items-end sm:border-t-0 sm:pt-0"
+        >
+          <Switch
+            :model-value="isEnabled(alias.enabled)"
+            :aria-label="`Toggle ${alias.prefix}`"
+            @update:model-value="toggleEnabled(alias)"
+          />
+          <div class="flex gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              :aria-label="`Chat test ${alias.prefix}`"
+              @click="openChat(alias)"
+              ><MessageSquare
+            /></Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              :disabled="testingId === alias.id"
+              :aria-label="`Test ${alias.prefix}`"
+              @click="runTest(alias)"
+              ><Loader2
+                v-if="testingId === alias.id"
+                class="animate-spin" /><Activity v-else
+            /></Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              :aria-label="`Edit ${alias.prefix}`"
+              @click="openEdit(alias)"
+              ><Pencil
+            /></Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="text-destructive hover:text-destructive"
+              :aria-label="`Delete ${alias.prefix}`"
+              @click="deleting = alias"
+              ><Trash2
+            /></Button>
+          </div>
+        </div>
+      </article>
+    </div>
 
     <AliasFormDialog
       v-model:open="formOpen"

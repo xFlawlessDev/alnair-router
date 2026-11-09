@@ -150,7 +150,7 @@ function toggleSort(field: UsageSortField): void {
 </script>
 
 <template>
-  <Table>
+  <Table class="min-w-[960px]">
     <TableHeader>
       <TableRow>
         <TableHead v-for="column in COLUMNS" :key="column.field">
@@ -255,7 +255,7 @@ function toggleSort(field: UsageSortField): void {
         </TableCell>
         <TableCell
           class="text-right text-xs whitespace-nowrap tabular-nums"
-          :class="isSlow(record) ? 'font-medium text-amber-500' : ''"
+          :class="isSlow(record) ? 'font-medium editorial-warning' : ''"
           :title="
             isSlow(record)
               ? `At least twice the ${formatLatency(averageLatencyMs)} average`

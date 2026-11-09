@@ -289,7 +289,7 @@ defineExpose({ run });
       </Button>
     </div>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <FlaskConical class="size-4" />
@@ -367,9 +367,11 @@ defineExpose({ run });
       </CardContent>
     </Card>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader>
-        <CardTitle>Savers for this run</CardTitle>
+        <CardTitle class="editorial-section-title"
+          >Savers for this run</CardTitle
+        >
         <CardDescription>
           Defaults to your saved configuration.
           <RouterLink to="/token-saver" class="underline underline-offset-4">
@@ -397,7 +399,7 @@ defineExpose({ run });
 
     <template v-if="result">
       <div class="grid gap-4 sm:grid-cols-3">
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader class="pb-2">
             <CardDescription>Prompt tokens</CardDescription>
           </CardHeader>
@@ -421,7 +423,7 @@ defineExpose({ run });
           </CardContent>
         </Card>
 
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader class="pb-2">
             <CardDescription>Prompt reduction</CardDescription>
           </CardHeader>
@@ -440,7 +442,7 @@ defineExpose({ run });
           </CardContent>
         </Card>
 
-        <Card>
+        <Card class="editorial-panel">
           <CardHeader class="pb-2">
             <CardDescription>Completion tokens avoided</CardDescription>
           </CardHeader>
@@ -462,9 +464,11 @@ defineExpose({ run });
         </Card>
       </div>
 
-      <Card>
+      <Card class="editorial-panel">
         <CardHeader>
-          <CardTitle>What each step did</CardTitle>
+          <CardTitle class="editorial-section-title"
+            >What each step did</CardTitle
+          >
           <CardDescription>
             Every saver that ran, in pipeline order. A step that declined is
             listed too, with unchanged counts.
@@ -506,9 +510,9 @@ defineExpose({ run });
                   >
                     <CircleCheck
                       v-if="step.applied"
-                      class="size-3.5 text-emerald-500"
+                      class="size-3.5 editorial-success"
                     />
-                    <CircleAlert v-else class="size-3.5 text-amber-500" />
+                    <CircleAlert v-else class="size-3.5 editorial-warning" />
                     {{ step.detail }}
                   </span>
                 </TableCell>
@@ -522,9 +526,9 @@ defineExpose({ run });
                   class="text-right tabular-nums"
                   :class="
                     step.delta < 0
-                      ? 'text-emerald-500'
+                      ? 'editorial-success'
                       : step.delta > 0
-                        ? 'text-amber-500'
+                        ? 'editorial-warning'
                         : ''
                   "
                 >
@@ -543,7 +547,7 @@ defineExpose({ run });
 
       <Card v-if="result.notes.length">
         <CardHeader>
-          <CardTitle>Notes</CardTitle>
+          <CardTitle class="editorial-section-title">Notes</CardTitle>
           <CardDescription>
             Why a saver declined, or what it did. Failures never block a
             request.
@@ -558,9 +562,11 @@ defineExpose({ run });
         </CardContent>
       </Card>
 
-      <Card>
+      <Card class="editorial-panel">
         <CardHeader>
-          <CardTitle>Proof: the request that would be sent</CardTitle>
+          <CardTitle class="editorial-section-title"
+            >Proof: the request that would be sent</CardTitle
+          >
           <CardDescription>
             The exact messages the pipeline produced. A directive can add a
             system message, so this is shown as two full transcripts rather than
@@ -580,13 +586,13 @@ defineExpose({ run });
             <div class="grid gap-2">
               <Label>Before · {{ formatNumber(promptBefore) }} tokens</Label>
               <pre
-                class="max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap"
+                class="editorial-code max-h-96 overflow-auto p-3 text-xs whitespace-pre-wrap break-words"
                 >{{ result.before.map(asText).join("\n\n---\n\n") }}</pre>
             </div>
             <div class="grid gap-2">
               <Label>After · {{ formatNumber(promptAfter) }} tokens</Label>
               <pre
-                class="max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap"
+                class="editorial-code max-h-96 overflow-auto p-3 text-xs whitespace-pre-wrap break-words"
                 >{{ result.after.map(asText).join("\n\n---\n\n") }}</pre>
             </div>
           </div>

@@ -77,14 +77,14 @@ async function submit(): Promise<void> {
 
 <template>
   <div class="mx-auto flex w-full max-w-md flex-col gap-4 py-6 sm:py-16">
-    <Card>
-      <CardHeader class="items-center gap-3 text-center">
+    <Card class="editorial-panel editorial-lead">
+      <CardHeader class="items-start gap-3 text-left">
         <div
-          class="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+          class="editorial-sticker editorial-sticker--accent flex size-12 items-center justify-center"
         >
           <KeyRound class="size-6" />
         </div>
-        <CardTitle class="text-lg">
+        <CardTitle class="editorial-section-title">
           {{ setupMode ? "Set the dashboard password" : "Sign in" }}
         </CardTitle>
         <CardDescription>
@@ -129,7 +129,7 @@ async function submit(): Promise<void> {
             @keyup.enter="submit"
           />
         </div>
-        <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
+        <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
         <Button class="w-full" :disabled="busy || !password" @click="submit">
           <Spinner v-if="busy" />
           {{ setupMode ? "Set password" : "Sign in" }}

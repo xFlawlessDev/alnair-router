@@ -80,8 +80,8 @@ async function signOut(): Promise<void> {
 </script>
 
 <template>
-  <Sidebar collapsible="icon">
-    <SidebarHeader>
+  <Sidebar collapsible="icon" class="desk-navigation">
+    <SidebarHeader class="desk-brand">
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton size="lg" as-child tooltip="Alnair Router">
@@ -90,8 +90,10 @@ async function signOut(): Promise<void> {
               <span
                 class="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden"
               >
-                <span class="truncate font-semibold">Alnair Router</span>
-                <span class="truncate text-xs text-muted-foreground"
+                <span class="truncate text-base font-extrabold tracking-tight"
+                  >Alnair Router</span
+                >
+                <span class="truncate text-xs text-sidebar-foreground/75"
                   >Admin dashboard</span
                 >
               </span>
@@ -108,11 +110,15 @@ async function signOut(): Promise<void> {
           <SidebarMenu>
             <SidebarMenuItem v-for="item in monitorItems" :key="item.to">
               <SidebarMenuButton
+                class="desk-menu-link"
                 as-child
                 :is-active="isActive(item.to)"
                 :tooltip="item.label"
               >
-                <RouterLink :to="item.to">
+                <RouterLink
+                  :to="item.to"
+                  :aria-current="isActive(item.to) ? 'page' : undefined"
+                >
                   <component :is="item.icon" />
                   <span>{{ item.label }}</span>
                 </RouterLink>
@@ -128,11 +134,15 @@ async function signOut(): Promise<void> {
           <SidebarMenu>
             <SidebarMenuItem v-for="item in manageItems" :key="item.to">
               <SidebarMenuButton
+                class="desk-menu-link"
                 as-child
                 :is-active="isActive(item.to)"
                 :tooltip="item.label"
               >
-                <RouterLink :to="item.to">
+                <RouterLink
+                  :to="item.to"
+                  :aria-current="isActive(item.to) ? 'page' : undefined"
+                >
                   <component :is="item.icon" />
                   <span>{{ item.label }}</span>
                 </RouterLink>
@@ -182,3 +192,22 @@ async function signOut(): Promise<void> {
     <SidebarRail />
   </Sidebar>
 </template>
+
+<style scoped>
+.desk-brand {
+  border-bottom: 1px solid var(--sidebar-border);
+  padding-block: 1rem;
+}
+.desk-menu-link {
+  min-height: 2.5rem;
+  border-radius: 3px;
+}
+.desk-menu-link[data-active="true"] {
+  background: var(--sidebar-primary);
+  color: var(--sidebar-primary-foreground);
+  font-weight: 800;
+}
+:deep([data-sidebar="group-label"]) {
+  font-weight: 750;
+}
+</style>

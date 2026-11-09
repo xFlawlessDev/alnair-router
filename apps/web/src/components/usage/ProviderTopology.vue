@@ -35,7 +35,7 @@ function averageLatency(connection: ConnectionActivity): number {
 </script>
 
 <template>
-  <div class="h-72 w-full">
+  <div class="topology-canvas h-72 w-full">
     <VueFlow
       :nodes="nodes"
       :edges="edges"
@@ -53,7 +53,7 @@ function averageLatency(connection: ConnectionActivity): number {
 
       <template #node-router>
         <div
-          class="relative flex size-24 flex-col items-center justify-center gap-1 rounded-full border-2 bg-background shadow-sm"
+          class="router-sticker relative flex size-24 flex-col items-center justify-center gap-1 rounded-full"
         >
           <Logo class="size-6" />
           <span class="text-[10px] font-medium">Router</span>
@@ -63,16 +63,15 @@ function averageLatency(connection: ConnectionActivity): number {
       </template>
 
       <template #node-connection="{ data }">
-        <div
-          class="w-44 rounded-md border bg-background px-3 py-2 text-xs shadow-sm transition-colors"
-          :class="data.connection.in_flight ? 'border-emerald-500/70' : ''"
-        >
+        <div class="provider-sticker w-44 rounded-md px-3 py-2 text-xs">
           <div class="flex items-center justify-between gap-2">
-            <span class="truncate font-medium">{{ data.connection.name }}</span>
+            <span class="truncate font-bold" :title="data.connection.name">{{
+              data.connection.name
+            }}</span>
             <span class="relative flex size-2 shrink-0">
               <span
                 v-if="data.connection.in_flight"
-                class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75"
+                class="absolute inline-flex size-full motion-safe:animate-ping rounded-full bg-emerald-500 opacity-75"
               />
               <span
                 class="relative inline-flex size-2 rounded-full"
@@ -105,6 +104,37 @@ function averageLatency(connection: ConnectionActivity): number {
 </template>
 
 <style scoped>
+.topology-canvas {
+  overflow: hidden;
+  border: 3px solid var(--editorial-paper);
+  border-radius: 6px;
+  background: var(--background);
+  box-shadow: 3px 3px 0 var(--editorial-navy);
+}
+
+.router-sticker {
+  border: 4px solid var(--editorial-paper);
+  background: #2448a6;
+  color: var(--editorial-paper);
+  box-shadow: 3px 3px 0 var(--editorial-navy);
+}
+
+.provider-sticker {
+  border: 3px solid var(--editorial-paper);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 3px 3px 0 var(--editorial-navy);
+}
+
+.provider-sticker::before {
+  display: block;
+  width: 2rem;
+  height: 0.25rem;
+  margin-bottom: 0.375rem;
+  background: var(--editorial-mustard);
+  content: "";
+}
+
 :deep(.vue-flow__node) {
   background: transparent;
   border: none;
@@ -136,5 +166,10 @@ function averageLatency(connection: ConnectionActivity): number {
 
 :deep(.vue-flow__controls-button:hover) {
   background: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  :deep(.vue-flow__edge.animated path) {
+    animation: none;
+  }
 }
 </style>

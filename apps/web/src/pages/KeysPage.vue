@@ -289,7 +289,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="editorial-page">
     <PageHeader
       title="API Keys"
       description="Router-issued client keys for /v1/*. Stored hashed, with an encrypted copy for reveal."
@@ -323,7 +323,39 @@ onMounted(load);
       </template>
     </EmptyState>
 
-    <Card v-else>
+    <Card v-else class="editorial-panel editorial-table">
+      <div
+        class="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3"
+      >
+        <h2 class="editorial-section-title">Key directory</h2>
+        <p class="text-xs text-muted-foreground">
+          Scroll the table to see rules, usage and actions.
+        </p>
+      </div>
+      <ul class="grid gap-0 sm:hidden">
+        <li v-for="key in keys" :key="key.id" class="grid gap-2 border-b p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="break-all font-bold">{{ key.name }}</span>
+            <StatusBadge :enabled="isEnabled(key.enabled)" />
+          </div>
+          <div class="flex flex-wrap gap-2 text-sm">
+            <Badge v-if="key.rate_limit_per_minute" variant="secondary"
+              >{{ key.rate_limit_per_minute }}/min</Badge
+            >
+            <Badge
+              v-for="{ cap, amount } in configuredCaps(key)"
+              :key="cap.field"
+              variant="outline"
+              >{{ formatCost(amount) }}/{{ cap.suffix }}</Badge
+            >
+            <span
+              v-if="!key.rate_limit_per_minute && !configuredCaps(key).length"
+              class="text-muted-foreground"
+              >Default limits</span
+            >
+          </div>
+        </li>
+      </ul>
       <Table>
         <TableHeader>
           <TableRow>

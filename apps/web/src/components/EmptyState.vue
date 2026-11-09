@@ -7,15 +7,15 @@ defineProps<{
 
 <template>
   <div
-    class="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-10 text-center"
+    class="editorial-panel flex flex-col items-center justify-center gap-4 border-2 border-dashed px-5 py-12 text-center"
   >
     <div
-      class="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground"
+      class="editorial-sticker editorial-sticker--accent flex size-14 items-center justify-center"
     >
       <slot name="icon" />
     </div>
     <div>
-      <p class="font-medium">{{ title }}</p>
+      <p class="editorial-section-title">{{ title }}</p>
       <p v-if="description" class="mt-1 max-w-md text-sm text-muted-foreground">
         {{ description }}
       </p>

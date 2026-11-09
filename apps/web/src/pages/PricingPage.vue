@@ -152,7 +152,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
+  <div class="editorial-page">
     <PageHeader
       title="Pricing"
       description="Model rates that turn tokens into recorded cost. Overrides win over the crawled catalog."
@@ -169,9 +169,9 @@ onMounted(load);
       </template>
     </PageHeader>
 
-    <Card>
+    <Card class="editorial-panel editorial-lead">
       <CardHeader class="pb-3">
-        <CardTitle class="text-base">Test a model id</CardTitle>
+        <CardTitle class="editorial-section-title">Test a model id</CardTitle>
         <CardDescription>
           See which catalog key prices a request — handy for relay paths like
           <code>ocg/openai/gpt-5.6-luna</code>.
@@ -213,9 +213,9 @@ onMounted(load);
       </CardContent>
     </Card>
 
-    <Card>
+    <Card class="editorial-panel">
       <CardHeader class="pb-3">
-        <CardTitle class="text-base">Catalog status</CardTitle>
+        <CardTitle class="editorial-section-title">Catalog status</CardTitle>
         <CardDescription>
           {{
             status
@@ -260,16 +260,19 @@ onMounted(load);
         catalog, or add an override.
       </p>
 
-      <Card v-else>
+      <Card v-else class="editorial-panel editorial-table">
+        <div class="border-b px-4 py-3 text-sm text-muted-foreground">
+          Rates in USD per million tokens
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Model</TableHead>
-              <TableHead>Input</TableHead>
-              <TableHead>Output</TableHead>
-              <TableHead>Cache read</TableHead>
-              <TableHead>Cache write</TableHead>
-              <TableHead>Reasoning</TableHead>
+              <TableHead class="text-right">Input</TableHead>
+              <TableHead class="text-right">Output</TableHead>
+              <TableHead class="text-right">Cache read</TableHead>
+              <TableHead class="text-right">Cache write</TableHead>
+              <TableHead class="text-right">Reasoning</TableHead>
               <TableHead>Source</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead class="text-right">Actions</TableHead>
@@ -283,19 +286,19 @@ onMounted(load);
               <TableCell
                 ><code class="text-xs">{{ price.model }}</code></TableCell
               >
-              <TableCell class="text-xs">{{
+              <TableCell class="text-right text-xs tabular-nums">{{
                 rate(price.input_per_million_usd)
               }}</TableCell>
-              <TableCell class="text-xs">{{
+              <TableCell class="text-right text-xs tabular-nums">{{
                 rate(price.output_per_million_usd)
               }}</TableCell>
-              <TableCell class="text-xs">{{
+              <TableCell class="text-right text-xs tabular-nums">{{
                 rate(price.cache_read_per_million_usd)
               }}</TableCell>
-              <TableCell class="text-xs">{{
+              <TableCell class="text-right text-xs tabular-nums">{{
                 rate(price.cache_write_per_million_usd)
               }}</TableCell>
-              <TableCell class="text-xs">{{
+              <TableCell class="text-right text-xs tabular-nums">{{
                 rate(price.reasoning_per_million_usd)
               }}</TableCell>
               <TableCell>

@@ -12,7 +12,11 @@ withDefaults(
 </script>
 
 <template>
-  <Badge :variant="enabled ? 'default' : 'outline'">
+  <Badge
+    :variant="enabled ? 'default' : 'outline'"
+    class="gap-1.5 rounded-sm font-semibold"
+  >
+    <span aria-hidden="true">{{ enabled ? "+" : "−" }}</span>
     {{ enabled ? enabledLabel : disabledLabel }}
   </Badge>
 </template>

@@ -192,15 +192,19 @@ const items = computed<SummaryItem[]>(() => {
 </script>
 
 <template>
-  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-    <Card v-for="item in items" :key="item.label">
+  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+    <Card
+      v-for="item in items"
+      :key="item.label"
+      class="editorial-panel border-t-2 border-t-primary"
+    >
       <CardHeader class="pb-2">
-        <CardTitle class="text-sm font-medium text-muted-foreground">{{
+        <CardTitle class="text-sm font-bold text-muted-foreground">{{
           item.label
         }}</CardTitle>
       </CardHeader>
       <CardContent>
-        <p class="text-2xl font-semibold tracking-tight">
+        <p class="text-3xl font-extrabold tracking-tight tabular-nums">
           <UsageBreakdownPopover
             v-if="item.breakdown"
             :title="item.breakdown.title"
@@ -215,7 +219,7 @@ const items = computed<SummaryItem[]>(() => {
           <template v-else>{{ item.value }}</template>
         </p>
         <p
-          class="mt-1 truncate text-xs text-muted-foreground"
+          class="mt-2 text-xs leading-relaxed text-muted-foreground"
           :title="item.hint"
         >
           {{ item.hint }}
