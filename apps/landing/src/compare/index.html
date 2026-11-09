@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#15283c" />
+    <title>
+      Alnair Router vs 9Router &amp; OmniRoute | LLM Router Comparison
+    </title>
+    <meta
+      name="description"
+      content="Compare Alnair Router, 9Router, and OmniRoute for self-hosted LLM routing. See installation options, fallback behavior, dashboards, and key management."
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="https://router.alnairlabs.com/compare/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Alnair Router" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://router.alnairlabs.com/compare/" />
+    <meta
+      property="og:title"
+      content="Alnair Router vs 9Router &amp; OmniRoute"
+    />
+    <meta
+      property="og:description"
+      content="A practical comparison of self-hosted LLM routers: deployment, fallback routing, and daily operation, with links to each project's documentation."
+    />
+    <meta
+      property="og:image"
+      content="https://router.alnairlabs.com/assets/overview.png"
+    />
+    <meta property="og:image:width" content="1440" />
+    <meta property="og:image:height" content="900" />
+    <meta
+      property="og:image:alt"
+      content="Alnair Router dashboard. Sample data."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Alnair Router vs 9Router &amp; OmniRoute"
+    />
+    <meta
+      name="twitter:description"
+      content="Compare deployment, routing, and operation before choosing a self-hosted LLM router."
+    />
+    <meta
+      name="twitter:image"
+      content="https://router.alnairlabs.com/assets/overview.png"
+    />
+    <meta
+      name="twitter:image:alt"
+      content="Alnair Router dashboard. Sample data."
+    />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://router.alnairlabs.com/compare/#webpage",
+            "url": "https://router.alnairlabs.com/compare/",
+            "name": "Alnair Router vs 9Router & OmniRoute | LLM Router Comparison",
+            "description": "Compare Alnair Router, 9Router, and OmniRoute for self-hosted LLM routing. See installation options, fallback behavior, dashboards, and key management.",
+            "inLanguage": "en",
+            "isPartOf": { "@id": "https://router.alnairlabs.com/#website" },
+            "about": { "@id": "https://router.alnairlabs.com/#software" },
+            "breadcrumb": {
+              "@id": "https://router.alnairlabs.com/compare/#breadcrumbs"
+            },
+            "mentions": [
+              {
+                "@type": "SoftwareSourceCode",
+                "name": "9Router",
+                "codeRepository": "https://github.com/decolua/9router"
+              },
+              {
+                "@type": "SoftwareSourceCode",
+                "name": "OmniRoute",
+                "codeRepository": "https://github.com/cheaper-inference/OmniRoute"
+              }
+            ]
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://router.alnairlabs.com/compare/#breadcrumbs",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "Alnair Router",
+                "item": "https://router.alnairlabs.com/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Router comparison",
+                "item": "https://router.alnairlabs.com/compare/"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="masthead">
+      <div class="shell navigation">
+        <a class="wordmark" href="/" aria-label="Alnair Router home"
+          ><img
+            src="/assets/alnair-white.svg"
+            width="42"
+            height="42"
+            alt=""
+          /><span>alnair<span class="wordmark-suffix"> / router</span></span></a
+        >
+        <nav aria-label="Main navigation">
+          <a href="/">Inside the router</a><a href="/#install">Install</a
+          ><a href="https://github.com/xFlawlessDev/alnair-router"
+            >GitHub <span class="external-label">(source)</span></a
+          >
+        </nav>
+      </div>
+    </header>
+    <main class="shell comparison-page" id="main">
+      <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <a href="/">Alnair Router</a><span aria-hidden="true">/</span
+        ><span aria-current="page">Router comparison</span>
+      </nav>
+      <div class="comparison-intro">
+        <h1>Alnair Router,<br />9Router &amp; OmniRoute.</h1>
+        <p class="section-description">
+          Three open-source approaches to a self-hosted LLM router and AI API
+          gateway. The useful question is which deployment and routing model
+          fits your stack.
+        </p>
+        <p>
+          If you're looking for a 9Router or OmniRoute alternative, Alnair
+          focuses on a native Rust binary, an embedded dashboard, and explicit
+          fallback chains. This comparison covers documented behavior, with
+          sources you can inspect.
+        </p>
+        <p class="review-date">
+          Documentation checked
+          <time datetime="2026-11-10">10 November 2026</time>. Published by the
+          Alnair Router project.
+        </p>
+      </div>
+
+      <section aria-labelledby="comparison-table-title">
+        <h2 id="comparison-table-title">What you install. What you operate.</h2>
+        <div
+          class="comparison-table-scroll"
+          tabindex="0"
+          role="region"
+          aria-label="LLM router comparison table; scroll horizontally on small screens"
+        >
+          <table class="comparison-table">
+            <caption>
+              Descriptions follow the linked project documentation. This is a
+              deployment and feature comparison, with no performance ranking.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Decision</th>
+                <th scope="col">
+                  <a href="https://github.com/xFlawlessDev/alnair-router"
+                    >Alnair Router</a
+                  >
+                </th>
+                <th scope="col">
+                  <a href="https://github.com/decolua/9router">9Router</a>
+                </th>
+                <th scope="col">
+                  <a href="https://github.com/cheaper-inference/OmniRoute"
+                    >OmniRoute</a
+                  >
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Installation</th>
+                <td>
+                  Native Rust binary, optional npm launcher, and Docker image.
+                </td>
+                <td>npm CLI, with source and Docker deployment documented.</td>
+                <td>npm/Bun packages, Docker, and desktop/PWA options.</td>
+              </tr>
+              <tr>
+                <th scope="row">Routing</th>
+                <td>
+                  Model aliases and ordered fallback combos. Failover happens
+                  before content is emitted.
+                </td>
+                <td>
+                  Provider connections, model combos, and automatic fallback.
+                </td>
+                <td>
+                  Quota-aware auto-combos and configurable routing strategies.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Daily operation</th>
+                <td>
+                  Embedded Vue dashboard, SQLite, per-key controls, and
+                  usage-card exports.
+                </td>
+                <td>Web dashboard with provider and quota tracking.</td>
+                <td>Web dashboard, with a documented headless server mode.</td>
+              </tr>
+              <tr>
+                <th scope="row">License</th>
+                <td>MIT</td>
+                <td>MIT</td>
+                <td>MIT</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="comparison-details" aria-labelledby="alnair-fit-title">
+        <h2 id="alnair-fit-title">When Alnair fits your stack.</h2>
+        <dl class="desk-notes">
+          <div>
+            <dt>A native router process.</dt>
+            <dd>
+              The release binary includes its dashboard and uses SQLite storage.
+              It runs without a Node.js runtime. The optional npm package
+              launches the prebuilt binary.
+            </dd>
+          </div>
+          <div>
+            <dt>A route you can explain.</dt>
+            <dd>
+              Prefixes map models to upstream connections. Named combos try
+              entries in your chosen order. A stream that has already emitted
+              content doesn't silently switch providers.
+            </dd>
+          </div>
+          <div>
+            <dt>Usage you can inspect.</dt>
+            <dd>
+              Inspect upstream attempts, token totals, and recorded spend. Give
+              client keys budgets and model allowlists, then export a usage
+              summary from the My Usage page.
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="comparison-reading" aria-labelledby="migration-title">
+        <div>
+          <h2 id="migration-title">Start with your client's API.</h2>
+          <p>
+            Alnair exposes OpenAI-compatible Chat Completions and Responses
+            endpoints, plus Anthropic Messages. Point a client that supports a
+            custom base URL at your router, then choose an alias or combo as the
+            model reference.
+          </p>
+          <p>
+            Before switching your daily setup, connect the upstream you actually
+            use and try your usual streaming and tool-call requests. Configure
+            the fallback order and key policies around your workload.
+          </p>
+          <a class="button button-primary" href="/#install"
+            >Install Alnair Router</a
+          >
+        </div>
+        <aside class="source-notes" aria-labelledby="source-title">
+          <h2 id="source-title">Read the sources.</h2>
+          <p>
+            9Router documents provider connections, combos, and quota tracking.
+            OmniRoute documents automatic routing strategies and several
+            deployment options. Read their guides if those are your deciding
+            factors.
+          </p>
+          <ul>
+            <li>
+              <a href="https://github.com/xFlawlessDev/alnair-router"
+                >Alnair Router documentation</a
+              >
+            </li>
+            <li>
+              <a href="https://github.com/decolua/9router"
+                >9Router documentation</a
+              >
+            </li>
+            <li>
+              <a href="https://github.com/cheaper-inference/OmniRoute"
+                >OmniRoute documentation</a
+              >
+            </li>
+          </ul>
+          <p>
+            Alnair's tiered-combo design is modeled on 9Router. Alnair is a
+            separate Rust implementation; this page describes the projects
+            independently.
+          </p>
+        </aside>
+      </section>
+    </main>
+    <footer class="footer">
+      <div class="shell footer-content">
+        <a class="wordmark" href="/"
+          ><img
+            src="/assets/alnair-white.svg"
+            width="34"
+            height="34"
+            alt=""
+          /><span>alnair<span class="wordmark-suffix"> / router</span></span></a
+        >
+        <p>Made for a desk full of models.</p>
+        <div class="footer-links">
+          <a href="/">Home</a
+          ><a
+            href="https://github.com/xFlawlessDev/alnair-router/blob/main/LICENSE"
+            >MIT license</a
+          >
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

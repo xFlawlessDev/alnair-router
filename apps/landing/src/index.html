@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#15283c" />
+    <title>Alnair Router | Self-hosted LLM Router &amp; AI Gateway</title>
+    <meta
+      name="description"
+      content="Self-host an open-source LLM router for OpenAI and Anthropic APIs. Manage providers, fallback chains, API keys, and token usage with a built-in dashboard."
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="https://router.alnairlabs.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Alnair Router" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://router.alnairlabs.com/" />
+    <meta
+      property="og:title"
+      content="Alnair Router | Self-hosted LLM Router &amp; AI Gateway"
+    />
+    <meta
+      property="og:description"
+      content="One Rust binary for multi-provider LLM routing, fallback combos, API key controls, and an embedded dashboard. Open source under the MIT license."
+    />
+    <meta
+      property="og:image"
+      content="https://router.alnairlabs.com/assets/overview.png"
+    />
+    <meta property="og:image:width" content="1440" />
+    <meta property="og:image:height" content="900" />
+    <meta
+      property="og:image:alt"
+      content="Alnair Router dashboard with provider activity and token usage. Sample data."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Alnair Router | Self-hosted LLM Router &amp; AI Gateway"
+    />
+    <meta
+      name="twitter:description"
+      content="Open-source OpenAI and Anthropic API routing, fallback combos, and usage tracking in a single Rust binary."
+    />
+    <meta
+      name="twitter:image"
+      content="https://router.alnairlabs.com/assets/overview.png"
+    />
+    <meta
+      name="twitter:image:alt"
+      content="Alnair Router dashboard with provider activity and token usage. Sample data."
+    />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://router.alnairlabs.com/#website",
+            "url": "https://router.alnairlabs.com/",
+            "name": "Alnair Router",
+            "alternateName": "alnair-router",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://router.alnairlabs.com/#webpage",
+            "url": "https://router.alnairlabs.com/",
+            "name": "Alnair Router | Self-hosted LLM Router & AI Gateway",
+            "description": "Self-host an open-source LLM router for OpenAI and Anthropic APIs. Manage providers, fallback chains, API keys, and token usage with a built-in dashboard.",
+            "inLanguage": "en",
+            "isPartOf": { "@id": "https://router.alnairlabs.com/#website" },
+            "about": { "@id": "https://router.alnairlabs.com/#software" },
+            "primaryImageOfPage": {
+              "@type": "ImageObject",
+              "url": "https://router.alnairlabs.com/assets/overview.png",
+              "width": 1440,
+              "height": 900
+            }
+          },
+          {
+            "@type": "SoftwareSourceCode",
+            "@id": "https://router.alnairlabs.com/#software",
+            "name": "Alnair Router",
+            "url": "https://router.alnairlabs.com/",
+            "description": "An open-source LLM router and AI API gateway built in Rust, with ordered fallback combos, API key controls, and an embedded dashboard.",
+            "codeRepository": "https://github.com/xFlawlessDev/alnair-router",
+            "programmingLanguage": "Rust",
+            "license": "https://github.com/xFlawlessDev/alnair-router/blob/main/LICENSE",
+            "isAccessibleForFree": true
+          }
+        ]
+      }
+    </script>
+    <script src="/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="masthead" id="top">
+      <div class="shell navigation">
+        <a class="wordmark" href="#top" aria-label="Alnair Router home">
+          <img src="/assets/alnair-white.svg" width="42" height="42" alt="" />
+          <span>alnair<span class="wordmark-suffix"> / router</span></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a href="#inside">Inside the router</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/xFlawlessDev/alnair-router"
+            >GitHub <span class="external-label">(source)</span></a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" aria-labelledby="hero-title">
+        <div class="edition">
+          <span>Independent tools for your model stack</span
+          ><span>Open source / MIT licensed</span>
+        </div>
+        <div class="hero-layout">
+          <div class="hero-copy">
+            <h1 id="hero-title">
+              Every model.<br /><span class="cutout">One address.</span>
+            </h1>
+            <p class="hero-description">
+              Alnair is an open-source LLM router and AI API gateway. Bring your
+              providers together, set fallback chains, and follow every token
+              from a dashboard that runs on your machine.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#install"
+                >Install Alnair Router</a
+              >
+              <a
+                class="text-link"
+                href="https://github.com/xFlawlessDev/alnair-router#quick-start"
+                >Read the quick start</a
+              >
+            </div>
+            <p class="hero-footnote">
+              Single Rust binary. Embedded dashboard. SQLite storage.
+            </p>
+          </div>
+          <div class="cover">
+            <div class="cover-heading">
+              <span>The router desk</span><span>On your own terms.</span>
+            </div>
+            <figure class="product-shot">
+              <img
+                id="gallery-image"
+                src="/assets/overview.png"
+                width="1440"
+                height="900"
+                fetchpriority="high"
+                alt="Alnair Overview dashboard showing usage totals and live traffic with sample data"
+              />
+              <figcaption>
+                <span id="gallery-caption">Overview / See the whole desk.</span
+                ><button
+                  class="expand-button"
+                  type="button"
+                  id="expand-image"
+                  aria-haspopup="dialog"
+                  hidden
+                >
+                  Expand screenshot
+                </button>
+              </figcaption>
+            </figure>
+            <div
+              class="gallery-controls"
+              role="group"
+              aria-label="Choose a dashboard screenshot"
+              hidden
+            >
+              <button type="button" data-view="overview" aria-pressed="true">
+                Overview
+              </button>
+              <button
+                type="button"
+                data-view="connections"
+                aria-pressed="false"
+              >
+                Connections
+              </button>
+              <button type="button" data-view="usage" aria-pressed="false">
+                Usage
+              </button>
+            </div>
+            <p class="sample-note">
+              Actual dashboard. Screenshots contain sample data.
+            </p>
+            <p
+              class="sample-note"
+              id="gallery-status"
+              role="status"
+              aria-live="polite"
+            ></p>
+          </div>
+        </div>
+        <div class="index-strip">
+          <span>Bring your own providers</span
+          ><span>OpenAI + Anthropic wire formats</span
+          ><span>Self-hosted by you</span>
+        </div>
+      </section>
+
+      <section
+        class="routing-section"
+        id="inside"
+        aria-labelledby="routing-title"
+      >
+        <div class="shell">
+          <div class="section-heading">
+            <p class="rubric">01 / The routing desk</p>
+            <p class="margin-note">Your client keeps its familiar API.</p>
+          </div>
+          <div class="routing-layout">
+            <div>
+              <h2 id="routing-title">
+                Give your models<br />a forwarding address.
+              </h2>
+              <p class="section-description">
+                Point your OpenAI-compatible client at Alnair. A model prefix
+                picks the upstream. A named combo gives you an ordered chain for
+                multi-provider fallback.
+              </p>
+              <p class="protocol-note">
+                Use <code>/v1/chat/completions</code> or
+                <code>/v1/responses</code> for OpenAI clients, and
+                <code>/v1/messages</code> for Anthropic clients. Keep your own
+                provider accounts.
+              </p>
+              <a
+                class="text-link"
+                href="https://github.com/xFlawlessDev/alnair-router#what-it-does"
+                >Read the routing rules</a
+              >
+            </div>
+            <div class="routing-sheet">
+              <div class="sheet-title">
+                <span>A request's route</span><span>Illustrated example</span>
+              </div>
+              <div class="route-row">
+                <span class="route-label">Your client</span
+                ><code>POST /v1/chat/completions</code>
+              </div>
+              <div class="route-connector" aria-hidden="true">↓</div>
+              <div class="route-row route-router">
+                <span class="route-label">Alnair Router</span
+                ><code>model: "free-forever"</code>
+              </div>
+              <div class="route-connector" aria-hidden="true">↓</div>
+              <div class="fallback-chain">
+                <span>First upstream</span><span aria-hidden="true">→</span
+                ><span>Next upstream</span>
+              </div>
+              <p class="sheet-note">
+                If a tier fails before emitting content, the next tier gets the
+                request. You configure the order.
+              </p>
+            </div>
+          </div>
+          <dl class="desk-notes">
+            <div>
+              <dt>Keep keys in check.</dt>
+              <dd>
+                Give client keys rate limits, budgets, model allowlists, and
+                plans.
+              </dd>
+            </div>
+            <div>
+              <dt>Know what ran.</dt>
+              <dd>
+                Inspect requests, token counts, recorded spend, and provider
+                activity.
+              </dd>
+            </div>
+            <div>
+              <dt>Trim bulky context.</dt>
+              <dd>
+                Use the token-saving pipeline to compress tool output and
+                inspect the savings.
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <aside
+        class="comparison-callout shell"
+        aria-labelledby="comparison-title"
+      >
+        <div>
+          <h2 id="comparison-title">Choosing between LLM routers?</h2>
+          <p>
+            Compare Alnair Router, 9Router, and OmniRoute by deployment,
+            routing, and day-to-day operation.
+          </p>
+        </div>
+        <a class="text-link" href="/compare/">Read the router comparison</a>
+      </aside>
+
+      <section class="sticker-section shell" aria-labelledby="sticker-title">
+        <div class="sticker-copy">
+          <p class="rubric">02 / A little proof of work</p>
+          <h2 id="sticker-title">
+            Your usage,<br />as a <span class="highlight">sticker.</span>
+          </h2>
+          <p class="section-description">
+            A snapshot worth keeping. Turn your API key's usage into a retro
+            card with total tokens, requests, recorded spend, and your top
+            models.
+          </p>
+          <p>
+            Download a PNG in landscape or square format. Or open your device's
+            share sheet, where supported.
+          </p>
+          <a
+            class="text-link"
+            href="https://github.com/xFlawlessDev/alnair-router/tree/main/docs/screenshots"
+            >See more of the dashboard</a
+          >
+          <p class="privacy-note">
+            The exported card leaves out your API key and router address.
+          </p>
+        </div>
+        <figure class="sticker-preview">
+          <div class="print-label">
+            <span>From the My Usage page</span
+            ><span>PNG / landscape + square</span>
+          </div>
+          <img
+            src="/assets/usage-share.png"
+            width="1440"
+            height="900"
+            loading="lazy"
+            alt="My Usage page with a retro usage card, top model breakdown, landscape and square formats, and Download PNG and Share image buttons; sample data"
+          />
+          <figcaption>
+            Real export controls in the dashboard. Usage shown here is sample
+            data.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section
+        class="install-section"
+        id="install"
+        aria-labelledby="install-title"
+      >
+        <div class="shell install-layout">
+          <div class="install-copy">
+            <p class="rubric">03 / Put it on your desk</p>
+            <h2 id="install-title">Your machine.<br />Your model stack.</h2>
+            <p class="section-description">
+              Install the router, open the local dashboard, and connect your
+              first provider.
+            </p>
+            <p>
+              Alnair is MIT licensed. You bring your provider accounts and pay
+              their usage costs.
+            </p>
+            <a
+              class="text-link"
+              href="https://github.com/xFlawlessDev/alnair-router/releases/latest"
+              >Download a release binary</a
+            >
+          </div>
+          <div class="install-sheet">
+            <div class="install-toolbar" hidden>
+              <label for="install-method">Installation method</label
+              ><select id="install-method">
+                <option value="npm">npm / Node 18+</option>
+                <option value="unix">Linux / macOS</option>
+                <option value="windows">Windows / PowerShell</option>
+              </select>
+            </div>
+            <div class="command-heading">
+              <span id="command-language">Shell</span
+              ><button
+                id="copy-command"
+                class="copy-button"
+                type="button"
+                hidden
+              >
+                Copy command
+              </button>
+            </div>
+            <pre><code id="install-command">npm install -g @xflawlessdev/alnair-router</code></pre>
+            <p
+              class="copy-status"
+              id="copy-status"
+              role="status"
+              aria-live="polite"
+            ></p>
+            <p id="install-help">
+              Run <code>alnair-router start</code> to launch the router. To also
+              enable auto-start with your session, run
+              <code>alnair-router install</code>.
+            </p>
+            <div class="next-step">
+              <span>Next stop: your dashboard</span>
+              <p>Run <code>alnair-router start</code>, then open:</p>
+              <code>http://127.0.0.1:7878/login</code>
+              <p>
+                Use the setup code from the router log to choose your dashboard
+                password. Then add an upstream connection.
+              </p>
+            </div>
+            <a
+              class="text-link"
+              href="https://github.com/xFlawlessDev/alnair-router#install"
+              >Full install guide, including Docker</a
+            >
+            <noscript
+              ><p>
+                For other install methods, follow the full install guide above.
+                The npm command works without JavaScript.
+              </p></noscript
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer-content">
+        <a class="wordmark" href="#top"
+          ><img
+            src="/assets/alnair-white.svg"
+            width="34"
+            height="34"
+            alt=""
+          /><span>alnair<span class="wordmark-suffix"> / router</span></span></a
+        >
+        <p>Made for a desk full of models.</p>
+        <div class="footer-links">
+          <a href="https://github.com/xFlawlessDev/alnair-router">Source</a
+          ><a
+            href="https://github.com/xFlawlessDev/alnair-router/blob/main/LICENSE"
+            >MIT license</a
+          >
+        </div>
+      </div>
+    </footer>
+
+    <dialog id="screenshot-dialog" aria-labelledby="dialog-title">
+      <div class="dialog-toolbar">
+        <h2 id="dialog-title">Dashboard screenshot</h2>
+        <button type="button" id="close-dialog">Close</button>
+      </div>
+      <p class="dialog-note">
+        Sample data. Scroll horizontally to inspect the dashboard on a smaller
+        screen.
+      </p>
+      <div
+        class="dialog-image-scroll"
+        tabindex="0"
+        role="region"
+        aria-label="Full size screenshot"
+      >
+        <img
+          id="dialog-image"
+          src="/assets/overview.png"
+          width="1440"
+          height="900"
+          alt=""
+          loading="lazy"
+        />
+      </div>
+    </dialog>
+  </body>
+</html>
