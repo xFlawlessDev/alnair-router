@@ -309,6 +309,65 @@ fn auth_style_maps_onto_the_provider_enum() {
     assert_eq!(auth_style_from_str(""), AuthStyle::ApiKey);
 }
 
+#[test]
+fn wire_api_unknown_values_degrade_to_chat() {
+    assert_eq!(wire_api_from_str("chat"), WireApi::Chat);
+    assert_eq!(wire_api_from_str("responses"), WireApi::Responses);
+    assert_eq!(wire_api_from_str("respones"), WireApi::Chat);
+    assert_eq!(wire_api_from_str(""), WireApi::Chat);
+}
+
+#[test]
+fn cache_retention_unknown_values_degrade_to_none() {
+    assert_eq!(cache_retention_from_str("none"), CacheRetention::None);
+    assert_eq!(cache_retention_from_str("short"), CacheRetention::Short);
+    assert_eq!(cache_retention_from_str("long"), CacheRetention::Long);
+    assert_eq!(cache_retention_from_str("forever"), CacheRetention::None);
+}
+
+#[test]
+fn supported_provider_types_cover_every_provider_with_a_unique_key() {
+    let keys = supported_provider_types();
+
+    assert_eq!(
+        keys.len(),
+        ProviderType::ALL.len(),
+        "every provider must be listed exactly once"
+    );
+    for provider_type in ProviderType::ALL {
+        assert!(
+            keys.contains(&provider_type.as_key()),
+            "{provider_type:?} is missing from the supported list"
+        );
+        assert!(
+            provider_type
+                .as_key()
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c == '-'),
+            "{:?} must be a kebab-case key",
+            provider_type.as_key()
+        );
+    }
+
+    let mut unique = keys.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), keys.len(), "provider keys must be unique");
+}
+
+#[test]
+fn the_rejection_message_lists_every_supported_provider() {
+    let error = provider_type_from_str("ollama").expect_err("unsupported");
+    let message = error.to_string();
+
+    for key in supported_provider_types() {
+        assert!(
+            message.contains(key),
+            "the rejection message must mention `{key}`, got: {message}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn collect_aggregates_tool_calls_instead_of_failing() {
     let chunks: ChunkStream = futures::stream::iter(vec![
@@ -348,4 +407,57 @@ async fn collect_marks_plain_completions_as_stopped() {
 
     assert_eq!(completion.finish_reason.as_deref(), Some("stop"));
     assert!(completion.tool_calls.is_empty());
+}
+
+#[tokio::test]
+async fn collect_defaults_the_finish_reason_when_no_done_chunk_arrives() {
+    // A provider that closes the stream without a terminal chunk still
+    // completed; the collector must not hand callers an empty reason, which
+    // would let a truncated answer look like an ordinary stop.
+    let chunks: ChunkStream =
+        futures::stream::iter(vec![Ok(StreamChunk::Text("partial".to_string()))]).boxed();
+
+    let completion = collect(chunks).await.expect("collect");
+
+    assert_eq!(completion.finish_reason.as_deref(), Some("stop"));
+}
+
+#[tokio::test]
+async fn collect_defaults_tool_calls_when_no_done_chunk_arrives() {
+    let chunks: ChunkStream = futures::stream::iter(vec![Ok(StreamChunk::ToolCall {
+        id: "tc1".to_string(),
+        name: "read_file".to_string(),
+        arguments: "{}".to_string(),
+    })])
+    .boxed();
+
+    let completion = collect(chunks).await.expect("collect");
+
+    assert_eq!(completion.finish_reason.as_deref(), Some("tool_calls"));
+}
+
+#[test]
+fn a_rejected_request_is_a_bad_request_not_an_upstream_failure() {
+    let error = to_stream_chunk(Err(alnair_llm::ChatError::BadRequest(
+        "Anthropic API key is required".to_string(),
+    )))
+    .expect_err("must fail");
+
+    assert!(
+        matches!(error, Error::BadRequest(ref message) if message.contains("API key")),
+        "a provider-side request rejection must stay a 400, got {error:?}"
+    );
+}
+
+#[test]
+fn an_upstream_error_stays_an_upstream_failure() {
+    let error = to_stream_chunk(Err(alnair_llm::ChatError::Provider(
+        "OpenAI API error 500: boom".to_string(),
+    )))
+    .expect_err("must fail");
+
+    assert!(
+        matches!(error, Error::Upstream(_)),
+        "a provider failure must stay a 502, got {error:?}"
+    );
 }

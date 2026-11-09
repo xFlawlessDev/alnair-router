@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::db::repos::connections::SUPPORTED_PROVIDER_TYPES;
+use crate::db::repos::connections::supported_provider_types;
 
 /// How a preset authenticates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -232,7 +232,7 @@ fn provider(
     api_key_url: &'static str,
     note: Option<&'static str>,
 ) -> ProviderPreset {
-    debug_assert!(SUPPORTED_PROVIDER_TYPES.contains(&provider_type));
+    debug_assert!(supported_provider_types().contains(&provider_type));
 
     ProviderPreset {
         id,

@@ -389,7 +389,21 @@ pub enum ProviderType {
 }
 
 impl ProviderType {
+    /// Every supported provider, in the order the router's write-time
+    /// validation and error messages list them.
+    pub const ALL: [ProviderType; 5] = [
+        ProviderType::OpenaiCompatible,
+        ProviderType::AnthropicNative,
+        ProviderType::CommandCode,
+        ProviderType::CodeBuddyIntl,
+        ProviderType::OpenAiCodex,
+    ];
+
     /// Stable key used for registry lookup and diagnostics.
+    ///
+    /// This is the single source of truth for the wire names: the registry, the
+    /// router's write-time validation, and the messages that list supported
+    /// types all read it from here.
     pub fn as_key(&self) -> &'static str {
         match self {
             ProviderType::OpenaiCompatible => "openai-compatible",

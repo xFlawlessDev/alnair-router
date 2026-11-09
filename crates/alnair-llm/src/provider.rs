@@ -83,11 +83,5 @@ impl ProviderRegistry {
 }
 
 pub fn provider_type_to_key(provider_type: &ProviderType) -> &'static str {
-    match provider_type {
-        ProviderType::OpenaiCompatible => "openai-compatible",
-        ProviderType::AnthropicNative => "anthropic-native",
-        ProviderType::CommandCode => "command-code",
-        ProviderType::CodeBuddyIntl => "codebuddy-intl",
-        ProviderType::OpenAiCodex => "openai-codex",
-    }
+    provider_type.as_key()
 }

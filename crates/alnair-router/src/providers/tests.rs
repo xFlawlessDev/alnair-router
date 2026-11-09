@@ -12,7 +12,7 @@ fn presets_are_unique_and_supported() {
 
     for preset in &presets {
         assert!(
-            SUPPORTED_PROVIDER_TYPES.contains(&preset.provider_type),
+            supported_provider_types().contains(&preset.provider_type),
             "{} has an unsupported wire family",
             preset.id
         );

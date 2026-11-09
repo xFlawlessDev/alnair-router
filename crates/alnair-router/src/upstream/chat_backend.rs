@@ -285,11 +285,23 @@ pub fn thinking_level_from_budget(budget: u64) -> &'static str {
 }
 
 /// Maps a connection's stored cache-retention value onto the provider enum.
+///
+/// Anything unrecognised keeps today's behaviour (`none`) but is logged: the
+/// repository validates on write, so a stray value means a hand-edited row or a
+/// migration artefact, and silently changing what the upstream receives would
+/// hide that.
 pub fn cache_retention_from_str(value: &str) -> CacheRetention {
     match value {
+        "none" | "" => CacheRetention::None,
         "short" => CacheRetention::Short,
         "long" => CacheRetention::Long,
-        _ => CacheRetention::None,
+        other => {
+            tracing::warn!(
+                value = other,
+                "unknown cache_retention on the connection row; treating it as none"
+            );
+            CacheRetention::None
+        }
     }
 }
 
@@ -297,11 +309,19 @@ pub fn cache_retention_from_str(value: &str) -> CacheRetention {
 ///
 /// Anything unrecognised falls back to the provider default (`x-api-key` for
 /// Anthropic-native), so a bad value degrades to today's behaviour rather than
-/// silently switching the header.
+/// silently switching the header. The fallback is logged for the same reason as
+/// [`cache_retention_from_str`].
 pub fn auth_style_from_str(value: &str) -> AuthStyle {
     match value {
+        "api_key" | "" => AuthStyle::ApiKey,
         "bearer" => AuthStyle::Bearer,
-        _ => AuthStyle::ApiKey,
+        other => {
+            tracing::warn!(
+                value = other,
+                "unknown auth_style on the connection row; treating it as api_key"
+            );
+            AuthStyle::ApiKey
+        }
     }
 }
 
@@ -309,11 +329,18 @@ pub fn auth_style_from_str(value: &str) -> AuthStyle {
 ///
 /// Anything unrecognised falls back to `/chat/completions`, which is what every
 /// OpenAI-compatible endpoint serves, so a bad value degrades to today's
-/// behaviour rather than failing the request.
+/// behaviour rather than failing the request. The fallback is logged.
 pub fn wire_api_from_str(value: &str) -> WireApi {
     match value {
+        "chat" | "" => WireApi::Chat,
         "responses" => WireApi::Responses,
-        _ => WireApi::Chat,
+        other => {
+            tracing::warn!(
+                value = other,
+                "unknown wire_api on the connection row; treating it as chat"
+            );
+            WireApi::Chat
+        }
     }
 }
 
@@ -382,15 +409,14 @@ fn first_media_part_kind(messages: &[RouterMessage]) -> Option<String> {
     })
 }
 
-/// Human-readable provider name for error messages.
-fn provider_type_label(provider_type: &ProviderType) -> &'static str {
-    match provider_type {
-        ProviderType::OpenaiCompatible => "openai-compatible",
-        ProviderType::AnthropicNative => "anthropic-native",
-        ProviderType::CommandCode => "command-code",
-        ProviderType::CodeBuddyIntl => "codebuddy-intl",
-        ProviderType::OpenAiCodex => "openai-codex",
-    }
+/// Every provider family the router can dispatch to, in validation order.
+///
+/// Kept here because this module is the only place allowed to name the
+/// provider crate; write-time validation and the dashboard read it from here.
+pub fn supported_provider_types() -> &'static [&'static str; 5] {
+    use std::sync::OnceLock;
+    static KEYS: OnceLock<[&'static str; 5]> = OnceLock::new();
+    KEYS.get_or_init(|| ProviderType::ALL.map(|provider_type| provider_type.as_key()))
 }
 
 /// Builds a provider registry with the supported implementations registered.
@@ -540,7 +566,7 @@ pub fn stream(
         return Err(Error::BadRequest(format!(
             "content part `{kind}` is only supported on openai-compatible connections; \
              this model is served by a {} connection",
-            provider_type_label(&provider_type)
+            provider_type.as_key()
         )));
     }
 
@@ -553,7 +579,7 @@ pub fn stream(
         return Err(Error::BadRequest(format!(
             "`web_search_options` is only supported on openai-compatible connections; \
              this model is served by a {} connection",
-            provider_type_label(&provider_type)
+            provider_type.as_key()
         )));
     }
 
@@ -656,6 +682,10 @@ fn to_stream_chunk(
                 + cost_reasoning_usd.unwrap_or(0.0),
         })),
         Ok(LlmStreamChunk::Done(reason)) => Ok(StreamChunk::Done(reason)),
+        // A rejected request is not an upstream fault: an Anthropic connection
+        // with no credential, or a body the provider layer refuses to build,
+        // must reach the client as a 400 rather than a 502 gateway error.
+        Err(alnair_llm::ChatError::BadRequest(message)) => Err(Error::BadRequest(message)),
         Err(error) => Err(Error::Upstream(error.to_string())),
     }
 }
@@ -698,6 +728,14 @@ pub async fn collect(stream: ChunkStream) -> Result<CompletionResponse> {
                 break;
             }
         }
+    }
+
+    // A stream that ends without a `Done` chunk still completed: the provider
+    // closed the connection. Leaving the reason empty would let a caller's
+    // fallback word a truncated answer as if it finished normally, so resolve
+    // it here, next to the one function that owns the vocabulary.
+    if response.finish_reason.is_none() {
+        response.finish_reason = Some(openai_finish_reason(None, !response.tool_calls.is_empty()));
     }
 
     Ok(response)

@@ -11,13 +11,13 @@ use crate::crypto::CredentialCipher;
 use crate::error::{Error, Result};
 
 /// The upstream families supported by the router.
-pub const SUPPORTED_PROVIDER_TYPES: [&str; 5] = [
-    "openai-compatible",
-    "anthropic-native",
-    "command-code",
-    "codebuddy-intl",
-    "openai-codex",
-];
+///
+/// Delegates to the provider seam so the list has one owner: adding a provider
+/// to the provider crate updates write-time validation, the dashboard-facing
+/// presets, and the rejection message together.
+pub fn supported_provider_types() -> &'static [&'static str; 5] {
+    crate::upstream::chat_backend::supported_provider_types()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Connection {
@@ -203,7 +203,7 @@ fn default_true() -> bool {
 
 /// Rejects provider types the router cannot dispatch to.
 pub fn validate_provider_type(provider_type: &str) -> Result<()> {
-    if SUPPORTED_PROVIDER_TYPES.contains(&provider_type) {
+    if supported_provider_types().contains(&provider_type) {
         Ok(())
     } else {
         Err(Error::UnsupportedProviderType(provider_type.to_string()))
