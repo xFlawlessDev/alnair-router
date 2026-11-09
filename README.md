@@ -241,14 +241,15 @@ built assets are **embedded into the router binary**: with a production build,
 open `http://127.0.0.1:7878/` and the dashboard is there. Set
 `server.serve_dashboard = false` when a reverse proxy serves it instead.
 
-Screenshots of every page, captured from a live router, live in
+Screenshots of every page, captured with sample data, live in
 [`docs/screenshots`](docs/screenshots) — see its
 [README](docs/screenshots/README.md) for the full index.
 
 | | | |
 |---|---|---|
-| [![Overview](docs/screenshots/02-overview.png)](docs/screenshots/02-overview.png) <br> **Overview** — status, usage rollup, catalog | [![Usage](docs/screenshots/12-usage.png)](docs/screenshots/12-usage.png) <br> **Usage** — live topology, trend chart, filters | [![Playground](docs/screenshots/10-playground-chat.png)](docs/screenshots/10-playground-chat.png) <br> **Playground** — streamed chat, tier badge |
+| [![Overview](docs/screenshots/02-overview.png)](docs/screenshots/02-overview.png) <br> **Overview** — status and usage rollup | [![Usage](docs/screenshots/12-usage.png)](docs/screenshots/12-usage.png) <br> **Usage** — summary and live topology | [![Playground](docs/screenshots/10-playground-chat.png)](docs/screenshots/10-playground-chat.png) <br> **Playground** — chat controls |
 | [![Token saving](docs/screenshots/09-token-saving-config.png)](docs/screenshots/09-token-saving-config.png) <br> **Token saving** — pipeline controls, levels | [![Console](docs/screenshots/13-console.png)](docs/screenshots/13-console.png) <br> **Console** — live API transcript log | [![My Usage](docs/screenshots/16-my-usage.png)](docs/screenshots/16-my-usage.png) <br> **My Usage** — client-key self-service rollup |
+| [![Your usage, as a sticker](docs/screenshots/17-my-usage-share.png)](docs/screenshots/17-my-usage-share.png) <br> **Your usage, as a sticker** — download or share a summary with top models | [![Usage trend](docs/screenshots/18-usage-trend.png)](docs/screenshots/18-usage-trend.png) <br> **Usage trend** — token chart and request filters | |
 
 For development, run it with Vite against the live router:
 
