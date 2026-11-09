@@ -1657,6 +1657,81 @@ async fn pricing_overrides_shadow_synced_rows() {
 }
 
 #[tokio::test]
+async fn the_builtin_table_answers_when_the_database_is_empty() {
+    let db = db().await;
+    let cache = PricingCache::new(db.pool.clone());
+
+    let found = cache.match_for("gpt-4o").await.expect("builtin match");
+
+    assert_eq!(found.source, "builtin");
+    assert_eq!(found.matched, "gpt-4o");
+    assert_eq!(found.price.input_per_million_usd, 2.50);
+    assert_eq!(found.price.output_per_million_usd, 10.00);
+}
+
+#[tokio::test]
+async fn an_override_beats_a_synced_row_which_beats_the_builtin_table() {
+    let db = db().await;
+    let repo = PricingRepository::new(db.pool.clone());
+    let cache = PricingCache::new(db.pool.clone());
+
+    // Layer 3: nothing stored, so the built-in table answers.
+    let builtin = cache.match_for("gpt-4o").await.expect("builtin");
+    assert_eq!(builtin.source, "builtin");
+
+    // Layer 2: a crawled row outranks the built-in table.
+    repo.replace_synced(
+        &[FetchedPrice {
+            model: "gpt-4o".to_string(),
+            price: synced_price(9.0, 20.0),
+        }],
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("seed sync");
+    cache.invalidate().await;
+
+    let synced = cache.match_for("gpt-4o").await.expect("synced");
+    assert_eq!(synced.source, "sync");
+    assert_eq!(synced.price.input_per_million_usd, 9.0);
+
+    // Layer 1: a dashboard override outranks both.
+    repo.upsert_overrides(&[PriceInput {
+        model: "gpt-4o".to_string(),
+        input_per_million_usd: 0.5,
+        output_per_million_usd: 1.5,
+        cache_read_per_million_usd: None,
+        cache_write_per_million_usd: None,
+        reasoning_per_million_usd: None,
+    }])
+    .await
+    .expect("override");
+    cache.invalidate().await;
+
+    let override_match = cache.match_for("gpt-4o").await.expect("override");
+    assert_eq!(override_match.source, "override");
+    assert_eq!(override_match.price.input_per_million_usd, 0.5);
+}
+
+#[tokio::test]
+async fn the_builtin_table_does_not_answer_for_an_unknown_model() {
+    let db = db().await;
+    let cache = PricingCache::new(db.pool.clone());
+
+    assert!(cache.price_for("qwen3:8b").await.is_none());
+}
+
+#[tokio::test]
+async fn the_builtin_table_is_not_listed_as_a_stored_row() {
+    let db = db().await;
+    let repo = PricingRepository::new(db.pool.clone());
+
+    // Built-in prices are a fallback, not rows: the dashboard's table shows
+    // what is stored, so a fresh install must list nothing.
+    assert!(repo.list().await.expect("list").is_empty());
+}
+
+#[tokio::test]
 async fn pricing_sync_runs_keep_the_latest_status() {
     let db = db().await;
     let repo = PricingRepository::new(db.pool.clone());

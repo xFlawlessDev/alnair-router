@@ -331,7 +331,8 @@ export interface PriceQuote {
 export interface PriceMatch {
   model: string;
   matched: string | null;
-  source?: "override" | "sync";
+  /** `builtin` comes from the router's fallback table, not a stored row. */
+  source?: "override" | "sync" | "builtin";
   price?: PriceQuote;
 }
 

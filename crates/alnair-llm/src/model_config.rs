@@ -79,42 +79,6 @@ pub struct ModelCostRates {
     pub reasoning_per_million_usd: Option<f64>,
 }
 
-/// Static registry of known model cost rates (USD per million tokens).
-/// Updated as providers publish pricing. Returns None for local/unknown models.
-pub fn known_cost_rates(model_id: &str) -> Option<ModelCostRates> {
-    match model_id {
-        "gpt-4o" | "gpt-4o-2024-11-20" => Some(ModelCostRates {
-            input_per_million_usd: 2.50,
-            output_per_million_usd: 10.00,
-            cache_read_per_million_usd: Some(1.25),
-            cache_write_per_million_usd: None,
-            reasoning_per_million_usd: Some(15.00),
-        }),
-        "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" => Some(ModelCostRates {
-            input_per_million_usd: 0.15,
-            output_per_million_usd: 0.60,
-            cache_read_per_million_usd: Some(0.075),
-            cache_write_per_million_usd: None,
-            reasoning_per_million_usd: Some(0.90),
-        }),
-        "gpt-4.1" => Some(ModelCostRates {
-            input_per_million_usd: 2.00,
-            output_per_million_usd: 8.00,
-            cache_read_per_million_usd: Some(0.50),
-            cache_write_per_million_usd: None,
-            reasoning_per_million_usd: Some(12.00),
-        }),
-        "gpt-4.1-mini" => Some(ModelCostRates {
-            input_per_million_usd: 0.40,
-            output_per_million_usd: 1.60,
-            cache_read_per_million_usd: Some(0.10),
-            cache_write_per_million_usd: None,
-            reasoning_per_million_usd: Some(2.40),
-        }),
-        _ => None,
-    }
-}
-
 /// Options passed to a single LLM streaming call.
 #[derive(Debug, Clone)]
 pub struct LlmStreamOptions {
@@ -231,12 +195,13 @@ impl ModelConfig {
         }
     }
 
-    /// Effective cost rates: explicit override on the config > static registry > None.
-    /// Returns None for local/unmetered models (Ollama) or unknown model IDs.
+    /// Explicit rates on this config, when the caller resolved them.
+    ///
+    /// The provider layer carries no built-in price table: pricing is router
+    /// policy, so an upstream is only ever told the rate the router already
+    /// decided on.
     pub fn effective_cost_rates(&self) -> Option<ModelCostRates> {
-        self.cost_rates
-            .clone()
-            .or_else(|| known_cost_rates(&self.model_id))
+        self.cost_rates.clone()
     }
 }
 
@@ -363,23 +328,17 @@ mod tests {
     }
 
     #[test]
-    fn known_cost_rates_returns_gpt_4o_rates() {
-        let rates = known_cost_rates("gpt-4o").expect("known gpt-4o rates");
+    fn effective_cost_rates_are_exactly_what_the_router_supplied() {
+        let config = ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
 
-        assert_eq!(rates.input_per_million_usd, 2.50);
-        assert_eq!(rates.output_per_million_usd, 10.00);
-        assert_eq!(rates.cache_read_per_million_usd, Some(1.25));
-        assert_eq!(rates.cache_write_per_million_usd, None);
-        assert_eq!(rates.reasoning_per_million_usd, Some(15.00));
+        assert!(
+            config.effective_cost_rates().is_none(),
+            "the provider layer must not invent prices for a model the router left unpriced"
+        );
     }
 
     #[test]
-    fn known_cost_rates_returns_none_for_unknown_model() {
-        assert!(known_cost_rates("qwen3:8b").is_none());
-    }
-
-    #[test]
-    fn explicit_cost_rates_override_static_registry() {
+    fn explicit_cost_rates_are_returned_unchanged() {
         let custom = ModelCostRates {
             input_per_million_usd: 1.23,
             output_per_million_usd: 4.56,

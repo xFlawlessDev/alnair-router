@@ -1,9 +1,12 @@
-//! Model pricing: dashboard overrides, crawled catalogs, and the lookup cache.
+//! Model pricing: dashboard overrides, crawled catalogs, a built-in fallback
+//! table, and the lookup cache.
 //!
-//! Precedence is override → synced → the built-in `known_cost_rates` table in
-//! `alnair-llm` (used when the cache has no entry). The cache is loaded lazily
-//! and invalidated by every pricing write or sync.
+//! Precedence is override → synced → [`builtin`]. The cache is loaded lazily
+//! and invalidated by every pricing write or sync. A `builtin` answer is not a
+//! stored row: it is resolved from the in-memory table so a crawl can never
+//! shadow it and no migration is needed.
 
+pub mod builtin;
 pub mod sources;
 
 use std::collections::HashMap;
@@ -286,16 +289,27 @@ impl PricingIndex {
         Self { by_key, by_leaf }
     }
 
-    /// Exact id first, then the last path segment.
+    /// Exact id first, then the last path segment, then the built-in table.
+    ///
+    /// The built-in lookup is exact: its keys are canonical model ids, so leaf
+    /// matching would only invent matches the publisher never quoted.
     pub fn find(&self, model: &str) -> Option<PriceMatch> {
-        let entry = self
+        if let Some(entry) = self
             .by_key
             .get(model)
-            .or_else(|| self.by_leaf.get(leaf_of(model)))?;
+            .or_else(|| self.by_leaf.get(leaf_of(model)))
+        {
+            return Some(PriceMatch {
+                model: model.to_string(),
+                ..entry.clone()
+            });
+        }
 
-        Some(PriceMatch {
+        builtin::price(model).map(|price| PriceMatch {
             model: model.to_string(),
-            ..entry.clone()
+            matched: model.to_string(),
+            source: "builtin".to_string(),
+            price,
         })
     }
 }

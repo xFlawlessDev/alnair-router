@@ -4051,9 +4051,13 @@ async fn model_catalog_lists_providers_and_prices() {
     assert_eq!(tiers[0]["provider"], "openai-main");
     assert_eq!(tiers[0]["upstream_model"], "gpt-4o");
     assert_eq!(tiers[0]["price"]["output_per_million_usd"], 10.0);
+    assert_eq!(tiers[0]["price_source"], "override");
     assert_eq!(tiers[1]["tier"], 2);
     assert_eq!(tiers[1]["upstream_model"], "gpt-4o-mini");
-    assert!(tiers[1]["price"].is_null());
+    // Nothing is stored for `gpt-4o-mini`, so the router's built-in table
+    // answers instead of leaving the tier unpriced.
+    assert_eq!(tiers[1]["price"]["input_per_million_usd"], 0.15);
+    assert_eq!(tiers[1]["price_source"], "builtin");
 }
 
 #[tokio::test]
