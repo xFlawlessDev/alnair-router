@@ -6,8 +6,8 @@ use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
 
 use crate::db::repos::api_keys::{
-    normalize_allowed_models, normalized_budget, normalized_budget_mode, normalized_rate_limit,
-    normalized_token_limit, validate_budget_pair,
+    normalize_allowed_models, normalize_runtime_limit, normalized_budget, normalized_budget_mode,
+    normalized_rate_limit, normalized_token_limit, validate_budget_pair,
 };
 use crate::error::{Error, Result};
 use crate::limits::{BudgetMode, BudgetWindows, TokenWindows};
@@ -20,6 +20,7 @@ pub struct KeyPlan {
     /// Model patterns; an empty list allows any model.
     pub allowed_models: Json<Vec<String>>,
     pub rate_limit_per_minute: Option<i64>,
+    pub max_concurrent: Option<i64>,
     /// Daily spend cap in USD; `None` is uncapped.
     pub daily_budget_usd: Option<f64>,
     /// Weekly spend cap in USD; `None` is uncapped.
@@ -98,6 +99,8 @@ pub struct CreateKeyPlan {
     #[serde(default)]
     pub rate_limit_per_minute: Option<i64>,
     #[serde(default)]
+    pub max_concurrent: Option<i64>,
+    #[serde(default)]
     pub daily_budget_usd: Option<f64>,
     #[serde(default)]
     pub weekly_budget_usd: Option<f64>,
@@ -131,6 +134,8 @@ pub struct UpdateKeyPlan {
     pub allowed_models: Option<Vec<String>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub rate_limit_per_minute: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub max_concurrent: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub daily_budget_usd: Option<Option<f64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
@@ -185,6 +190,7 @@ impl KeyPlanRepository {
         self.ensure_name_free(name, None).await?;
 
         let rate_limit = normalized_rate_limit(input.rate_limit_per_minute)?;
+        let max_concurrent = normalize_runtime_limit(input.max_concurrent, "max_concurrent")?;
         let budgets = BudgetWindows::from_parts(
             normalized_budget(input.daily_budget_usd, "daily_budget_usd")?,
             normalized_budget(input.weekly_budget_usd, "weekly_budget_usd")?,
@@ -209,8 +215,8 @@ impl KeyPlanRepository {
                 (id, name, description, allowed_models, rate_limit_per_minute, daily_budget_usd,
                  weekly_budget_usd, monthly_budget_usd, lifetime_budget_usd, daily_token_limit,
                  weekly_token_limit, monthly_token_limit, lifetime_token_limit, budget_mode,
-                 created_at, updated_at, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 created_at, updated_at, expires_at, max_concurrent)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -229,6 +235,7 @@ impl KeyPlanRepository {
         .bind(now)
         .bind(now)
         .bind(input.expires_at)
+        .bind(max_concurrent)
         .execute(&self.pool)
         .await?;
 
@@ -266,6 +273,10 @@ impl KeyPlanRepository {
             Some(value) => normalized_rate_limit(*value)?,
             None => existing.rate_limit_per_minute,
         };
+        let max_concurrent = normalize_runtime_limit(
+            input.max_concurrent.unwrap_or(existing.max_concurrent),
+            "max_concurrent",
+        )?;
         let budgets = BudgetWindows::from_parts(
             match &input.daily_budget_usd {
                 Some(value) => normalized_budget(*value, "daily_budget_usd")?,
@@ -318,7 +329,7 @@ impl KeyPlanRepository {
                  daily_budget_usd = ?, weekly_budget_usd = ?, monthly_budget_usd = ?,
                  lifetime_budget_usd = ?, daily_token_limit = ?, weekly_token_limit = ?,
                  monthly_token_limit = ?, lifetime_token_limit = ?, budget_mode = ?,
-                 expires_at = ?, updated_at = ?
+                 expires_at = ?, updated_at = ?, max_concurrent = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -336,6 +347,7 @@ impl KeyPlanRepository {
         .bind(budget_mode.as_str())
         .bind(expires_at)
         .bind(Utc::now())
+        .bind(max_concurrent)
         .bind(id)
         .execute(&self.pool)
         .await?;

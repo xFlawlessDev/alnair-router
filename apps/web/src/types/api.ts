@@ -158,11 +158,7 @@ export const WIRE_APIS: WireApi[] = ["chat", "responses"];
 
 /** Tier a provider preset belongs to; the picker groups by this. */
 export type ProviderCategory =
-  | "api_key"
-  | "subscription"
-  | "free_tier"
-  | "search"
-  | "local";
+  "api_key" | "subscription" | "free_tier" | "search" | "local";
 
 /** Picker section order; mirrors the order the API returns. */
 export const PROVIDER_CATEGORIES: { id: ProviderCategory; label: string }[] = [
@@ -450,6 +446,7 @@ export interface ApiKey {
   enabled: number;
   /** Per-key requests-per-minute override; null inherits the plan or default. */
   rate_limit_per_minute: number | null;
+  max_concurrent: number | null;
   /** Daily spend cap in USD; null inherits the plan or is uncapped. */
   daily_budget_usd: number | null;
   /** Weekly spend cap in USD; null inherits the plan or is uncapped. */
@@ -483,6 +480,7 @@ export interface ApiKeyInput {
   name: string;
   enabled?: boolean;
   rate_limit_per_minute?: number | null;
+  max_concurrent?: number | null;
   daily_budget_usd?: number | null;
   weekly_budget_usd?: number | null;
   monthly_budget_usd?: number | null;
@@ -505,6 +503,7 @@ export interface KeyPlan {
   /** Model patterns; empty allows any model. `*` and `prefix/*` wildcards work. */
   allowed_models: string[];
   rate_limit_per_minute: number | null;
+  max_concurrent: number | null;
   /** Daily spend cap in USD; null is uncapped. */
   daily_budget_usd: number | null;
   /** Weekly spend cap in USD; null is uncapped. */
@@ -533,6 +532,7 @@ export interface KeyPlanInput {
   description?: string;
   allowed_models?: string[];
   rate_limit_per_minute?: number | null;
+  max_concurrent?: number | null;
   daily_budget_usd?: number | null;
   weekly_budget_usd?: number | null;
   monthly_budget_usd?: number | null;

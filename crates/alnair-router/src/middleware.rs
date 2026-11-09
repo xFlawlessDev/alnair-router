@@ -244,6 +244,13 @@ pub async fn require_api_key(
     }
     let budget_warning = check_budget(&state, &key, &policy).await?;
 
+    let permit = state
+        .key_concurrency
+        .acquire(&key.id, policy.max_concurrent)
+        .inspect_err(|_| {
+            state.metrics.record_rate_limited();
+        })?;
+
     request
         .extensions_mut()
         .insert(Some(AuthenticatedKey { key, policy }));
@@ -259,7 +266,15 @@ pub async fn require_api_key(
     }
     record_http(&state, &method, &path, response.status(), started);
 
-    Ok(response)
+    let (parts, body) = response.into_parts();
+    let body = Body::from_stream(async_stream::stream! {
+        let _permit = permit;
+        let mut stream = body.into_data_stream();
+        while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+            yield chunk;
+        }
+    });
+    Ok(Response::from_parts(parts, body))
 }
 
 /// Records one finished HTTP request in the activity feed.

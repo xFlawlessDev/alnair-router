@@ -74,6 +74,7 @@ async fn mint_key(db: &Db, name: &str) -> String {
             name: name.to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -90,6 +91,36 @@ async fn mint_key(db: &Db, name: &str) -> String {
         .await
         .expect("mint key")
         .secret
+}
+
+#[tokio::test]
+async fn key_concurrency_is_held_until_response_body_is_dropped() {
+    let (app, db) = app(true).await;
+    let repository = ApiKeyRepository::new(db.pool.clone(), test_cipher());
+    let first_secret = mint_key(&db, "first").await;
+    let second_secret = mint_key(&db, "second").await;
+    for secret in [&first_secret, &second_secret] {
+        let key = repository.find_by_secret(secret).await.unwrap().unwrap();
+        repository
+            .update(
+                &key.id,
+                alnair_router::db::repos::api_keys::UpdateApiKey {
+                    max_concurrent: Some(Some(1)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let first = raw_request_with_auth(&app, "GET", "/v1/models", None, Some(&first_secret)).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let blocked = raw_request_with_auth(&app, "GET", "/v1/models", None, Some(&first_secret)).await;
+    assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+    let second = raw_request_with_auth(&app, "GET", "/v1/models", None, Some(&second_secret)).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    drop(first);
+    let resumed = raw_request_with_auth(&app, "GET", "/v1/models", None, Some(&first_secret)).await;
+    assert_eq!(resumed.status(), StatusCode::OK);
 }
 
 /// Records a usage row, used to simulate spend for budget checks.
@@ -724,6 +755,7 @@ async fn api_key_auth_is_enforced_when_required() {
                 name: "test".to_string(),
                 enabled: true,
                 rate_limit_per_minute: None,
+                max_concurrent: None,
                 daily_budget_usd: None,
                 weekly_budget_usd: None,
                 monthly_budget_usd: None,
@@ -994,6 +1026,7 @@ async fn budget_block_mode_returns_402() {
             name: "budgeted".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: Some(0.001),
@@ -1035,6 +1068,7 @@ async fn budget_warn_mode_passes_with_a_warning_header() {
             name: "warned".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: Some(0.001),
@@ -1079,6 +1113,7 @@ async fn daily_budget_block_mode_returns_402() {
             name: "daily-capped".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: Some(0.001),
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -1127,6 +1162,7 @@ async fn lifetime_budget_block_mode_returns_402() {
             name: "lifetime-capped".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -1174,6 +1210,7 @@ async fn token_limit_block_mode_returns_402() {
             name: "token-capped".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -1220,6 +1257,7 @@ async fn key_spend_endpoint_reports_window_totals() {
             name: "monitored".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -1266,6 +1304,7 @@ async fn expired_key_is_rejected_with_401() {
             name: "stale".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -1358,6 +1397,7 @@ async fn key_patch_updates_limits_and_enabled_state() {
             name: "editable".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -3409,6 +3449,7 @@ async fn key_allowlist_blocks_models_outside_the_list() {
             name: "restricted".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -4070,6 +4111,7 @@ async fn public_usage_is_scoped_to_the_calling_key() {
             name: "first".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -4090,6 +4132,7 @@ async fn public_usage_is_scoped_to_the_calling_key() {
             name: "second".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -5300,6 +5343,7 @@ async fn reveal_key_404s_when_no_secret_was_stored() {
             name: "hash-only".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,
@@ -5509,6 +5553,7 @@ async fn mint_restricted_key(db: &Db, pattern: &str) -> String {
             name: "restricted-media".to_string(),
             enabled: true,
             rate_limit_per_minute: None,
+            max_concurrent: None,
             daily_budget_usd: None,
             weekly_budget_usd: None,
             monthly_budget_usd: None,

@@ -36,6 +36,7 @@ const name = ref("");
 const description = ref("");
 const models = ref<string[]>([]);
 const rateLimit = ref("");
+const maxConcurrent = ref("");
 const daily = ref("");
 const weekly = ref("");
 const monthly = ref("");
@@ -62,6 +63,8 @@ watch(
       plan?.rate_limit_per_minute != null
         ? String(plan.rate_limit_per_minute)
         : "";
+    maxConcurrent.value =
+      plan?.max_concurrent != null ? String(plan.max_concurrent) : "";
     daily.value =
       plan?.daily_budget_usd != null ? String(plan.daily_budget_usd) : "";
     weekly.value =
@@ -92,6 +95,15 @@ async function save(): Promise<void> {
   }
   if (rateLimit.value.trim() && parsePositive(rateLimit.value) === null) {
     toast.error("Rate limit must be a positive number");
+    return;
+  }
+
+  if (
+    maxConcurrent.value.trim() &&
+    (!/^\d+$/.test(maxConcurrent.value.trim()) ||
+      !Number.isSafeInteger(Number(maxConcurrent.value)))
+  ) {
+    toast.error("Concurrency must be a non-negative whole number");
     return;
   }
 
@@ -150,6 +162,9 @@ async function save(): Promise<void> {
     description: description.value.trim(),
     allowed_models: models.value,
     rate_limit_per_minute: rpm,
+    max_concurrent: maxConcurrent.value.trim()
+      ? Number(maxConcurrent.value)
+      : null,
     daily_budget_usd: dailyUsd,
     weekly_budget_usd: weeklyUsd,
     monthly_budget_usd: monthlyUsd,
@@ -217,6 +232,21 @@ async function save(): Promise<void> {
             :combos="combos"
             hint="Empty allows every model. Wildcards: openai/*, *."
           />
+        </div>
+
+        <div class="grid gap-2">
+          <Label for="plan-max-concurrent">Concurrent requests</Label>
+          <Input
+            id="plan-max-concurrent"
+            v-model="maxConcurrent"
+            type="number"
+            min="0"
+            step="1"
+            placeholder="Blank inherits; 0 means unlimited"
+          />
+          <p class="text-xs text-muted-foreground">
+            Includes streaming requests until they finish or disconnect.
+          </p>
         </div>
 
         <LimitFields

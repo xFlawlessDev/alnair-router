@@ -17,6 +17,7 @@ pub struct KeyPolicy {
     /// Model patterns; empty means "any model".
     pub allowed_models: Vec<String>,
     pub rate_limit_per_minute: Option<u32>,
+    pub max_concurrent: u64,
     /// Spend caps per calendar window; empty means uncapped.
     pub budgets: BudgetWindows,
     /// Token caps per calendar window; empty means uncapped.
@@ -68,6 +69,10 @@ impl KeyPolicy {
             rate_limit_per_minute: key
                 .rate_limit()
                 .or_else(|| plan.and_then(KeyPlan::rate_limit)),
+            max_concurrent: key
+                .max_concurrent
+                .or_else(|| plan.and_then(|p| p.max_concurrent))
+                .unwrap_or(0) as u64,
             budgets,
             token_limits,
             budget_mode,
@@ -148,6 +153,7 @@ mod tests {
             prefix: "sk-router-".to_string(),
             enabled: 1,
             rate_limit_per_minute: rate,
+            max_concurrent: None,
             daily_budget_usd: budgets.daily,
             weekly_budget_usd: budgets.weekly,
             monthly_budget_usd: budgets.monthly,
@@ -183,6 +189,7 @@ mod tests {
             description: String::new(),
             allowed_models: Json(allowed.iter().map(|m| m.to_string()).collect()),
             rate_limit_per_minute: rate,
+            max_concurrent: None,
             daily_budget_usd: budgets.daily,
             weekly_budget_usd: budgets.weekly,
             monthly_budget_usd: budgets.monthly,
@@ -214,6 +221,18 @@ mod tests {
         lifetime: Option<i64>,
     ) -> TokenWindows {
         TokenWindows::from_parts(daily, weekly, monthly, lifetime)
+    }
+
+    #[test]
+    fn concurrency_inherits_plan_and_zero_overrides_it() {
+        let mut key = key(None, None, budgets(None, None, None, None), "off");
+        let mut plan = plan(&[], None, budgets(None, None, None, None), "off");
+        plan.max_concurrent = Some(3);
+        assert_eq!(KeyPolicy::resolve(&key, Some(&plan)).max_concurrent, 3);
+        key.max_concurrent = Some(0);
+        assert_eq!(KeyPolicy::resolve(&key, Some(&plan)).max_concurrent, 0);
+        key.max_concurrent = Some(1);
+        assert_eq!(KeyPolicy::resolve(&key, Some(&plan)).max_concurrent, 1);
     }
 
     #[test]

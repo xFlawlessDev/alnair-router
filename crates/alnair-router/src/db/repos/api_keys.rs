@@ -29,6 +29,7 @@ pub struct ApiKey {
     pub enabled: i64,
     /// Per-key requests-per-minute override; `None` inherits the global default.
     pub rate_limit_per_minute: Option<i64>,
+    pub max_concurrent: Option<i64>,
     /// Daily spend cap in USD; `None` is uncapped.
     pub daily_budget_usd: Option<f64>,
     /// Weekly spend cap in USD; `None` is uncapped.
@@ -125,6 +126,8 @@ pub struct CreateApiKey {
     #[serde(default)]
     pub rate_limit_per_minute: Option<i64>,
     #[serde(default)]
+    pub max_concurrent: Option<i64>,
+    #[serde(default)]
     pub daily_budget_usd: Option<f64>,
     #[serde(default)]
     pub weekly_budget_usd: Option<f64>,
@@ -160,6 +163,8 @@ pub struct UpdateApiKey {
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub rate_limit_per_minute: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub max_concurrent: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub daily_budget_usd: Option<Option<f64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub weekly_budget_usd: Option<Option<f64>>,
@@ -194,6 +199,13 @@ pub fn hash_key(secret: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(secret.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+pub(crate) fn normalize_runtime_limit(value: Option<i64>, field: &str) -> Result<Option<i64>> {
+    match value {
+        Some(value) if value < 0 => Err(Error::BadRequest(format!("{field} must be non-negative"))),
+        other => Ok(other),
+    }
 }
 
 pub(crate) fn normalized_rate_limit(value: Option<i64>) -> Result<Option<i64>> {
@@ -335,6 +347,7 @@ impl ApiKeyRepository {
         }
 
         let rate_limit = normalized_rate_limit(input.rate_limit_per_minute)?;
+        let max_concurrent = normalize_runtime_limit(input.max_concurrent, "max_concurrent")?;
         let budgets = BudgetWindows::from_parts(
             normalized_budget(input.daily_budget_usd, "daily_budget_usd")?,
             normalized_budget(input.weekly_budget_usd, "weekly_budget_usd")?,
@@ -363,8 +376,8 @@ impl ApiKeyRepository {
                 (id, name, key_hash, secret_enc, prefix, enabled, rate_limit_per_minute,
                  daily_budget_usd, weekly_budget_usd, monthly_budget_usd, lifetime_budget_usd,
                  daily_token_limit, weekly_token_limit, monthly_token_limit, lifetime_token_limit,
-                 budget_mode, plan_id, allowed_models, created_at, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 budget_mode, plan_id, allowed_models, created_at, expires_at, max_concurrent)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -386,6 +399,7 @@ impl ApiKeyRepository {
         .bind(allowed_models.map(Json))
         .bind(now)
         .bind(input.expires_at)
+        .bind(max_concurrent)
         .execute(&self.pool)
         .await?;
 
@@ -418,6 +432,10 @@ impl ApiKeyRepository {
             Some(value) => normalized_rate_limit(*value)?,
             None => existing.rate_limit_per_minute,
         };
+        let max_concurrent = normalize_runtime_limit(
+            input.max_concurrent.unwrap_or(existing.max_concurrent),
+            "max_concurrent",
+        )?;
         let budgets = BudgetWindows::from_parts(
             match &input.daily_budget_usd {
                 Some(value) => normalized_budget(*value, "daily_budget_usd")?,
@@ -482,7 +500,7 @@ impl ApiKeyRepository {
                  weekly_budget_usd = ?, monthly_budget_usd = ?, lifetime_budget_usd = ?,
                  daily_token_limit = ?, weekly_token_limit = ?, monthly_token_limit = ?,
                  lifetime_token_limit = ?, budget_mode = ?, plan_id = ?, allowed_models = ?,
-                 expires_at = ?
+                 expires_at = ?, max_concurrent = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -500,6 +518,7 @@ impl ApiKeyRepository {
         .bind(plan_id)
         .bind(allowed_models.map(Json))
         .bind(expires_at)
+        .bind(max_concurrent)
         .bind(id)
         .execute(&self.pool)
         .await?;

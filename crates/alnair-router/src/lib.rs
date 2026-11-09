@@ -18,6 +18,7 @@ pub mod db;
 pub mod desktop;
 pub mod error;
 pub mod handlers;
+mod key_concurrency;
 pub mod limits;
 pub mod metrics;
 pub mod middleware;

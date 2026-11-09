@@ -545,6 +545,11 @@ Key settings:
 - `limits.max_concurrent` / `limits.max_concurrent_per_connection` — upstream
   concurrency caps; a request that cannot get a slot in time gets `429` with
   `Retry-After`.
+- API keys and plans can set `max_concurrent` to cap simultaneous authenticated
+  requests per key. A key overrides its plan; `null` inherits the plan and `0`
+  disables the cap. A slot remains held until the response body completes or
+  the client disconnects. These limits are per process and apply only when
+  `server.require_api_key` is enabled.
 - `rate_limit.requests_per_minute` — default per-key token bucket (0 = off);
   keys can override it, and can carry daily, weekly, monthly and lifetime
   budgets in USD and token limits (calendar windows, UTC; lifetime never
