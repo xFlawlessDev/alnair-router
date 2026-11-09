@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::PROVIDER_MAX_RETRIES;
+use crate::providers::PROVIDER_MAX_TRANSPORT_RETRIES;
 use crate::types::{ChatError, GenerationOptions, ProviderType};
 
 /// How a credential is presented to the upstream.
@@ -57,13 +57,9 @@ pub struct ModelConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chatgpt_account_id: Option<String>,
     #[serde(default)]
-    pub supports_vision: bool,
-    #[serde(default)]
     pub supports_thinking: bool,
     #[serde(default)]
     pub supports_cache_control: bool,
-    #[serde(default = "default_context_window")]
-    pub context_window: u32,
     pub cost_rates: Option<ModelCostRates>,
 }
 
@@ -139,12 +135,15 @@ pub struct LlmStreamOptions {
     /// support built-in web search read it, and the rest reject the request,
     /// which surfaces as an error rather than a silent drop.
     pub web_search_options: Option<serde_json::Value>,
-    pub connect_timeout_ms: Option<u64>,
-    pub idle_timeout_ms: Option<u64>,
     /// Upper bound for the exponential retry delay, in milliseconds.
     pub max_retry_delay_ms: u64,
-    /// Retries after the first attempt fails, inside one provider call.
-    pub max_retries: usize,
+    /// Transport retries after a request fails without a response (connection
+    /// reset, refused, TLS failure). Fixed and small: the router owns tier
+    /// failover, so an extra layer of transport retries only multiplies load.
+    pub max_transport_retries: usize,
+    /// Retries after a retryable HTTP status (408/429/5xx/529), per tier. The
+    /// router maps `router.max_retries_per_tier` here.
+    pub max_status_retries: usize,
 }
 
 impl Default for LlmStreamOptions {
@@ -163,10 +162,9 @@ impl Default for LlmStreamOptions {
             thinking_level: None,
             cache_retention: CacheRetention::None,
             web_search_options: None,
-            connect_timeout_ms: None,
-            idle_timeout_ms: None,
             max_retry_delay_ms: 30_000,
-            max_retries: PROVIDER_MAX_RETRIES,
+            max_transport_retries: PROVIDER_MAX_TRANSPORT_RETRIES,
+            max_status_retries: PROVIDER_MAX_TRANSPORT_RETRIES,
         }
     }
 }
@@ -192,10 +190,6 @@ pub enum CacheRetention {
     Long,
 }
 
-fn default_context_window() -> u32 {
-    128_000
-}
-
 impl ModelConfig {
     pub fn openai_compatible(
         base_url: impl Into<String>,
@@ -211,10 +205,8 @@ impl ModelConfig {
             wire_api: WireApi::default(),
             custom_headers: BTreeMap::new(),
             chatgpt_account_id: None,
-            supports_vision: false,
             supports_thinking: false,
             supports_cache_control: false,
-            context_window: default_context_window(),
             cost_rates: None,
         }
     }
@@ -233,10 +225,8 @@ impl ModelConfig {
             wire_api: WireApi::default(),
             custom_headers: BTreeMap::new(),
             chatgpt_account_id: None,
-            supports_vision: false,
             supports_thinking: false,
             supports_cache_control: false,
-            context_window: default_context_window(),
             cost_rates: None,
         }
     }
@@ -285,10 +275,9 @@ impl From<&GenerationOptions> for LlmStreamOptions {
             thinking_level: value.thinking_level,
             cache_retention: CacheRetention::None,
             web_search_options: None,
-            connect_timeout_ms: None,
-            idle_timeout_ms: None,
             max_retry_delay_ms: 30_000,
-            max_retries: PROVIDER_MAX_RETRIES,
+            max_transport_retries: PROVIDER_MAX_TRANSPORT_RETRIES,
+            max_status_retries: PROVIDER_MAX_TRANSPORT_RETRIES,
         }
     }
 }
@@ -370,7 +359,6 @@ mod tests {
         ));
         assert_eq!(decoded.base_url, "https://api.example.com");
         assert_eq!(decoded.model_id, "gpt-4o");
-        assert_eq!(decoded.context_window, 128_000);
         assert!(decoded.cost_rates.is_none());
     }
 
@@ -438,13 +426,21 @@ mod tests {
             Some(ThinkingLevel::Medium)
         ));
         assert_eq!(options.max_retry_delay_ms, 30_000);
-        assert_eq!(options.max_retries, PROVIDER_MAX_RETRIES);
+        assert_eq!(
+            options.max_transport_retries,
+            PROVIDER_MAX_TRANSPORT_RETRIES
+        );
+        assert_eq!(options.max_status_retries, PROVIDER_MAX_TRANSPORT_RETRIES);
     }
 
     #[test]
     fn llm_stream_options_default_retries_are_pinned() {
         let options = LlmStreamOptions::default();
-        assert_eq!(options.max_retries, PROVIDER_MAX_RETRIES);
+        assert_eq!(
+            options.max_transport_retries,
+            PROVIDER_MAX_TRANSPORT_RETRIES
+        );
+        assert_eq!(options.max_status_retries, PROVIDER_MAX_TRANSPORT_RETRIES);
         assert_eq!(options.max_retry_delay_ms, 30_000);
     }
 }

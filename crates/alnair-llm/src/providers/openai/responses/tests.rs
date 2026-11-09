@@ -20,10 +20,8 @@ fn config() -> ModelConfig {
         wire_api: WireApi::Responses,
         custom_headers: Default::default(),
         chatgpt_account_id: None,
-        supports_vision: false,
         supports_thinking: true,
         supports_cache_control: false,
-        context_window: 0,
         cost_rates: None,
     }
 }

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel, apply_custom_headers};
 use crate::providers::common::{
-    describe_non_json_body, is_retryable_status, retry_after_delay, retry_delay,
+    RetryBudget, describe_non_json_body, is_retryable_status, retry_after_delay, retry_delay,
 };
 use crate::types::{ChatError, Message};
 
@@ -186,7 +186,10 @@ pub(super) async fn send(
     options: &LlmStreamOptions,
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
-    for attempt in 0..=options.max_retries {
+    let mut status_retries = 0;
+    let mut transport_retries = 0;
+    let budget = RetryBudget::new(options.max_status_retries, options.max_transport_retries);
+    for attempt in 0..budget.attempts() {
         let mut request = client
             .post(endpoint)
             .header(reqwest::header::ACCEPT, "text/event-stream")
@@ -204,22 +207,31 @@ pub(super) async fn send(
 
         match request.send().await {
             Ok(response)
-                if is_retryable_status(response.status()) && attempt < options.max_retries =>
+                if is_retryable_status(response.status()) && status_retries < budget.status =>
             {
+                status_retries += 1;
                 let delay = retry_after_delay(response.headers())
                     .unwrap_or_else(|| retry_delay(attempt, options.max_retry_delay_ms));
                 tracing::warn!(
                     status = %response.status(),
-                    retry = attempt + 1,
+                    retry = status_retries,
+                    max_status_retries = budget.status,
                     ?delay,
                     "Codex request returned a retryable status; retrying"
                 );
                 tokio::time::sleep(delay).await;
             }
             Ok(response) => return Ok(response),
-            Err(error) if attempt < options.max_retries => {
+            Err(error) if transport_retries < budget.transport => {
+                transport_retries += 1;
                 let delay = retry_delay(attempt, options.max_retry_delay_ms);
-                tracing::warn!(error = %error, retry = attempt + 1, ?delay, "Codex request failed; retrying");
+                tracing::warn!(
+                    error = %error,
+                    retry = transport_retries,
+                    max_transport_retries = budget.transport,
+                    ?delay,
+                    "Codex request failed; retrying"
+                );
                 last_error = Some(error);
                 tokio::time::sleep(delay).await;
             }

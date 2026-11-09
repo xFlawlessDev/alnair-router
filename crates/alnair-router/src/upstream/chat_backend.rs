@@ -346,12 +346,28 @@ pub fn wire_api_from_str(value: &str) -> WireApi {
 
 /// Provider retry behaviour applied inside a single tier, before the executor
 /// fails over to the next one.
+///
+/// Transport retries (a connection that never answered) are deliberately fixed
+/// and small: the executor already fans one request across tiers and
+/// credentials, so letting both layers retry freely multiplies upstream calls.
+/// [`Self::max_retries_per_tier`] is the status-retry budget only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetryPolicy {
-    /// Retries after the first attempt fails, per tier.
+    /// Retries after a retryable HTTP status (408/429/5xx/529), per tier.
     pub max_retries_per_tier: usize,
     /// Upper bound for the exponential retry delay, in milliseconds.
     pub max_retry_delay_ms: u64,
+    /// Retries after a failed connection attempt, per tier. Fixed at one.
+    pub transport_retries: usize,
+}
+
+/// Worst-case upstream calls for one client request, before credential
+/// rotation: `tiers × (1 + status retries + transport retries)`.
+///
+/// Kept next to the policy so the multiplication is stated once rather than
+/// re-derived (and mis-derived) at the call sites.
+pub fn worst_case_upstream_calls(policy: RetryPolicy, tiers: usize) -> usize {
+    tiers * (1 + policy.max_retries_per_tier + policy.transport_retries)
 }
 
 impl Default for RetryPolicy {
@@ -359,6 +375,7 @@ impl Default for RetryPolicy {
         Self {
             max_retries_per_tier: 2,
             max_retry_delay_ms: 30_000,
+            transport_retries: 1,
         }
     }
 }
@@ -374,7 +391,8 @@ impl GenerationOptions {
             seed: self.seed,
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
-            max_retries: retry.max_retries_per_tier,
+            max_status_retries: retry.max_retries_per_tier,
+            max_transport_retries: retry.transport_retries,
             max_retry_delay_ms: retry.max_retry_delay_ms,
             thinking_level: parse_thinking_level(self.thinking_level.as_deref()),
             web_search_options: self.web_search_options.clone(),
@@ -471,14 +489,12 @@ fn model_config(
         wire_api,
         custom_headers,
         chatgpt_account_id,
-        supports_vision: false,
         // Capability gates are opt-in: only providers with a known wire shape
         // enable thinking; CodeBuddy expects OpenAI reasoning parameters.
         supports_thinking,
         // Cache breakpoints are opt-in per connection because OpenAI-compatible
         // endpoints may reject the extra field.
         supports_cache_control,
-        context_window: 0,
         cost_rates: price.map(cost_rates),
     }
 }

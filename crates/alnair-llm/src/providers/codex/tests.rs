@@ -19,10 +19,8 @@ fn config() -> ModelConfig {
         wire_api: crate::model_config::WireApi::Chat,
         custom_headers: Default::default(),
         chatgpt_account_id: Some("acct-1".to_string()),
-        supports_vision: false,
         supports_thinking: false,
         supports_cache_control: false,
-        context_window: 0,
         cost_rates: None,
     }
 }

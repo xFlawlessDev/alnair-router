@@ -1,7 +1,7 @@
 mod common;
 mod sse;
 
-pub(crate) use common::PROVIDER_MAX_RETRIES;
+pub(crate) use common::PROVIDER_MAX_TRANSPORT_RETRIES;
 
 pub mod anthropic;
 pub mod codebuddy_intl;

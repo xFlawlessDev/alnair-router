@@ -385,6 +385,7 @@ async fn connect_timeout_fails_the_tier_without_waiting() {
             retry: RetryPolicy {
                 max_retries_per_tier: 0,
                 max_retry_delay_ms: 1_000,
+                transport_retries: 1,
             },
             limiter: UpstreamLimiter::new(&LimitsConfig::default()),
             timeouts: UpstreamTimeouts {
@@ -461,6 +462,7 @@ async fn idle_streams_error_after_the_timeout() {
             retry: RetryPolicy {
                 max_retries_per_tier: 0,
                 max_retry_delay_ms: 1_000,
+                transport_retries: 1,
             },
             limiter: UpstreamLimiter::new(&LimitsConfig::default()),
             timeouts: UpstreamTimeouts {

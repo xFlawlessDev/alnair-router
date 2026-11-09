@@ -24,7 +24,8 @@ use tracing::{debug, warn};
 use crate::model_config::{LlmStreamOptions, ModelConfig, ModelCostRates, apply_custom_headers};
 use crate::provider::LlmProvider;
 use crate::providers::common::{
-    calculate_token_costs, is_retryable_status, normalize_base_url, retry_after_delay, retry_delay,
+    RetryBudget, calculate_token_costs, is_retryable_status, normalize_base_url, retry_after_delay,
+    retry_delay,
 };
 use crate::providers::openai::OpenAiProvider;
 use crate::providers::sse::SseLineBuffer;
@@ -362,8 +363,11 @@ async fn send_cli_request_with_retry(
     options: &LlmStreamOptions,
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
+    let mut status_retries = 0;
+    let mut transport_retries = 0;
+    let budget = RetryBudget::new(options.max_status_retries, options.max_transport_retries);
 
-    for attempt in 0..=options.max_retries {
+    for attempt in 0..budget.attempts() {
         let mut request = client.post(endpoint).json(body);
         if let Some(key) = api_key {
             request = request.bearer_auth(key);
@@ -383,21 +387,29 @@ async fn send_cli_request_with_retry(
 
         match outcome {
             Ok(response)
-                if is_retryable_status(response.status()) && attempt < options.max_retries =>
+                if is_retryable_status(response.status()) && status_retries < budget.status =>
             {
+                status_retries += 1;
                 let delay = retry_after_delay(response.headers())
                     .unwrap_or_else(|| retry_delay(attempt, options.max_retry_delay_ms));
                 warn!(
                     status = %response.status(),
-                    retry = attempt + 1,
+                    retry = status_retries,
+                    max_status_retries = budget.status,
                     "Command Code CLI returned a retryable status; retrying"
                 );
                 tokio::time::sleep(delay).await;
             }
             Ok(response) => return Ok(response),
-            Err(error) if attempt < options.max_retries => {
+            Err(error) if transport_retries < budget.transport => {
+                transport_retries += 1;
                 let delay = retry_delay(attempt, options.max_retry_delay_ms);
-                warn!(error = %error, retry = attempt + 1, "Command Code CLI request failed; retrying");
+                warn!(
+                    error = %error,
+                    retry = transport_retries,
+                    max_transport_retries = budget.transport,
+                    "Command Code CLI request failed; retrying"
+                );
                 last_error = Some(error);
                 tokio::time::sleep(delay).await;
             }

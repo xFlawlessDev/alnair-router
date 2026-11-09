@@ -8,8 +8,8 @@ use tracing::warn;
 use crate::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel, WireApi};
 use crate::provider::LlmProvider;
 use crate::providers::common::{
-    calculate_token_costs, describe_non_json_body, is_html_content_type, normalize_base_url,
-    response_content_type,
+    RetryBudget, calculate_token_costs, describe_non_json_body, is_html_content_type,
+    normalize_base_url, response_content_type,
 };
 use crate::providers::sse::{SseLineBuffer, parse_data_line};
 use crate::types::{ChatError, LlmStreamChunk, Message};
@@ -111,7 +111,7 @@ impl OpenAiProvider {
                 &custom_headers,
                 &request_body,
                 options.max_retry_delay_ms,
-                options.max_retries,
+                RetryBudget::new(options.max_status_retries, options.max_transport_retries),
             )
             .await
             {
@@ -151,7 +151,7 @@ impl OpenAiProvider {
                         &custom_headers,
                         &request_body,
                         options.max_retry_delay_ms,
-                        options.max_retries,
+                        RetryBudget::new(options.max_status_retries, options.max_transport_retries),
                     )
                     .await
                     {
@@ -183,7 +183,7 @@ impl OpenAiProvider {
                         &custom_headers,
                         &request_body,
                         options.max_retry_delay_ms,
-                        options.max_retries,
+                        RetryBudget::new(options.max_status_retries, options.max_transport_retries),
                     )
                     .await
                     {

@@ -4,7 +4,7 @@ use tracing::warn;
 
 use super::chunks::truncate_for_log;
 use crate::model_config::apply_custom_headers;
-use crate::providers::common::{is_retryable_status, retry_after_delay, retry_delay};
+use crate::providers::common::{RetryBudget, is_retryable_status, retry_after_delay, retry_delay};
 use crate::types::ChatError;
 
 pub(super) fn apply_openai_chat_model_compatibility(model: &str, body: &mut serde_json::Value) {
@@ -151,6 +151,14 @@ pub(super) async fn send_openai_request(
         .map_err(|error| ChatError::Provider(error.to_string()))
 }
 
+/// Sends a request, retrying transport failures and retryable statuses on
+/// separate budgets.
+///
+/// The split matters for the router: one client request already fans out
+/// across tiers and credentials, so a single number for both would multiply.
+/// [`RetryBudget::status`] is the per-tier budget the router configures;
+/// [`RetryBudget::transport`] stays small because a refused connection is
+/// rarely transient.
 pub(super) async fn send_openai_request_with_retry(
     client: &reqwest::Client,
     endpoint: &str,
@@ -158,31 +166,37 @@ pub(super) async fn send_openai_request_with_retry(
     custom_headers: &std::collections::BTreeMap<String, String>,
     request_body: &serde_json::Value,
     max_retry_delay_ms: u64,
-    max_retries: usize,
+    budget: RetryBudget,
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
-    for attempt in 0..=max_retries {
+    let mut status_retries = 0;
+    let mut transport_retries = 0;
+    for attempt in 0..budget.attempts() {
         match send_openai_request(client, endpoint, api_key, custom_headers, request_body).await {
-            Ok(response) if is_retryable_status(response.status()) && attempt < max_retries => {
+            Ok(response)
+                if is_retryable_status(response.status()) && status_retries < budget.status =>
+            {
+                status_retries += 1;
                 let status = response.status();
                 let delay = retry_after_delay(response.headers())
                     .unwrap_or_else(|| retry_delay(attempt, max_retry_delay_ms));
                 warn!(
                     status = %status,
-                    retry = attempt + 1,
-                    max_retries = max_retries,
+                    retry = status_retries,
+                    max_status_retries = budget.status,
                     ?delay,
                     "OpenAI request returned retryable status; retrying"
                 );
                 tokio::time::sleep(delay).await;
             }
             Ok(response) => return Ok(response),
-            Err(error) if attempt < max_retries => {
+            Err(error) if transport_retries < budget.transport => {
+                transport_retries += 1;
                 let delay = retry_delay(attempt, max_retry_delay_ms);
                 warn!(
                     error = %error,
-                    retry = attempt + 1,
-                    max_retries = max_retries,
+                    retry = transport_retries,
+                    max_transport_retries = budget.transport,
                     ?delay,
                     "OpenAI request failed; retrying"
                 );

@@ -155,6 +155,7 @@ impl Executor {
         settings.retry = RetryPolicy {
             max_retries_per_tier: config.router.max_retries_per_tier,
             max_retry_delay_ms: config.router.max_retry_delay_ms,
+            transport_retries: 1,
         };
         settings.timeouts = UpstreamTimeouts::from_config(config);
     }

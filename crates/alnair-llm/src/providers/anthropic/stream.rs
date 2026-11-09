@@ -6,8 +6,8 @@ use crate::model_config::AuthStyle;
 use crate::model_config::ModelCostRates;
 use crate::model_config::apply_custom_headers;
 use crate::providers::common::{
-    calculate_token_costs, is_retryable_status, parse_tool_arguments_strict, retry_after_delay,
-    retry_delay,
+    RetryBudget, calculate_token_costs, is_retryable_status, parse_tool_arguments_strict,
+    retry_after_delay, retry_delay,
 };
 use crate::providers::sse::parse_data_line;
 use crate::types::{ChatError, LlmStreamChunk};
@@ -307,6 +307,8 @@ pub(super) fn anthropic_auth_header(
     }
 }
 
+/// Sends a request, retrying transport failures and retryable statuses on
+/// separate budgets (see [`super::openai::request`] for the rationale).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn send_anthropic_request_with_retry(
     client: &reqwest::Client,
@@ -316,11 +318,13 @@ pub(super) async fn send_anthropic_request_with_retry(
     custom_headers: &std::collections::BTreeMap<String, String>,
     request_body: &AnthropicRequest,
     max_retry_delay_ms: u64,
-    max_retries: usize,
+    budget: RetryBudget,
 ) -> Result<reqwest::Response, ChatError> {
     let mut last_error = None;
+    let mut status_retries = 0;
+    let mut transport_retries = 0;
     let (auth_name, auth_value) = anthropic_auth_header(api_key, auth_style);
-    for attempt in 0..=max_retries {
+    for attempt in 0..budget.attempts() {
         let mut request = client
             .post(endpoint)
             .header(auth_name, auth_value.clone())
@@ -332,26 +336,30 @@ pub(super) async fn send_anthropic_request_with_retry(
         let request = request.json(request_body);
         let request = apply_custom_headers(request, custom_headers)?;
         match request.send().await {
-            Ok(response) if is_retryable_status(response.status()) && attempt < max_retries => {
+            Ok(response)
+                if is_retryable_status(response.status()) && status_retries < budget.status =>
+            {
+                status_retries += 1;
                 let status = response.status();
                 let delay = retry_after_delay(response.headers())
                     .unwrap_or_else(|| retry_delay(attempt, max_retry_delay_ms));
                 tracing::warn!(
                     status = %status,
-                    retry = attempt + 1,
-                    max_retries = max_retries,
+                    retry = status_retries,
+                    max_status_retries = budget.status,
                     ?delay,
                     "Anthropic request returned retryable status; retrying"
                 );
                 tokio::time::sleep(delay).await;
             }
             Ok(response) => return Ok(response),
-            Err(error) if attempt < max_retries => {
+            Err(error) if transport_retries < budget.transport => {
+                transport_retries += 1;
                 let delay = retry_delay(attempt, max_retry_delay_ms);
                 tracing::warn!(
                     error = %error,
-                    retry = attempt + 1,
-                    max_retries = max_retries,
+                    retry = transport_retries,
+                    max_transport_retries = budget.transport,
                     ?delay,
                     "Anthropic request failed; retrying"
                 );

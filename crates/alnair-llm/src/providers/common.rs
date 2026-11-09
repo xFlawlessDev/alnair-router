@@ -85,9 +85,15 @@ pub(crate) fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504 | 529)
 }
 
-/// Absolute ceiling for provider retries, used as the `LlmStreamOptions`
-/// default. The router surfaces a lower per-tier value through `RetryPolicy`.
-pub(crate) const PROVIDER_MAX_RETRIES: usize = 10;
+/// Absolute ceiling for transport retries, used as the `LlmStreamOptions`
+/// default.
+///
+/// Transport retries cover a connection that never produced a response
+/// (reset, refused, TLS failure). They are deliberately separate from status
+/// retries: the router owns tier failover and credential rotation, and letting
+/// both layers retry would multiply one client request into `tiers × keys ×
+/// retries` upstream calls.
+pub(crate) const PROVIDER_MAX_TRANSPORT_RETRIES: usize = 1;
 
 /// Exponential backoff for provider retries: 500 ms doubling per zero-based
 /// `attempt`, capped by `max_retry_delay_ms`. A `Retry-After` header, when
@@ -156,6 +162,31 @@ pub(crate) fn calculate_token_costs(
     }
 }
 
+/// The two retry budgets for one provider call.
+///
+/// Kept together so a provider cannot retry a status under the transport
+/// allowance (which is what let one client request fan out into dozens of
+/// upstream calls). [`RetryBudget::attempts`] is the hard loop bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RetryBudget {
+    /// Retries after a retryable HTTP status (408/429/5xx/529).
+    pub(crate) status: usize,
+    /// Retries after a connection failure that produced no response.
+    pub(crate) transport: usize,
+}
+
+impl RetryBudget {
+    pub(crate) fn new(status: usize, transport: usize) -> Self {
+        Self { status, transport }
+    }
+
+    /// Upper bound for the attempt loop: the first try plus both budgets.
+    pub(crate) fn attempts(&self) -> usize {
+        // Saturating so a pathological config cannot overflow into zero tries.
+        1 + self.status.saturating_add(self.transport)
+    }
+}
+
 pub(crate) fn parse_tool_arguments_strict(raw: &str) -> Result<serde_json::Value, ChatError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -194,6 +225,14 @@ mod tests {
     #[test]
     fn is_retryable_status_rejects_bad_request() {
         assert!(!is_retryable_status(reqwest::StatusCode::BAD_REQUEST));
+    }
+
+    #[test]
+    fn transport_retries_stay_small_because_the_router_owns_failover() {
+        // The router retries across tiers and credentials; a large transport
+        // budget here would multiply one client request into many upstream
+        // calls, so this ceiling is part of the contract.
+        assert_eq!(PROVIDER_MAX_TRANSPORT_RETRIES, 1);
     }
 
     #[test]

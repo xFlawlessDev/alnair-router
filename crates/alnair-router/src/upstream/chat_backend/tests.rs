@@ -189,11 +189,13 @@ fn retry_policy_maps_into_provider_options() {
     let policy = RetryPolicy {
         max_retries_per_tier: 7,
         max_retry_delay_ms: 1_234,
+        transport_retries: 1,
     };
 
     let options = GenerationOptions::default().to_stream_options(policy);
 
-    assert_eq!(options.max_retries, 7);
+    assert_eq!(options.max_status_retries, 7);
+    assert_eq!(options.max_transport_retries, 1);
     assert_eq!(options.max_retry_delay_ms, 1_234);
 }
 
@@ -202,6 +204,10 @@ fn retry_policy_default_is_conservative() {
     let policy = RetryPolicy::default();
     assert_eq!(policy.max_retries_per_tier, 2);
     assert_eq!(policy.max_retry_delay_ms, 30_000);
+    assert_eq!(
+        policy.transport_retries, 1,
+        "transport retries stay small so tiers are not multiplied"
+    );
 }
 
 #[test]
@@ -209,12 +215,29 @@ fn retry_policy_applies_even_without_generation_options() {
     let policy = RetryPolicy {
         max_retries_per_tier: 3,
         max_retry_delay_ms: 456,
+        transport_retries: 1,
     };
 
     let options = stream_options(None, policy, CacheRetention::None);
 
-    assert_eq!(options.max_retries, 3);
+    assert_eq!(options.max_status_retries, 3);
+    assert_eq!(options.max_transport_retries, 1);
     assert_eq!(options.max_retry_delay_ms, 456);
+}
+
+#[test]
+fn worst_case_upstream_calls_is_stated_once() {
+    let policy = RetryPolicy {
+        max_retries_per_tier: 2,
+        max_retry_delay_ms: 30_000,
+        transport_retries: 1,
+    };
+
+    // 3 tiers × (1 initial + 2 status + 1 transport) = 12 calls, before
+    // credential rotation. The old shape (10 retries per provider) allowed
+    // hundreds.
+    assert_eq!(worst_case_upstream_calls(policy, 3), 12);
+    assert_eq!(worst_case_upstream_calls(policy, 1), 4);
 }
 
 #[test]

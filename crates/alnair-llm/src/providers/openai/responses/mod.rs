@@ -18,7 +18,8 @@ mod tests;
 
 use crate::model_config::{LlmStreamOptions, ModelConfig};
 use crate::providers::common::{
-    describe_non_json_body, is_html_content_type, normalize_base_url, response_content_type,
+    RetryBudget, describe_non_json_body, is_html_content_type, normalize_base_url,
+    response_content_type,
 };
 use crate::providers::openai::request::{
     log_openai_request_failure, send_openai_request_with_retry, should_retry_openai_without_tools,
@@ -72,7 +73,7 @@ pub(super) fn stream<'a>(
             &custom_headers,
             &request_body,
             options.max_retry_delay_ms,
-            options.max_retries,
+            RetryBudget::new(options.max_status_retries, options.max_transport_retries),
         )
         .await
         {
@@ -113,7 +114,7 @@ pub(super) fn stream<'a>(
                     &custom_headers,
                     &request_body,
                     options.max_retry_delay_ms,
-                    options.max_retries,
+                    RetryBudget::new(options.max_status_retries, options.max_transport_retries),
                 )
                 .await
                 {
@@ -145,7 +146,7 @@ pub(super) fn stream<'a>(
                     &custom_headers,
                     &request_body,
                     options.max_retry_delay_ms,
-                    options.max_retries,
+                    RetryBudget::new(options.max_status_retries, options.max_transport_retries),
                 )
                 .await
                 {

@@ -78,6 +78,7 @@ impl AppState {
         let retry = RetryPolicy {
             max_retries_per_tier: config.router.max_retries_per_tier,
             max_retry_delay_ms: config.router.max_retry_delay_ms,
+            transport_retries: 1,
         };
         let limiter = UpstreamLimiter::new(&config.limits);
         let rate_limiter = RateLimiter::new(&config.rate_limit);
