@@ -156,10 +156,19 @@ async function onPresetQuickAdd(preset: ProviderPreset): Promise<void> {
       : preset.default_headers,
     provider_id: preset.id,
     // A search provider is only reachable by `/v1/search` once it carries a
-    // tier, so a quick-added search preset joins the first tier. Copies keep
-    // the tier of the connection they were duplicated from.
+    // tier, so a quick-added search preset joins the preset's own tier (the
+    // router defaults to 1 when the preset names none). Copies keep the tier of
+    // the connection they were duplicated from.
     ...(preset.category === "search"
-      ? { search_tier: source?.search_tier ?? 1 }
+      ? { search_tier: source?.search_tier ?? preset.default_search_tier ?? 1 }
+      : {}),
+    // The extract endpoint and body shape belong to the preset's own API: Tavily
+    // and Exa take `urls`, Firecrawl takes `url`.
+    ...(preset.default_web_fetch_path
+      ? { web_fetch_path: preset.default_web_fetch_path }
+      : {}),
+    ...(preset.default_web_fetch_shape
+      ? { web_fetch_shape: preset.default_web_fetch_shape }
       : {}),
     ...(source?.api_key ? { api_key: source.api_key } : {}),
   };

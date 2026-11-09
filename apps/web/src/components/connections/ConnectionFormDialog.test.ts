@@ -33,6 +33,7 @@ const connection: Connection = {
   wire_api: "chat",
   web_fetch_mode: "local",
   web_fetch_path: null,
+  web_fetch_shape: null,
   search_path: null,
   search_tier: null,
   provider_id: "openai",
@@ -94,6 +95,9 @@ describe("ConnectionFormDialog", () => {
               note: null,
               risk_notice: null,
               oauth_preset: "openai-codex",
+              default_search_tier: null,
+              default_web_fetch_path: null,
+              default_web_fetch_shape: null,
               configured: 0,
             },
             "onUpdate:open": (value: boolean) => {
@@ -155,7 +159,8 @@ describe("ConnectionFormDialog", () => {
     container.remove();
   });
 
-  it("parses numeric timeout inputs bound to number fields", async () => {    vi.mocked(api.updateConnection).mockResolvedValue(undefined as never);
+  it("parses numeric timeout inputs bound to number fields", async () => {
+    vi.mocked(api.updateConnection).mockResolvedValue(undefined as never);
 
     // Start closed so the open-watcher seeds name/base_url, as it does in use.
     const open = ref(false);
@@ -273,7 +278,8 @@ describe("ConnectionFormDialog", () => {
     container.remove();
   });
 
-  it("clears the search path when the field is emptied", async () => {    vi.mocked(api.updateConnection).mockResolvedValue(undefined as never);
+  it("clears the search path when the field is emptied", async () => {
+    vi.mocked(api.updateConnection).mockResolvedValue(undefined as never);
 
     const open = ref(false);
     const app = createApp({
@@ -346,6 +352,9 @@ describe("ConnectionFormDialog", () => {
               note: null,
               risk_notice: null,
               oauth_preset: null,
+              default_search_tier: null,
+              default_web_fetch_path: null,
+              default_web_fetch_shape: null,
               configured: 0,
             },
             "onUpdate:open": (value: boolean) => {
@@ -364,8 +373,9 @@ describe("ConnectionFormDialog", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await nextTick();
 
-    const tier =
-      document.querySelector<HTMLInputElement>("#connection-search-tier")!;
+    const tier = document.querySelector<HTMLInputElement>(
+      "#connection-search-tier",
+    )!;
     expect(tier.value).toBe("1");
 
     const save = [...document.querySelectorAll("button")].find((candidate) =>
@@ -407,6 +417,9 @@ describe("ConnectionFormDialog", () => {
               note: null,
               risk_notice: null,
               oauth_preset: null,
+              default_search_tier: null,
+              default_web_fetch_path: null,
+              default_web_fetch_shape: null,
               configured: 0,
             },
             "onUpdate:open": (value: boolean) => {
@@ -425,9 +438,67 @@ describe("ConnectionFormDialog", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await nextTick();
 
-    const tier =
-      document.querySelector<HTMLInputElement>("#connection-search-tier")!;
+    const tier = document.querySelector<HTMLInputElement>(
+      "#connection-search-tier",
+    )!;
     expect(tier.value).toBe("");
+
+    app.unmount();
+    container.remove();
+  });
+
+  it("sends the provider fetch fields only when the mode asks for them", async () => {
+    vi.mocked(api.updateConnection).mockResolvedValue(undefined as never);
+
+    const open = ref(false);
+    const extractor: Connection = {
+      ...connection,
+      web_fetch_mode: "provider",
+      web_fetch_path: "/extract",
+      web_fetch_shape: "urls",
+    };
+    const app = createApp({
+      setup() {
+        return () =>
+          h(ConnectionFormDialog, {
+            open: open.value,
+            connection: extractor,
+            preset: null,
+            "onUpdate:open": (value: boolean) => {
+              open.value = value;
+            },
+          });
+      },
+    });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    app.mount(container);
+    await nextTick();
+    open.value = true;
+    await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await nextTick();
+
+    const path = document.querySelector<HTMLInputElement>(
+      "#connection-web-fetch-path",
+    )!;
+    expect(path.value).toBe("/extract");
+
+    [...document.querySelectorAll("button")]
+      .find((candidate) => candidate.textContent?.includes("Save"))
+      ?.click();
+    await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(api.updateConnection).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        web_fetch_mode: "provider",
+        web_fetch_path: "/extract",
+        web_fetch_shape: "urls",
+      }),
+    );
 
     app.unmount();
     container.remove();

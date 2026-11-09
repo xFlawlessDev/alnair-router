@@ -70,6 +70,9 @@ const idleTimeout = ref("");
 const pricingModel = ref("");
 const searchPath = ref("");
 const searchTier = ref("");
+const webFetchMode = ref("local");
+const webFetchPath = ref("");
+const webFetchShape = ref<"" | "target" | "urls">("");
 const cacheRetention = ref("none");
 const authStyle = ref("api_key");
 const wireApi = ref<WireApi>("chat");
@@ -216,6 +219,11 @@ watch(
     pricingModel.value = connection?.pricing_model ?? "";
     searchPath.value = connection?.search_path ?? "";
     searchTier.value = initialSearchTier(connection, preset);
+    webFetchMode.value = connection?.web_fetch_mode ?? "local";
+    webFetchPath.value =
+      connection?.web_fetch_path ?? preset?.default_web_fetch_path ?? "";
+    webFetchShape.value =
+      connection?.web_fetch_shape ?? preset?.default_web_fetch_shape ?? "";
     cacheRetention.value = connection?.cache_retention ?? "none";
     authStyle.value = connection?.auth_style ?? "api_key";
     wireApi.value = connection?.wire_api ?? "chat";
@@ -406,6 +414,17 @@ async function save(): Promise<void> {
     pricing_model: pricingModel.value.trim() || null,
     search_path: parseSearchPath(searchPath.value),
     search_tier: parseSearchTier(searchTier.value),
+    web_fetch_mode: webFetchMode.value,
+    // An extract path is only meaningful in provider mode; sending it in local
+    // mode would store a value nothing reads.
+    web_fetch_path:
+      webFetchMode.value === "provider"
+        ? parseSearchPath(webFetchPath.value)
+        : null,
+    web_fetch_shape:
+      webFetchMode.value === "provider" && webFetchShape.value
+        ? webFetchShape.value
+        : null,
     cache_retention: cacheRetention.value,
     auth_style: authStyle.value,
     // Only an openai-compatible connection calls an OpenAI wire API; the other
@@ -680,6 +699,67 @@ async function save(): Promise<void> {
             Connections that share a tier take turns round-robin.
           </p>
         </div>
+
+        <div v-if="!oauthCreate" class="grid gap-2">
+          <Label>Web fetch mode</Label>
+          <Select v-model="webFetchMode">
+            <SelectTrigger id="connection-web-fetch-mode" class="w-full">
+              <SelectValue placeholder="Fetch locally" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="local">Fetch locally</SelectItem>
+              <SelectItem value="provider">
+                Fetch through this provider
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">
+            <code>/v1/web/fetch</code> normally reads the page itself, behind the
+            router's SSRF guard. Switching to the provider forwards the URL to
+            this connection's extract endpoint instead, which is the only way to
+            reach pages that need JavaScript rendering.
+          </p>
+        </div>
+
+        <template v-if="!oauthCreate && webFetchMode === 'provider'">
+          <div class="grid gap-2">
+            <Label for="connection-web-fetch-path">Extract path</Label>
+            <Input
+              id="connection-web-fetch-path"
+              v-model="webFetchPath"
+              placeholder="/extract"
+              autocapitalize="off"
+              spellcheck="false"
+            />
+            <p class="text-xs text-muted-foreground">
+              Appended to the base URL. Tavily serves
+              <code>/extract</code>, Firecrawl <code>/scrape</code> and Exa
+              <code>/contents</code>.
+            </p>
+          </div>
+
+          <div class="grid gap-2">
+            <Label>Extract body shape</Label>
+            <Select v-model="webFetchShape">
+              <SelectTrigger id="connection-web-fetch-shape" class="w-full">
+                <SelectValue placeholder="url field (Firecrawl)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="target">
+                  <code>url</code> field (Firecrawl)
+                </SelectItem>
+                <SelectItem value="urls">
+                  <code>urls</code> array (Tavily, Exa)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="text-xs text-muted-foreground">
+              How the provider names the target in the request body. Tavily and
+              Exa reject a bare <code>url</code> with a 422, so pick
+              <code>urls</code> for them.
+            </p>
+          </div>
+        </template>
 
         <div v-if="!oauthCreate" class="grid gap-2">
           <Label>Prompt caching</Label>

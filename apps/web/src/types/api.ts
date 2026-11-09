@@ -106,6 +106,12 @@ export interface Connection {
   web_fetch_mode: string;
   /** Extract path for a provider fetch, e.g. "/v1/scrape". */
   web_fetch_path: string | null;
+  /**
+   * Wire shape of a provider fetch body: "url" is the `url` field Firecrawl
+   * accepts, "urls" the `urls` array Tavily and Exa require. Null keeps the
+   * historical `url` body.
+   */
+  web_fetch_shape: WebFetchShape | null;
   /** Search path appended to `base_url`; null means the default "/search". */
   search_path: string | null;
   /** Search fallback tier (lower is tried first); null stays out of fallback. */
@@ -138,6 +144,8 @@ export interface ConnectionInput {
   web_fetch_mode?: string | null;
   /** Extract path for a provider fetch, e.g. "/v1/scrape". */
   web_fetch_path?: string | null;
+  /** Wire shape of the provider fetch body: "target" (default) or "urls". */
+  web_fetch_shape?: WebFetchShape | null;
   /** Search path appended to `base_url`, e.g. "/web/search". */
   search_path?: string | null;
   /** Search fallback tier, 1 or higher. Omit to stay out of fallback. */
@@ -155,6 +163,15 @@ export interface ConnectionInput {
 export type WireApi = "chat" | "responses";
 
 export const WIRE_APIS: WireApi[] = ["chat", "responses"];
+
+/**
+ * How a provider extract endpoint names the URL to read.
+ *
+ * `target` sends `{ "url": … }` (Firecrawl `/scrape`); `urls` sends
+ * `{ "urls": [ … ] }` (Tavily `/extract`, Exa `/contents`), which those two
+ * reject a bare `url` against with a 422.
+ */
+export type WebFetchShape = "target" | "urls";
 
 /** Tier a provider preset belongs to; the picker groups by this. */
 export type ProviderCategory =
@@ -185,6 +202,12 @@ export interface ProviderPreset {
   risk_notice: string | null;
   /** The OAuth preset that signs this connection in, when `auth` is "oauth". */
   oauth_preset: string | null;
+  /** Search tier a new connection from this preset starts in. */
+  default_search_tier: number | null;
+  /** Extract endpoint a new connection from this preset points at. */
+  default_web_fetch_path: string | null;
+  /** Body shape that extract endpoint expects. */
+  default_web_fetch_shape: WebFetchShape | null;
   /** Connections currently using this preset. */
   configured: number;
 }

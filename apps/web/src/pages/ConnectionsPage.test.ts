@@ -33,6 +33,9 @@ const preset = (
   note: null,
   risk_notice: null,
   oauth_preset: null,
+  default_search_tier: null,
+  default_web_fetch_path: null,
+  default_web_fetch_shape: null,
   configured: 0,
   ...overrides,
 });
@@ -53,6 +56,7 @@ const connection = (overrides: Partial<Connection>): Connection => ({
   wire_api: "chat",
   web_fetch_mode: "local",
   web_fetch_path: null,
+  web_fetch_shape: null,
   search_path: null,
   search_tier: null,
   provider_id: "openai",
@@ -249,6 +253,49 @@ describe("ConnectionsPage", () => {
     // Without a tier the router filters the connection out of `/v1/search`.
     expect(api.createConnection).toHaveBeenCalledWith(
       expect.objectContaining({ provider_id: "tavily", search_tier: 1 }),
+    );
+
+    unmount();
+  });
+
+  it("carries the preset's extract endpoint and body shape onto the connection", async () => {
+    vi.mocked(api.listProviders).mockResolvedValue({
+      object: "list",
+      data: [
+        preset({
+          id: "tavily",
+          label: "Tavily",
+          category: "search",
+          base_url: "https://api.tavily.com",
+          default_search_tier: 1,
+          default_web_fetch_path: "/extract",
+          // Tavily rejects a bare `url` with a 422, so the shape matters.
+          default_web_fetch_shape: "urls",
+          configured: 1,
+        }),
+      ],
+    });
+    vi.mocked(api.createConnection).mockResolvedValue(connection({}));
+
+    const { container, unmount } = await mount();
+
+    [...container.querySelectorAll("button")]
+      .find((candidate) => candidate.textContent?.includes("Add provider"))!
+      .click();
+    await settle();
+
+    document
+      .querySelector<HTMLButtonElement>(
+        'button[aria-label="Duplicate Tavily"]',
+      )!
+      .click();
+    await settle();
+
+    expect(api.createConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        web_fetch_path: "/extract",
+        web_fetch_shape: "urls",
+      }),
     );
 
     unmount();

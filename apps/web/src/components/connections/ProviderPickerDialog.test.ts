@@ -27,6 +27,9 @@ const preset = (
   note: null,
   risk_notice: null,
   oauth_preset: null,
+  default_search_tier: null,
+  default_web_fetch_path: null,
+  default_web_fetch_shape: null,
   configured: 0,
   ...overrides,
 });

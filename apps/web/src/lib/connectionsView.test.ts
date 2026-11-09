@@ -27,6 +27,7 @@ const connection = (overrides: Partial<Connection>): Connection => ({
   wire_api: "chat",
   web_fetch_mode: "local",
   web_fetch_path: null,
+  web_fetch_shape: null,
   search_path: null,
   search_tier: null,
   provider_id: "openai",
