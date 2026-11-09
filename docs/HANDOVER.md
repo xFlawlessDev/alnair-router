@@ -207,6 +207,15 @@ because the request shape is the upstream's own: Tavily and Perplexity both take
 SearXNG wants form-encoded `q`. Only the base URL can absorb a different path;
 a different *encoding* would need a per-connection mode.
 
+A request's `model` is a hint here, not a requirement. A harness may echo its
+chat model into a search body, so an unknown reference falls through to the
+search tiers instead of becoming a `404` — otherwise a configured provider is
+unreachable for any client that names a model. A *malformed* reference
+(`alias/` with no model segment) is still a `400`: answering it from a different
+provider would hide the caller's bug. When the primary provider answers `429`,
+`432`, `433` or `434`, the request moves down the tiers, lowest first, rotating
+within a tier. A `404` never falls back, because it points at a wrong path.
+
 The response is **verbatim by default** to preserve the provider-specific wire
 contract for existing clients. `?normalize=true` opts into a canonical
 `results[]` shape (`title`, `url`, `snippet`, `score`, `published_at`,

@@ -218,9 +218,13 @@ pub async fn search(
     let mut candidates = Vec::new();
     match resolve_target(&state, model.as_deref()).await {
         Ok(primary) => candidates.push(primary),
-        // A named model that does not resolve is the caller's error; surface it.
-        Err(error) if model.is_some() => return Err(error),
-        // No model and no default connection: search tiers are the only route.
+        // A malformed reference the caller actually named is their error;
+        // surface it rather than silently answering from a different provider.
+        Err(error) if model.is_some() && is_reference_error(&error) => return Err(error),
+        // Anything else — an unknown name, or no model and no default
+        // connection — leaves the search tiers as the route. A harness that
+        // echoes its chat model here must still reach a configured search
+        // provider instead of a 404.
         Err(_) => {}
     }
     candidates.extend(search_fallbacks(&state).await?);
@@ -260,6 +264,17 @@ pub async fn search(
 /// a wrong path, which fallback would only hide.
 fn is_search_fallback_status(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 429 | 432 | 433 | 434)
+}
+
+/// True when a resolve failure is about the *shape* of the model reference
+/// rather than about it not existing.
+///
+/// `search` treats an unknown name as "no primary", because a harness may echo
+/// its chat model into a search body and the search tiers are still a valid
+/// route. A malformed reference is different: it is a caller bug, and silently
+/// answering from a different provider would hide it.
+fn is_reference_error(error: &crate::error::Error) -> bool {
+    matches!(error, crate::error::Error::BadRequest(_))
 }
 
 /// Search connections in the order to try after the primary: tiers ascending,

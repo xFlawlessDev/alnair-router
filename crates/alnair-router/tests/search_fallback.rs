@@ -205,3 +205,51 @@ async fn members_of_one_tier_rotate_round_robin() {
     let b = second_hits.load(Ordering::SeqCst);
     assert_eq!((a, b), (2, 2), "four requests should split evenly");
 }
+
+/// A harness may echo its chat model into a search body. The reference does not
+/// resolve to any connection, but the search tiers are still a valid route, so
+/// the request must reach the configured provider instead of 404ing.
+#[tokio::test]
+async fn an_unresolvable_model_falls_through_to_the_search_tiers() {
+    let (app, _db) = app().await;
+    let (search, search_hits) = spawn_provider(200, "search").await;
+
+    create_search_connection(&app, "exa-like", &search, Some(1)).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/search",
+        json!({ "model": "gpt-5.6-luna", "query": "rust" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "tiers should answer: {body}");
+    assert_eq!(body["from"], "search");
+    assert_eq!(search_hits.load(Ordering::SeqCst), 1);
+}
+
+/// A reference the resolver rejects as malformed is a caller bug. Answering it
+/// from a different provider would hide the mistake, so it stays a 400.
+#[tokio::test]
+async fn a_malformed_model_reference_is_still_an_error() {
+    let (app, _db) = app().await;
+    let (search, search_hits) = spawn_provider(200, "search").await;
+
+    create_search_connection(&app, "exa-like", &search, Some(1)).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/search",
+        json!({ "model": "combo/", "query": "rust" }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a malformed reference must surface: {body}"
+    );
+    assert_eq!(search_hits.load(Ordering::SeqCst), 0);
+}

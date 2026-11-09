@@ -412,6 +412,11 @@ upstream request in its place; `/v1/search`, whose upstream takes no model,
 has the field removed instead. Calls are recorded in usage like chat requests,
 so a proxied request still shows up against its key and connection.
 
+`/v1/search` treats `model` as a hint: a reference that names no connection
+falls through to the configured search tiers rather than failing, so a harness
+that echoes its chat model still reaches a search provider. A malformed
+reference is still a `400`.
+
 > **`/v1/web/fetch` caveat.** Unlike the other proxied endpoints it fetches an
 > arbitrary URL server-side rather than through a configured connection, so its
 > SSRF guard is the only thing standing between it and your internal network.
