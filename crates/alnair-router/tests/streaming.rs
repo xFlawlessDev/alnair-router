@@ -703,3 +703,154 @@ async fn anthropic_native_streaming_forwards_signed_thinking() {
         "the signature belongs to the open thinking block"
     );
 }
+
+/// CodeBuddy Intl speaks plain OpenAI on `/v2/chat/completions`, so the mock
+/// exposes that path under the same base URL the preset ships.
+async fn spawn_codebuddy_upstream(body: &'static str) -> String {
+    let router = axum::Router::new().route(
+        "/v2/chat/completions",
+        axum::routing::post(move || async move {
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/event-stream")],
+                body,
+            )
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}/v2")
+}
+
+#[tokio::test]
+async fn codebuddy_intl_streams_text_and_finish_reason() {
+    let app = app().await;
+    let base_url = spawn_codebuddy_upstream(REASONING_STREAM).await;
+    let model = route_model_with_type(&app, &base_url, "codebuddy-intl").await;
+
+    let (status, body, content_type) = post_stream(
+        &app,
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": model,
+            "stream": true,
+            "messages": [{ "role": "user", "content": "hello" }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(content_type.as_deref(), Some("text/event-stream"));
+    assert!(
+        body.contains("data: [DONE]"),
+        "stream must terminate: {body}"
+    );
+
+    let payloads = sse_payloads(&body);
+    let content = payloads
+        .iter()
+        .find_map(|payload| payload["choices"][0]["delta"]["content"].as_str())
+        .expect("CodeBuddy text should reach the client");
+
+    assert_eq!(content, "here you go");
+    let finish_reason = payloads
+        .iter()
+        .find_map(|payload| payload["choices"][0]["finish_reason"].as_str())
+        .expect("a finish_reason should reach the client");
+    assert_eq!(finish_reason, "length");
+}
+
+/// Command Code's CLI transport: one NDJSON object per line, terminated by a
+/// `finish` event. The probe path answers 403 so the provider picks the CLI.
+async fn spawn_commandcode_upstream(body: &'static str) -> String {
+    let router = axum::Router::new()
+        .route(
+            "/provider/v1/models",
+            axum::routing::get(|| async { StatusCode::FORBIDDEN }),
+        )
+        .route(
+            "/alpha/generate",
+            axum::routing::post(move || async move {
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/x-ndjson")],
+                    body,
+                )
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    format!("http://{address}")
+}
+
+const COMMAND_CODE_CLI_STREAM: &str = concat!(
+    r#"{"type":"text-delta","text":"checking"}"#,
+    "\n",
+    r#"{"type":"tool-call","toolCallId":"call_1","toolName":"read_file","input":{"path":"/tmp"}}"#,
+    "\n",
+    r#"{"type":"finish","finishReason":"tool-calls"}"#,
+    "\n",
+);
+
+#[tokio::test]
+async fn commandcode_cli_stream_reaches_the_client() {
+    let app = app().await;
+    let base_url = spawn_commandcode_upstream(COMMAND_CODE_CLI_STREAM).await;
+    let model = route_model_with_type(&app, &base_url, "command-code").await;
+
+    let (status, body, content_type) = post_stream(
+        &app,
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": model,
+            "stream": true,
+            "messages": [{ "role": "user", "content": "read a file" }]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(content_type.as_deref(), Some("text/event-stream"));
+    assert!(
+        body.contains("data: [DONE]"),
+        "stream must terminate: {body}"
+    );
+
+    let payloads = sse_payloads(&body);
+    let content = payloads
+        .iter()
+        .find_map(|payload| payload["choices"][0]["delta"]["content"].as_str())
+        .expect("CLI text should reach the client");
+    assert_eq!(content, "checking");
+
+    let call = payloads
+        .iter()
+        .find_map(|payload| payload["choices"][0]["delta"]["tool_calls"].as_array())
+        .expect("the CLI tool call should reach the client")
+        .first()
+        .cloned()
+        .expect("one tool call");
+    assert_eq!(call["id"], "call_1");
+    assert_eq!(call["function"]["name"], "read_file");
+    assert_eq!(call["function"]["arguments"], r#"{"path":"/tmp"}"#);
+
+    let finish_reason = payloads
+        .iter()
+        .find_map(|payload| payload["choices"][0]["finish_reason"].as_str())
+        .expect("a finish_reason should reach the client");
+    assert_eq!(finish_reason, "tool_calls");
+}

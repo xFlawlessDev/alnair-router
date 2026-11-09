@@ -233,7 +233,7 @@ fn worst_case_upstream_calls_is_stated_once() {
         transport_retries: 1,
     };
 
-    // 3 tiers × (1 initial + 2 status + 1 transport) = 12 calls, before
+    // 3 tiers Ã (1 initial + 2 status + 1 transport) = 12 calls, before
     // credential rotation. The old shape (10 retries per provider) allowed
     // hundreds.
     assert_eq!(worst_case_upstream_calls(policy, 3), 12);
@@ -459,8 +459,8 @@ async fn collect_defaults_tool_calls_when_no_done_chunk_arrives() {
     assert_eq!(completion.finish_reason.as_deref(), Some("tool_calls"));
 }
 
-#[test]
-fn a_rejected_request_is_a_bad_request_not_an_upstream_failure() {
+#[tokio::test]
+async fn a_rejected_request_is_a_bad_request_not_an_upstream_failure() {
     let error = to_stream_chunk(Err(alnair_llm::ChatError::BadRequest(
         "Anthropic API key is required".to_string(),
     )))
@@ -472,8 +472,8 @@ fn a_rejected_request_is_a_bad_request_not_an_upstream_failure() {
     );
 }
 
-#[test]
-fn an_upstream_error_stays_an_upstream_failure() {
+#[tokio::test]
+async fn an_upstream_error_stays_an_upstream_failure() {
     let error = to_stream_chunk(Err(alnair_llm::ChatError::Provider(
         "OpenAI API error 500: boom".to_string(),
     )))

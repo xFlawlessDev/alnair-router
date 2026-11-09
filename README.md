@@ -535,8 +535,12 @@ Key settings:
   dashboard itself signs in with a password (see
   [Exposing beyond loopback](#exposing-beyond-loopback)).
 - `router.max_retries_per_tier` (default 2) and `router.max_retry_delay_ms`
-  (default 30000) — provider retries inside one tier before failover, with
-  exponential backoff.
+  (default 30000) — retries for a retryable HTTP status (408, 429, 5xx, 529)
+  inside one tier, with exponential backoff and `Retry-After` honoured. A
+  connection that fails without producing a response (reset, refused, TLS) is
+  retried once, on a separate fixed budget: the executor already fans one
+  request across tiers and credentials, so both layers retrying freely would
+  multiply upstream calls.
 - `limits.max_concurrent` / `limits.max_concurrent_per_connection` — upstream
   concurrency caps; a request that cannot get a slot in time gets `429` with
   `Retry-After`.

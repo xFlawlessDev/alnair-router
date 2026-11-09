@@ -522,10 +522,13 @@ suite should tell you.
    pinned addresses and follows no redirects itself. (`handlers/media/fetch.rs`)
 
 9. **Retry is a pinned contract.** The executor makes one attempt per tier; the
-   provider retries `router.max_retries_per_tier` times (default 2) with 500 ms
-   doubling backoff capped by `router.max_retry_delay_ms` (default 30 s). A
-   `Retry-After` header wins. `RetryPolicy` is applied even when a request has no
-   generation options. (`chat_backend.rs`, `providers/common.rs`)
+   provider retries `router.max_retries_per_tier` times (default 2) for a
+   retryable status, with 500 ms doubling backoff capped by
+   `router.max_retry_delay_ms` (default 30 s). A `Retry-After` header wins.
+   Failures that never produced a response get a separate fixed budget of one
+   transport retry (`RetryBudget`), because the executor already fans a request
+   across tiers and credentials. `RetryPolicy` is applied even when a request
+   has no generation options. (`chat_backend.rs`, `providers/common.rs`)
 
 10. **Credentials never touch SQLite in plaintext.** `ConnectionRepository`
     encrypts on write and decrypts on read; `Catalog::load` decrypts for the

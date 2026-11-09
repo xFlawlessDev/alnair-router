@@ -193,9 +193,9 @@ impl ModelConfig {
 
     /// Explicit rates on this config, when the caller resolved them.
     ///
-    /// The provider layer carries no built-in price table: pricing is router
-    /// policy, so an upstream is only ever told the rate the router already
-    /// decided on.
+    /// The provider layer no longer carries a built-in price table: pricing is
+    /// router policy, so an upstream is only ever told the rate the router
+    /// already decided on.
     pub fn effective_cost_rates(&self) -> Option<ModelCostRates> {
         self.cost_rates.clone()
     }

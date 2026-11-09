@@ -2,6 +2,7 @@
 name = "alnair-router"
 version = "0.1.14"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 description = "Standalone OpenAI-compatible AI router with prefixed model IDs and tiered fallback combos"
 publish = false

@@ -66,8 +66,10 @@ url = ""
 default_connection = "openai-main"
 # Maximum number of fallback tiers attempted for a single request.
 max_attempts = 5
-# Provider retries inside a single tier before the executor moves to the next
-# tier. A `Retry-After` response header always wins over the local delay.
+# Retries for a retryable HTTP status (408, 429, 5xx, 529) inside a single
+# tier, before the executor moves to the next tier. A `Retry-After` response
+# header always wins over the local delay. A connection that fails without
+# producing a response is retried once, on a separate fixed budget.
 max_retries_per_tier = 2
 # Upper bound for the exponential retry delay (500 ms doubling per retry).
 max_retry_delay_ms = 30000
