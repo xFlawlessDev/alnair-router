@@ -2,14 +2,13 @@
 name = "alnair-llm"
 version = "0.1.14"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 description = "Vendored LLM provider stack (OpenAI-compatible + Anthropic-native) used by alnair-router"
 publish = false
 
 [dependencies]
 async-stream = "0.3"
-axum = { version = "0.8", features = ["json"] }
-base64 = "0.22"
 bytes = "1"
 chrono = "0.4"
 futures = "0.3"
@@ -25,5 +24,9 @@ tokio = { version = "1.48", features = ["time"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
+# `axum` is only used by the provider tests, which stand up a local mock
+# upstream. Keeping it out of `[dependencies]` keeps a server framework off the
+# production graph of a crate that only talks to HTTP.
 [dev-dependencies]
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time"] }
+axum = { version = "0.8", features = ["json"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "net", "time"] }

@@ -177,7 +177,7 @@ fn llm_stream_options_apply_to_openai_body_includes_penalties() {
     let options = LlmStreamOptions::from(&generation);
 
     let mut body = serde_json::json!({});
-    options.apply_to_openai_body(&mut body);
+    options.apply_to_openai_compatible_body(&mut body, true, false);
 
     assert_eq!(body["presence_penalty"], serde_json::json!(0.45));
     assert_eq!(body["frequency_penalty"], serde_json::json!(0.12));
@@ -236,7 +236,7 @@ fn thinking_level_medium_sets_reasoning_effort_medium() {
     };
     let mut body = serde_json::json!({});
 
-    options.apply_to_openai_body(&mut body);
+    options.apply_to_openai_compatible_body(&mut body, true, false);
 
     assert_eq!(body["reasoning_effort"], serde_json::json!("medium"));
 }
@@ -249,25 +249,30 @@ fn thinking_level_none_omits_reasoning_effort() {
     };
     let mut body = serde_json::json!({});
 
-    options.apply_to_openai_body(&mut body);
+    options.apply_to_openai_compatible_body(&mut body, true, false);
 
     assert!(body.get("reasoning_effort").is_none());
 }
 
 #[test]
 fn thinking_levels_map_to_openai_reasoning_effort_values() {
-    assert_eq!(
-        openai_reasoning_effort(Some(ThinkingLevel::Minimal)),
-        Some("minimal")
-    );
-    assert_eq!(
-        openai_reasoning_effort(Some(ThinkingLevel::Low)),
-        Some("low")
-    );
-    assert_eq!(
-        openai_reasoning_effort(Some(ThinkingLevel::Max)),
-        Some("xhigh")
-    );
+    for (level, expected) in [
+        (ThinkingLevel::Minimal, "minimal"),
+        (ThinkingLevel::Low, "low"),
+        (ThinkingLevel::Medium, "medium"),
+        (ThinkingLevel::High, "high"),
+        (ThinkingLevel::Max, "xhigh"),
+    ] {
+        let options = LlmStreamOptions {
+            thinking_level: Some(level),
+            ..LlmStreamOptions::default()
+        };
+        let mut body = serde_json::json!({});
+
+        options.apply_to_openai_compatible_body(&mut body, true, false);
+
+        assert_eq!(body["reasoning_effort"], serde_json::json!(expected));
+    }
 }
 
 #[test]

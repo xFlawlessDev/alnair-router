@@ -566,45 +566,6 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
-impl LlmStreamOptions {
-    pub fn apply_to_openai_body(&self, body: &mut serde_json::Value) {
-        macro_rules! set {
-            ($field:ident) => {
-                if let Some(v) = self.$field {
-                    body[stringify!($field)] = serde_json::json!(v);
-                }
-            };
-        }
-        set!(temperature);
-        set!(top_p);
-        set!(presence_penalty);
-        set!(frequency_penalty);
-        if let Some(v) = self.max_tokens
-            && v > 0
-        {
-            body["max_tokens"] = serde_json::json!(v);
-        }
-        set!(seed);
-        if let Some(ref v) = self.stop {
-            body["stop"] = serde_json::json!(v);
-        }
-        if let Some(reasoning_effort) = openai_reasoning_effort(self.thinking_level) {
-            body["reasoning_effort"] = serde_json::json!(reasoning_effort);
-        }
-    }
-}
-
-fn openai_reasoning_effort(level: Option<ThinkingLevel>) -> Option<&'static str> {
-    match level.unwrap_or(ThinkingLevel::None) {
-        ThinkingLevel::None => None,
-        ThinkingLevel::Minimal => Some("minimal"),
-        ThinkingLevel::Low => Some("low"),
-        ThinkingLevel::Medium => Some("medium"),
-        ThinkingLevel::High => Some("high"),
-        ThinkingLevel::Max => Some("xhigh"),
-    }
-}
-
 mod chunks;
 mod request;
 pub mod responses;
