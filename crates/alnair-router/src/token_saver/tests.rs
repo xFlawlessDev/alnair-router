@@ -278,6 +278,7 @@ fn finalize_splits_input_and_output_savings() {
     let totals = savings.finalize(
         500,
         Some(Price {
+            unit_price: None,
             input_per_million_usd: 3.0,
             output_per_million_usd: 15.0,
             cache_read_per_million_usd: None,

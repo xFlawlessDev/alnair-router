@@ -379,6 +379,13 @@ export interface PriceQuote {
   cache_read_per_million_usd?: number | null;
   cache_write_per_million_usd?: number | null;
   reasoning_per_million_usd?: number | null;
+  unit_price?: UnitPrice | null;
+}
+
+export interface UnitPrice {
+  unit: "second" | "image" | "character" | "request";
+  quantity: number;
+  price_usd: number;
 }
 
 export interface PriceMatch {
@@ -813,6 +820,9 @@ export interface ModelPrice {
   cache_read_per_million_usd: number | null;
   cache_write_per_million_usd: number | null;
   reasoning_per_million_usd: number | null;
+  unit_kind: UnitPrice["unit"] | null;
+  unit_quantity: number | null;
+  unit_price_usd: number | null;
   /** `override` (set here) or `sync` (crawled catalog). */
   source: "override" | "sync";
   updated_at: string;
@@ -825,6 +835,7 @@ export interface ModelPriceInput {
   cache_read_per_million_usd?: number | null;
   cache_write_per_million_usd?: number | null;
   reasoning_per_million_usd?: number | null;
+  unit_price?: UnitPrice | null;
 }
 
 export interface PricingSyncStatus {

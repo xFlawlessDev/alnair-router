@@ -155,7 +155,7 @@ onMounted(load);
   <div class="editorial-page">
     <PageHeader
       title="Pricing"
-      description="Model rates that turn tokens into recorded cost. Overrides win over the crawled catalog."
+      description="Configure model token and unit rates. Overrides win over the crawled catalog."
     >
       <template #actions>
         <Button variant="outline" :disabled="loading" @click="load">
@@ -203,6 +203,11 @@ onMounted(load);
             <span v-if="matchResult.price" class="text-muted-foreground">
               in {{ rate(matchResult.price.input_per_million_usd) }} · out
               {{ rate(matchResult.price.output_per_million_usd) }}
+              <template v-if="matchResult.price.unit_price">
+                · {{ rate(matchResult.price.unit_price.price_usd) }} /
+                {{ matchResult.price.unit_price.quantity }}
+                {{ matchResult.price.unit_price.unit }}
+              </template>
             </span>
           </template>
           <span v-else class="text-destructive">
@@ -262,7 +267,8 @@ onMounted(load);
 
       <Card v-else class="editorial-panel editorial-table">
         <div class="border-b px-4 py-3 text-sm text-muted-foreground">
-          Rates in USD per million tokens
+          Token rates are USD per million tokens. Unit rates are saved but do
+          not yet calculate media costs.
         </div>
         <Table>
           <TableHeader>
@@ -273,6 +279,7 @@ onMounted(load);
               <TableHead class="text-right">Cache read</TableHead>
               <TableHead class="text-right">Cache write</TableHead>
               <TableHead class="text-right">Reasoning</TableHead>
+              <TableHead>Unit rate</TableHead>
               <TableHead>Source</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead class="text-right">Actions</TableHead>
@@ -301,6 +308,19 @@ onMounted(load);
               <TableCell class="text-right text-xs tabular-nums">{{
                 rate(price.reasoning_per_million_usd)
               }}</TableCell>
+              <TableCell class="text-xs whitespace-nowrap">
+                <template
+                  v-if="
+                    price.unit_kind &&
+                    price.unit_quantity != null &&
+                    price.unit_price_usd != null
+                  "
+                >
+                  {{ rate(price.unit_price_usd) }} / {{ price.unit_quantity }}
+                  {{ price.unit_kind }}
+                </template>
+                <template v-else>—</template>
+              </TableCell>
               <TableCell>
                 <Badge
                   :variant="price.source === 'override' ? 'default' : 'outline'"

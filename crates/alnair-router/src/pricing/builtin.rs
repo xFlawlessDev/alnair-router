@@ -19,6 +19,7 @@ use crate::pricing::Price;
 pub fn price(model_id: &str) -> Option<Price> {
     let price = match model_id {
         "gpt-4o" | "gpt-4o-2024-11-20" => Price {
+            unit_price: None,
             input_per_million_usd: 2.50,
             output_per_million_usd: 10.00,
             cache_read_per_million_usd: Some(1.25),
@@ -26,6 +27,7 @@ pub fn price(model_id: &str) -> Option<Price> {
             reasoning_per_million_usd: Some(15.00),
         },
         "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" => Price {
+            unit_price: None,
             input_per_million_usd: 0.15,
             output_per_million_usd: 0.60,
             cache_read_per_million_usd: Some(0.075),
@@ -33,6 +35,7 @@ pub fn price(model_id: &str) -> Option<Price> {
             reasoning_per_million_usd: Some(0.90),
         },
         "gpt-4.1" => Price {
+            unit_price: None,
             input_per_million_usd: 2.00,
             output_per_million_usd: 8.00,
             cache_read_per_million_usd: Some(0.50),
@@ -40,6 +43,7 @@ pub fn price(model_id: &str) -> Option<Price> {
             reasoning_per_million_usd: Some(12.00),
         },
         "gpt-4.1-mini" => Price {
+            unit_price: None,
             input_per_million_usd: 0.40,
             output_per_million_usd: 1.60,
             cache_read_per_million_usd: Some(0.10),

@@ -73,6 +73,7 @@ fn parse_litellm(body: &str) -> Result<Vec<FetchedPrice>> {
         prices.push(FetchedPrice {
             model,
             price: Price {
+                unit_price: None,
                 input_per_million_usd: input * 1_000_000.0,
                 output_per_million_usd: output * 1_000_000.0,
                 cache_read_per_million_usd: entry
@@ -143,6 +144,7 @@ fn parse_models_dev(body: &str) -> Result<Vec<FetchedPrice>> {
             }
 
             let price = Price {
+                unit_price: None,
                 input_per_million_usd: input,
                 output_per_million_usd: output,
                 cache_read_per_million_usd: cost.cache_read,

@@ -84,9 +84,33 @@ describe("PriceFormDialog", () => {
         cache_read_per_million_usd: 1.25,
         cache_write_per_million_usd: null,
         reasoning_per_million_usd: null,
+        unit_price: null,
       },
     ]);
 
+    unmount();
+  });
+
+  it("saves a rate per 1,000 characters", async () => {
+    const { unmount } = await mount();
+    type("price-model", "voice-model");
+    const select = document.querySelector<HTMLSelectElement>("#price-unit")!;
+    select.value = "character";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    type("price-quantity", "1000");
+    type("price-unit-rate", "0.03");
+    await settle();
+    [...document.querySelectorAll("button")]
+      .find((candidate) => candidate.textContent?.includes("Save price"))!
+      .click();
+    await settle();
+    expect(api.upsertPricing).toHaveBeenCalledWith([
+      expect.objectContaining({
+        model: "voice-model",
+        unit_price: { unit: "character", quantity: 1000, price_usd: 0.03 },
+      }),
+    ]);
     unmount();
   });
 

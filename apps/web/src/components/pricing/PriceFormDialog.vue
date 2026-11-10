@@ -14,17 +14,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, api } from "@/lib/api";
-import type { ModelPrice, ModelPriceInput } from "@/types/api";
+import type { ModelPrice, ModelPriceInput, UnitPrice } from "@/types/api";
 
 const props = defineProps<{ open: boolean; price: ModelPrice | null }>();
 const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
 
 const model = ref("");
-const input = ref("");
-const output = ref("");
+const input = ref("0");
+const output = ref("0");
 const cacheRead = ref("");
 const cacheWrite = ref("");
 const reasoning = ref("");
+const unit = ref<UnitPrice["unit"] | "">("");
+const unitQuantity = ref("1");
+const unitRate = ref("");
 const saving = ref(false);
 
 const isEdit = computed(() => props.price !== null);
@@ -35,8 +38,12 @@ watch(
     if (!open) return;
     const price = props.price;
     model.value = price?.model ?? "";
-    input.value = price ? String(price.input_per_million_usd) : "";
-    output.value = price ? String(price.output_per_million_usd) : "";
+    unit.value = price?.unit_kind ?? "";
+    unitQuantity.value = String(price?.unit_quantity ?? 1);
+    unitRate.value =
+      price?.unit_price_usd == null ? "" : String(price.unit_price_usd);
+    input.value = price ? String(price.input_per_million_usd) : "0";
+    output.value = price ? String(price.output_per_million_usd) : "0";
     cacheRead.value =
       price?.cache_read_per_million_usd != null
         ? String(price.cache_read_per_million_usd)
@@ -91,6 +98,20 @@ async function save(): Promise<void> {
     return;
   }
 
+  const quantity = parseRate(unitQuantity.value);
+  const unitPrice = parseRate(unitRate.value);
+  if (
+    unit.value &&
+    (quantity === null ||
+      !Number.isFinite(quantity) ||
+      quantity <= 0 ||
+      unitPrice === null ||
+      !Number.isFinite(unitPrice))
+  ) {
+    toast.error("Enter a positive unit quantity and a non-negative unit price");
+    return;
+  }
+
   const body: ModelPriceInput = {
     model: name,
     input_per_million_usd: rates.input_per_million_usd as number,
@@ -98,6 +119,13 @@ async function save(): Promise<void> {
     cache_read_per_million_usd: rates.cache_read_per_million_usd,
     cache_write_per_million_usd: rates.cache_write_per_million_usd,
     reasoning_per_million_usd: rates.reasoning_per_million_usd,
+    unit_price: unit.value
+      ? {
+          unit: unit.value,
+          quantity: quantity as number,
+          price_usd: unitPrice as number,
+        }
+      : null,
   };
 
   saving.value = true;
@@ -124,9 +152,9 @@ async function save(): Promise<void> {
           isEdit ? "Edit price override" : "Add price override"
         }}</DialogTitle>
         <DialogDescription>
-          Rates are USD per million tokens. Overrides win over crawled catalog
-          rows and survive syncs; leave cache or reasoning blank to fall back to
-          the input or output rate.
+          Token rates are USD per million tokens. Overrides take precedence over
+          synced rates. Unit rates are saved for reference and are not yet used
+          to calculate media usage costs.
         </DialogDescription>
       </DialogHeader>
 
@@ -206,6 +234,51 @@ async function save(): Promise<void> {
             />
           </div>
         </div>
+        <fieldset class="grid gap-3 rounded-md border p-4">
+          <legend class="px-1 text-sm font-medium">Unit rate (optional)</legend>
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div class="grid gap-2">
+              <Label for="price-unit">Unit</Label>
+              <select
+                id="price-unit"
+                v-model="unit"
+                class="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+              >
+                <option value="">None</option>
+                <option value="second">Second</option>
+                <option value="image">Image</option>
+                <option value="character">Character</option>
+                <option value="request">Request</option>
+              </select>
+            </div>
+            <div class="grid gap-2">
+              <Label for="price-quantity">Units per rate</Label>
+              <Input
+                id="price-quantity"
+                v-model="unitQuantity"
+                type="number"
+                min="0"
+                step="any"
+                :disabled="!unit"
+              />
+            </div>
+            <div class="grid gap-2">
+              <Label for="price-unit-rate">Price (USD)</Label>
+              <Input
+                id="price-unit-rate"
+                v-model="unitRate"
+                type="number"
+                min="0"
+                step="any"
+                :disabled="!unit"
+              />
+            </div>
+          </div>
+          <p class="text-xs text-muted-foreground">
+            For example, enter 60 seconds for a per-minute rate, or 1,000
+            characters for a per-1,000-character rate.
+          </p>
+        </fieldset>
       </div>
 
       <DialogFooter>

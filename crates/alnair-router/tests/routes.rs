@@ -3782,6 +3782,45 @@ async fn pricing_overrides_round_trip_through_the_api() {
 }
 
 #[tokio::test]
+async fn unit_pricing_round_trips_and_rejects_invalid_quantity() {
+    let (app, _) = app_with_config(RouterConfig::default()).await;
+    let (status, _) = json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({"prices": [{
+            "model": "voice-model",
+            "input_per_million_usd": 0,
+            "output_per_million_usd": 0,
+            "unit_price": {"unit": "character", "quantity": 1000, "price_usd": 0.03}
+        }]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = get(&app, "/api/pricing/match?model=voice-model").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["price"]["unit_price"],
+        serde_json::json!({
+            "unit": "character", "quantity": 1000.0, "price_usd": 0.03
+        })
+    );
+    let (status, _) = json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({"prices": [{
+            "model": "voice-model",
+            "input_per_million_usd": 0,
+            "output_per_million_usd": 0,
+            "unit_price": {"unit": "second", "quantity": 0, "price_usd": 0.03}
+        }]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn pricing_match_reports_the_catalog_key() {
     let (app, _db) = app(false).await;
 

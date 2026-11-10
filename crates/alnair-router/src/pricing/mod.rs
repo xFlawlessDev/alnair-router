@@ -32,6 +32,25 @@ pub struct Price {
     pub cache_write_per_million_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_per_million_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_price: Option<UnitPrice>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct UnitPrice {
+    pub unit: PriceUnit,
+    pub quantity: f64,
+    pub price_usd: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum PriceUnit {
+    Second,
+    Image,
+    Character,
+    Request,
 }
 
 /// A stored price row, as returned by `GET /api/pricing`.
@@ -43,6 +62,9 @@ pub struct PricedModel {
     pub cache_read_per_million_usd: Option<f64>,
     pub cache_write_per_million_usd: Option<f64>,
     pub reasoning_per_million_usd: Option<f64>,
+    pub unit_kind: Option<PriceUnit>,
+    pub unit_quantity: Option<f64>,
+    pub unit_price_usd: Option<f64>,
     /// `override` (set from the dashboard) or `sync` (crawled catalog).
     pub source: String,
     pub updated_at: DateTime<Utc>,
@@ -60,6 +82,8 @@ pub struct PriceInput {
     pub cache_write_per_million_usd: Option<f64>,
     #[serde(default)]
     pub reasoning_per_million_usd: Option<f64>,
+    #[serde(default)]
+    pub unit_price: Option<UnitPrice>,
 }
 
 impl PriceInput {
@@ -67,6 +91,18 @@ impl PriceInput {
         let model = self.model.trim();
         if model.is_empty() {
             return Err(Error::BadRequest("model is required".to_string()));
+        }
+
+        if let Some(unit) = self.unit_price
+            && (!unit.quantity.is_finite()
+                || unit.quantity <= 0.0
+                || !unit.price_usd.is_finite()
+                || unit.price_usd < 0.0)
+        {
+            return Err(Error::BadRequest(
+                "unit quantity must be positive and unit price must be zero or positive"
+                    .to_string(),
+            ));
         }
 
         for (name, value) in [
@@ -132,14 +168,18 @@ impl PricingRepository {
             sqlx::query(
                 "INSERT INTO model_prices
                     (model, input_per_million_usd, output_per_million_usd, cache_read_per_million_usd,
-                     cache_write_per_million_usd, reasoning_per_million_usd, source, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'override', ?7)
+                     cache_write_per_million_usd, reasoning_per_million_usd, source, updated_at,
+                     unit_kind, unit_quantity, unit_price_usd)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'override', ?7, ?8, ?9, ?10)
                  ON CONFLICT (model, source) DO UPDATE SET
                     input_per_million_usd = excluded.input_per_million_usd,
                     output_per_million_usd = excluded.output_per_million_usd,
                     cache_read_per_million_usd = excluded.cache_read_per_million_usd,
                     cache_write_per_million_usd = excluded.cache_write_per_million_usd,
                     reasoning_per_million_usd = excluded.reasoning_per_million_usd,
+                    unit_kind = excluded.unit_kind,
+                    unit_quantity = excluded.unit_quantity,
+                    unit_price_usd = excluded.unit_price_usd,
                     updated_at = excluded.updated_at",
             )
             .bind(input.model.trim())
@@ -149,6 +189,9 @@ impl PricingRepository {
             .bind(input.cache_write_per_million_usd)
             .bind(input.reasoning_per_million_usd)
             .bind(now)
+            .bind(input.unit_price.map(|unit| unit.unit))
+            .bind(input.unit_price.map(|unit| unit.quantity))
+            .bind(input.unit_price.map(|unit| unit.price_usd))
             .execute(&mut *transaction)
             .await?;
         }
@@ -271,6 +314,14 @@ impl PricingIndex {
                     cache_read_per_million_usd: row.cache_read_per_million_usd,
                     cache_write_per_million_usd: row.cache_write_per_million_usd,
                     reasoning_per_million_usd: row.reasoning_per_million_usd,
+                    unit_price: match (row.unit_kind, row.unit_quantity, row.unit_price_usd) {
+                        (Some(unit), Some(quantity), Some(price_usd)) => Some(UnitPrice {
+                            unit,
+                            quantity,
+                            price_usd,
+                        }),
+                        _ => None,
+                    },
                 },
             };
 
