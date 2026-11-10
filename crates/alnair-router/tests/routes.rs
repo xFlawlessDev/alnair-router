@@ -178,6 +178,35 @@ async fn record_usage(db: &Db, api_key_id: &str, cost_usd: f64) {
         .expect("record usage");
 }
 
+#[tokio::test]
+async fn provider_health_aggregates_attempts_and_rejects_invalid_ranges() {
+    let (app, db) = app(false).await;
+    let repo = UsageRepository::new(db.pool.clone());
+    for (latency, status, attempt) in [(10, "ok", 1), (20, "error", 2), (30, "ok", 1)] {
+        repo.record(NewUsageRecord {
+            requested_model: "combo".into(),
+            resolved_model: Some("model".into()),
+            connection_name: Some("provider".into()),
+            status: status.into(),
+            latency_ms: latency,
+            attempt,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    }
+    let (status, body) = get(&app, "/api/provider-health?range=7d").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["providers"][0]["attempts"], 3);
+    assert_eq!(body["providers"][0]["failures"], 1);
+    assert_eq!(body["providers"][0]["later_attempts"], 1);
+    assert_eq!(body["providers"][0]["p95_ms"], 30);
+    assert_eq!(
+        get(&app, "/api/provider-health?range=wrong").await.0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
 async fn get(app: &axum::Router, path: &str) -> (StatusCode, serde_json::Value) {
     get_with_auth(app, path, None).await
 }

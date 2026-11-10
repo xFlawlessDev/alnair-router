@@ -27,6 +27,7 @@ import type {
   KeyPlanInput,
   KeySpend,
   ModelCatalogResponse,
+  ProviderHealthHistory,
   ModelPrice,
   ModelPriceInput,
   ModelUsage,
@@ -365,7 +366,10 @@ export const api = {
       { body },
     ),
   deleteOAuthAccount: (id: ID, accountId: ID) =>
-    request<void>("DELETE", `/api/connections/${id}/oauth-accounts/${accountId}`),
+    request<void>(
+      "DELETE",
+      `/api/connections/${id}/oauth-accounts/${accountId}`,
+    ),
 
   listAliases: () => request<Alias[]>("GET", "/api/aliases"),
   createAlias: (body: AliasInput) =>
@@ -491,6 +495,10 @@ export const api = {
   activity: (events = 100) =>
     request<ActivitySnapshot>("GET", "/api/activity", {
       query: { limit: events },
+    }),
+  providerHealth: (range: string) =>
+    request<ProviderHealthHistory>("GET", "/api/provider-health", {
+      query: { range },
     }),
 
   settings: () => request<SettingsResponse>("GET", "/api/settings"),

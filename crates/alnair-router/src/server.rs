@@ -48,6 +48,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/init", get(handlers::admin::init_state))
         .route("/api/providers", get(handlers::providers::list_providers))
         .route(
+            "/api/provider-health",
+            get(handlers::provider_health::history),
+        )
+        .route(
             "/api/connections",
             get(handlers::admin::list_connections).post(handlers::admin::create_connection),
         )

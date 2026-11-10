@@ -890,6 +890,22 @@ export interface ActivitySnapshot {
   events: ActivityEvent[];
 }
 
+export interface ProviderHealthRow {
+  name: string;
+  attempts: number;
+  failures: number;
+  later_attempts: number;
+  p95_ms: number;
+}
+
+export interface ProviderHealthHistory {
+  since: string;
+  providers: ProviderHealthRow[];
+  models: ProviderHealthRow[];
+  references: ProviderHealthRow[];
+  overall: ProviderHealthRow[];
+}
+
 /** Dashboard-managed settings: effective values from `GET /api/settings`. */
 export interface ServerSettings {
   require_api_key: boolean;

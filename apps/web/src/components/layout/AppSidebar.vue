@@ -5,6 +5,7 @@ import {
   CircleDollarSign,
   FlaskConical,
   History,
+  HeartPulse,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -48,6 +49,7 @@ interface NavItem {
 const monitorItems: NavItem[] = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
   { label: "Usage", to: "/usage", icon: ScrollText },
+  { label: "Provider Health", to: "/provider-health", icon: HeartPulse },
   { label: "Token Saving", to: "/token-saver", icon: Sparkles },
   { label: "Playground", to: "/playground", icon: FlaskConical },
   { label: "Console", to: "/logs", icon: Terminal },

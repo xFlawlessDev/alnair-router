@@ -13,6 +13,7 @@ import NotFoundPage from "@/pages/NotFoundPage.vue";
 import OverviewPage from "@/pages/OverviewPage.vue";
 import PlaygroundPage from "@/pages/PlaygroundPage.vue";
 import PricingPage from "@/pages/PricingPage.vue";
+import ProviderHealthPage from "@/pages/ProviderHealthPage.vue";
 import PublicUsagePage from "@/pages/PublicUsagePage.vue";
 import SettingsPage from "@/pages/SettingsPage.vue";
 import TokenSaverPage from "@/pages/TokenSaverPage.vue";
@@ -43,6 +44,12 @@ export const router = createRouter({
       name: "connections",
       component: ConnectionsPage,
       meta: { title: "Connections" },
+    },
+    {
+      path: "/provider-health",
+      name: "provider-health",
+      component: ProviderHealthPage,
+      meta: { title: "Provider Health" },
     },
     {
       path: "/aliases",

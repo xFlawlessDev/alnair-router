@@ -459,7 +459,7 @@ is set, requires `Authorization: Bearer <token>`:
 
 | Group | Routes |
 |---|---|
-| Meta | `/api/version`, `/api/init`, `/api/providers` (built-in endpoint presets), `/api/metrics` (Prometheus counters), `/api/activity` (in-memory live feed: in-flight attempts, per-connection counters, recent events) |
+| Meta | `/api/version`, `/api/init`, `/api/providers` (built-in endpoint presets), `/api/metrics` (Prometheus counters), `/api/activity` (in-memory live feed: in-flight attempts, per-connection counters, recent events), `/api/provider-health` (historical attempt aggregates and p95) |
 | Connections | `/api/connections`, `/api/connections/{id}`, `/{id}/models` (what the upstream offers), `/{id}/test` (connectivity), `/{id}/accounts` (extra API keys), `/{id}/oauth-accounts` (OAuth accounts) |
 | Aliases | `/api/aliases`, `/api/aliases/{id}`, `/{id}/test` (connection + model override), `/{id}/test-chat` (one real completion through the alias) |
 | Combos | `/api/combos`, `/api/combos/{id}` |
