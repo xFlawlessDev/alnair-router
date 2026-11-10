@@ -717,3 +717,29 @@ fn a_message_without_annotations_yields_no_citations() {
     assert!(extract_annotations(&serde_json::json!({ "content": "hi" })).is_empty());
     assert!(extract_annotations(&serde_json::json!({ "annotations": [] })).is_empty());
 }
+
+#[test]
+fn a_200_body_carrying_an_error_is_not_an_empty_success() {
+    // A relay that answers a failed request with `200` and an error envelope
+    // used to parse to zero choices and end the turn empty. The client then saw
+    // a successful, billed-looking answer with no content.
+    let message = upstream_error_message(&serde_json::json!({
+        "error": { "message": "upstream overloaded", "type": "server_error" }
+    }));
+    assert_eq!(message.as_deref(), Some("upstream overloaded"));
+
+    // A bare string error is accepted too.
+    assert_eq!(
+        upstream_error_message(&serde_json::json!({ "error": "boom" })).as_deref(),
+        Some("boom")
+    );
+
+    // A normal body is not an error.
+    assert!(
+        upstream_error_message(&serde_json::json!({
+            "choices": [{ "message": { "content": "hi" } }]
+        }))
+        .is_none()
+    );
+    assert!(upstream_error_message(&serde_json::json!({ "error": null })).is_none());
+}

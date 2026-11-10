@@ -274,6 +274,29 @@ pub(super) fn extract_usage(value: &serde_json::Value) -> Option<&serde_json::Va
     })
 }
 
+/// Reads the message out of a `200` body that carries an error envelope.
+///
+/// Some upstreams and relays answer a rejected or failed request with `200` and
+/// an `{"error": {...}}` body rather than a 4xx status. The streaming path
+/// already notices this; the one-shot path used to read `choices`, find none,
+/// and end the turn as an empty success — which reads like the model said
+/// nothing rather than like the upstream failed.
+pub(super) fn upstream_error_message(body: &serde_json::Value) -> Option<String> {
+    let error = body.get("error")?;
+    if error.is_null() {
+        return None;
+    }
+
+    if let Some(message) = error.as_str() {
+        return Some(message.to_string());
+    }
+    if let Some(message) = error.get("message").and_then(|value| value.as_str()) {
+        return Some(message.to_string());
+    }
+
+    Some(error.to_string())
+}
+
 /// Reads `url_citation` annotations off a message or delta object.
 ///
 /// OpenAI attaches them as `annotations`; the entries it does not define (file

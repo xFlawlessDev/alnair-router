@@ -221,6 +221,21 @@ impl OpenAiProvider {
             if !use_streaming {
                 let text = response.text().await.unwrap_or_default();
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    // A relay may report a failure inside a `200` body. Without
+                    // this the turn parses to zero choices and ends as an
+                    // empty success, which reads like the model chose to say
+                    // nothing rather than like the upstream refused.
+                    if let Some(message) = upstream_error_message(&json) {
+                        warn!(
+                            error = %truncate_for_log(&message, 2000),
+                            "OpenAI-compatible upstream returned an error inside a 200 body"
+                        );
+                        yield Err(ChatError::Provider(format!(
+                            "OpenAI-compatible upstream returned an error: {message}"
+                        )));
+                        return;
+                    }
+
                     let mut finish_reason = None;
                     let mut emitted_tool_call = false;
                     if let Some(choices) = json.get("choices").and_then(|c| c.as_array())
