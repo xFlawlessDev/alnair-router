@@ -116,11 +116,16 @@ function openChat(alias: Alias): void {
   chatOpen.value = true;
 }
 
-/** The reference a client would paste: `prefix/model`, or the bare prefix. */
+/**
+ * The reference a client would paste: `prefix/model`, the bare prefix when the
+ * override repeats it (the pinned model already makes it resolvable), or
+ * `prefix/` for an alias that keeps the caller's model.
+ */
 function aliasReference(alias: Alias): string {
-  return alias.model_override
-    ? `${alias.prefix}/${alias.model_override}`
-    : `${alias.prefix}/`;
+  const model = alias.model_override?.trim();
+  if (!model) return `${alias.prefix}/`;
+  if (model.toLowerCase() === alias.prefix.toLowerCase()) return alias.prefix;
+  return `${alias.prefix}/${model}`;
 }
 
 async function copyAlias(alias: Alias): Promise<void> {

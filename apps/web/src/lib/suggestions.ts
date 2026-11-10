@@ -12,6 +12,16 @@ function byPattern(left: Suggestion, right: Suggestion): number {
 }
 
 /**
+ * The override only earns a second column when it adds information: an alias
+ * that pins a model named after its own prefix would otherwise render as
+ * `claude-haiku-5-5 claude-haiku-5-5`.
+ */
+function aliasDetail(alias: Alias): string {
+  const model = alias.model_override?.trim() ?? "";
+  return model.toLowerCase() === alias.prefix.toLowerCase() ? "" : model;
+}
+
+/**
  * Builds allowlist and tier suggestions from the enabled aliases and combos:
  * blanks and disabled entries are skipped, `taken` patterns are hidden, and
  * both groups are sorted A→Z. `excludeComboId` keeps a combo from listing
@@ -33,7 +43,7 @@ export function buildSuggestions(input: {
     .map((alias) => ({
       id: `alias:${alias.id}`,
       pattern: alias.prefix,
-      detail: alias.model_override ?? "",
+      detail: aliasDetail(alias),
     }))
     .sort(byPattern);
 

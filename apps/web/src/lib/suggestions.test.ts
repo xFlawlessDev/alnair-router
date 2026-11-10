@@ -99,4 +99,27 @@ describe("buildSuggestions", () => {
     expect(suggestions.aliases).toHaveLength(0);
     expect(suggestions.combos).toHaveLength(0);
   });
+
+  it("omits an override that just repeats the prefix", () => {
+    const suggestions = buildSuggestions({
+      aliases: [
+        alias("a1", "claude-haiku-5-5", "claude-haiku-5-5"),
+        alias("a2", "Claude-Sonnet-5", "claude-sonnet-5"),
+        alias("a3", "glm", " glm-4.6 "),
+        alias("a4", "bare"),
+      ],
+      combos: [],
+    });
+
+    expect(
+      Object.fromEntries(
+        suggestions.aliases.map((item) => [item.pattern, item.detail]),
+      ),
+    ).toEqual({
+      "Claude-Sonnet-5": "",
+      "claude-haiku-5-5": "",
+      glm: "glm-4.6",
+      bare: "",
+    });
+  });
 });
