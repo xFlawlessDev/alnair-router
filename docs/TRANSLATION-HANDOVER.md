@@ -109,6 +109,13 @@ client endpoints). The hub already carries everything those need.
   `crates/alnair-router/tests/routes.rs`.
 - **Output-side absence is not an error.** No citations from an upstream is a
   normal response, not a `400` (§4 Case C).
+- **`citation_annotations` is not a request field.** It reports whether the
+  *client-facing renderer* can hand back a structured citation, and it is the
+  one matrix row that must not be read as "the upstream supports citations". A
+  `/v1/messages` client has no citation block type, so the Anthropic renderer
+  flattens a citation into inline text; that row is `false` on purpose. Because
+  no protocol lets a client ask for citations, this row is never consulted by
+  `unsupported_features` and can never cause a `400`.
 - **Gemini is not a blocker.** It is served through its [OI]-compatibility
   endpoint (`src/providers/catalog.rs:445`), so it inherits the `chat` column of
   the capability matrix. Native Gemini is P4.5.
@@ -136,3 +143,9 @@ client endpoints). The hub already carries everything those need.
    `end_index` are `Option`, both parsers treat a missing offset as `None`, and
    the Anthropic renderer falls back to a trailing source marker. No upstream
    that omits offsets can fail the turn.
+4. The `citations` matrix row. **Resolved: renamed to `citation_annotations` and
+   set `false` for `anthropic-native`.** The original row claimed every protocol
+   could deliver citations, which was wrong for the Messages client: it receives
+   inline text, not an `annotations` array. Codex was also `false` in practice
+   until its stream learned to read `response.output_text.annotation.added`; it
+   now does, so its row is a truthful ✅.

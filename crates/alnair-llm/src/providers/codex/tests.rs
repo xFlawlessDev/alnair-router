@@ -320,3 +320,53 @@ fn codex_client_includes_extend_rather_than_replace_the_encrypted_reasoning_incl
     assert_eq!(includes[0], json!("reasoning.encrypted_content"));
     assert_eq!(includes[1], json!("message.output_text.logprobs"));
 }
+
+#[test]
+fn a_url_citation_annotation_becomes_a_citation_chunk() {
+    use super::stream::handle_event;
+    use std::collections::BTreeMap;
+
+    let event = json!({
+        "type": "response.output_text.annotation.added",
+        "annotation": {
+            "type": "url_citation",
+            "url": "https://example.com/a",
+            "title": "Example",
+            "start_index": 3,
+            "end_index": 12
+        }
+    });
+
+    let mut tool_calls = BTreeMap::new();
+    let mut usage = None;
+    let chunk = handle_event(&event, None, &mut tool_calls, &mut usage)
+        .expect("no error")
+        .expect("a citation chunk");
+
+    match chunk {
+        crate::types::LlmStreamChunk::Citation(citation) => {
+            assert_eq!(citation.url, "https://example.com/a");
+            assert_eq!(citation.title.as_deref(), Some("Example"));
+            assert_eq!(citation.start_index, Some(3));
+            assert_eq!(citation.end_index, Some(12));
+        }
+        other => panic!("expected a citation, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_citation_kind_the_hub_cannot_carry_is_skipped() {
+    use super::stream::handle_event;
+    use std::collections::BTreeMap;
+
+    let event = json!({
+        "type": "response.output_text.annotation.added",
+        "annotation": { "type": "file_citation", "file_id": "f-1" }
+    });
+
+    let mut tool_calls = BTreeMap::new();
+    let mut usage = None;
+    let chunk = handle_event(&event, None, &mut tool_calls, &mut usage).expect("no error");
+
+    assert!(chunk.is_none());
+}

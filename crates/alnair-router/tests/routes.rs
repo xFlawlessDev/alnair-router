@@ -6638,6 +6638,12 @@ async fn models_info_publishes_the_translation_matrix() {
         serde_json::json!(false)
     );
     assert_eq!(translation["seed"], serde_json::json!(false));
+    // A Messages client cannot receive a structured citation, so the matrix
+    // reports flattened text rather than implying an annotation array exists.
+    assert_eq!(
+        translation["citation_annotations"],
+        serde_json::json!(false)
+    );
 }
 
 /// Spawns a capturing Anthropic Messages upstream, so the translated body can

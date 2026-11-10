@@ -12,7 +12,7 @@ use futures::Stream;
 use futures::StreamExt;
 use serde_json::Value;
 
-use crate::model_config::ModelCostRates;
+use crate::model_config::{Citation, ModelCostRates};
 use crate::providers::common::calculate_token_costs;
 use crate::providers::sse::{SseLineBuffer, parse_data_line};
 use crate::types::{ChatError, LlmStreamChunk};
@@ -85,6 +85,38 @@ pub(super) fn read_sse(
 }
 
 /// The event type, or the item type of a `response.output_item.done` event.
+/// Reads a `url_citation` annotation out of its event.
+///
+/// Any other annotation kind (file citations, container references) is skipped
+/// rather than guessed at: the hub carries URL citations only.
+fn citation(event: &Value) -> Option<Citation> {
+    let annotation = event.get("annotation")?;
+    if annotation.get("type").and_then(Value::as_str) != Some("url_citation") {
+        return None;
+    }
+    let url = annotation.get("url").and_then(Value::as_str)?;
+    if url.trim().is_empty() {
+        return None;
+    }
+
+    Some(Citation {
+        url: url.to_string(),
+        title: annotation
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|title| !title.trim().is_empty())
+            .map(str::to_string),
+        start_index: annotation
+            .get("start_index")
+            .and_then(Value::as_u64)
+            .map(|index| index as usize),
+        end_index: annotation
+            .get("end_index")
+            .and_then(Value::as_u64)
+            .map(|index| index as usize),
+    })
+}
+
 fn event_type(event: &Value) -> &str {
     event
         .get("type")
@@ -98,7 +130,7 @@ fn is_terminal(event: &Value) -> bool {
 
 /// Applies one SSE event. Reasoning and text stream incrementally; a finished
 /// function call is buffered because its arguments only exist as a whole.
-fn handle_event(
+pub(super) fn handle_event(
     event: &Value,
     rates: Option<&ModelCostRates>,
     tool_calls: &mut BTreeMap<String, LlmStreamChunk>,
@@ -120,6 +152,12 @@ fn handle_event(
                 collect_function_call(item, tool_calls)?;
             }
             Ok(None)
+        }
+        // The backend speaks the Responses event sequence, so a citation
+        // arrives as an annotation on the text item and is reported where it
+        // landed rather than batched at the end.
+        "response.output_text.annotation.added" => {
+            Ok(citation(event).map(LlmStreamChunk::Citation))
         }
         "response.completed" => {
             if let Some(response) = event.get("response") {

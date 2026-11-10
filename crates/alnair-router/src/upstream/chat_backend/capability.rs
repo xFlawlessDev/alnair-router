@@ -35,7 +35,19 @@ pub struct TranslationSupport {
     pub store: bool,
     pub prompt_cache_key: bool,
     pub verbosity: bool,
-    pub citations: bool,
+    /// Whether structured citations survive the round trip to the client.
+    ///
+    /// This is a property of the **client-facing renderer**, not of whether
+    /// the upstream can talk about sources. An Anthropic-shaped client has no
+    /// citation block type, so a citation there is flattened into inline text
+    /// and the client receives a string, not a structured annotation. Only the
+    /// OpenAI-shaped endpoints carry `annotations` as data, so only those can
+    /// truthfully answer this `true`.
+    ///
+    /// Deliberately named for the client-facing artefact rather than the
+    /// feature, because "citations" alone reads like an upstream capability and
+    /// that is the reading which produced a wrong row here once already.
+    pub citation_annotations: bool,
 }
 
 /// Every capability on. Used as the base for a protocol that supports the
@@ -54,29 +66,28 @@ const ALL_SUPPORTED: TranslationSupport = TranslationSupport {
     store: true,
     prompt_cache_key: true,
     verbosity: true,
-    citations: true,
+    citation_annotations: true,
 };
 
-/// Nothing supported, for the tests that assert every field is reported.
+/// Nothing supported. Only the tests use it, to prove the predicate reports
+/// every field a client can set.
 #[cfg(test)]
-const fn unsupported() -> TranslationSupport {
-    TranslationSupport {
-        tool_choice_required: false,
-        tool_choice_named: false,
-        parallel_tool_calls: false,
-        response_format_json_object: false,
-        response_format_json_schema: false,
-        top_k: false,
-        logprobs: false,
-        seed: false,
-        metadata: false,
-        service_tier: false,
-        store: false,
-        prompt_cache_key: false,
-        verbosity: false,
-        citations: false,
-    }
-}
+const NOTHING_SUPPORTED: TranslationSupport = TranslationSupport {
+    tool_choice_required: false,
+    tool_choice_named: false,
+    parallel_tool_calls: false,
+    response_format_json_object: false,
+    response_format_json_schema: false,
+    top_k: false,
+    logprobs: false,
+    seed: false,
+    metadata: false,
+    service_tier: false,
+    store: false,
+    prompt_cache_key: false,
+    verbosity: false,
+    citation_annotations: false,
+};
 
 /// The capability set for one target's protocol.
 ///
@@ -104,17 +115,26 @@ pub fn translation_support(provider_type: &ProviderType, wire_api: WireApi) -> T
         // The Messages API. Structured output is only reachable through
         // `output_config.format`, which not every Anthropic-compatible endpoint
         // implements, and the remaining passthrough fields have no equivalent.
+        // Written out in full rather than as a spread, because most of these
+        // are `false` and a spread would hide that.
         ProviderType::AnthropicNative => TranslationSupport {
+            tool_choice_required: true,
+            tool_choice_named: true,
+            parallel_tool_calls: true,
             response_format_json_object: false,
             response_format_json_schema: false,
             top_k: true,
             logprobs: false,
             seed: false,
+            metadata: true,
             service_tier: false,
             store: false,
             prompt_cache_key: false,
             verbosity: false,
-            ..ALL_SUPPORTED
+            // A Messages client has no citation block type, so the renderer
+            // flattens a citation into inline text. The upstream may still
+            // report sources; the client just cannot receive them as data.
+            citation_annotations: false,
         },
         // Codex speaks the Responses dialect, with two documented differences:
         // `store` is forced `false` by the backend contract, and it adds
@@ -317,7 +337,47 @@ mod tests {
     fn codex_cannot_store_a_turn() {
         let support = translation_support(&ProviderType::OpenAiCodex, WireApi::Chat);
         assert!(!support.store);
-        assert!(support.citations);
+        // Codex speaks the Responses event sequence, so it can emit structured
+        // citation annotations as data.
+        assert!(support.citation_annotations);
+    }
+
+    #[test]
+    fn only_the_openai_shaped_clients_receive_citations_as_data() {
+        // The row that was wrong before: an Anthropic-shaped client gets a
+        // citation flattened into inline text, not a structured annotation.
+        for (provider_type, supports) in [
+            (ProviderType::OpenaiCompatible, true),
+            (ProviderType::OpenAiCodex, true),
+            (ProviderType::CommandCode, true),
+            (ProviderType::CodeBuddyIntl, true),
+            (ProviderType::AnthropicNative, false),
+        ] {
+            let support = translation_support(&provider_type, WireApi::Chat);
+            assert_eq!(
+                support.citation_annotations, supports,
+                "{provider_type:?} must report citation_annotations: {supports}"
+            );
+        }
+    }
+
+    #[test]
+    fn citations_are_output_side_and_never_reject_a_request() {
+        // `citation_annotations` is not something a client can ask for, so it
+        // must never contribute to a 400 — a target that cannot render a
+        // citation still serves the turn, just with flattened text.
+        let options = GenerationOptions {
+            include: vec!["citations".to_string()],
+            ..Default::default()
+        };
+
+        for provider_type in ProviderType::ALL {
+            let support = translation_support(&provider_type, WireApi::Chat);
+            assert!(
+                unsupported_features(&options, support).is_empty(),
+                "{provider_type:?} must not refuse a turn over citations"
+            );
+        }
     }
 
     #[test]
@@ -367,7 +427,7 @@ mod tests {
                 ..Default::default()
             };
             assert!(
-                unsupported_features(&options, unsupported()).is_empty(),
+                unsupported_features(&options, NOTHING_SUPPORTED).is_empty(),
                 "auto/none must never be a capability failure"
             );
         }
@@ -390,7 +450,7 @@ mod tests {
             ..Default::default()
         };
 
-        let missing = unsupported_features(&options, unsupported());
+        let missing = unsupported_features(&options, NOTHING_SUPPORTED);
         let params: Vec<&str> = missing.iter().map(|feature| feature.param).collect();
         assert_eq!(
             params,

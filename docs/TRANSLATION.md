@@ -306,7 +306,9 @@ pub struct TranslationSupport {
     pub store: bool,
     pub prompt_cache_key: bool,
     pub verbosity: bool,
-    pub citations: bool,
+    /// Whether structured citations survive the round trip to the *client*.
+    /// Not a request field: no protocol lets a client ask for citations.
+    pub citation_annotations: bool,
 }
 
 pub fn translation_support(provider_type: &ProviderType, wire_api: WireApi) -> TranslationSupport;
@@ -329,10 +331,18 @@ Initial matrix (✅ native · ⚠️ needs translation work · ❌ absent):
 | `store` | ❌ | ✅ | ❌ | ❌ (forced `false`) | ❌ |
 | `prompt_cache_key` | ✅ | ✅ | ❌ (implicit) | ✅ | ✅ |
 | `verbosity` | ✅ | ✅ `text.verbosity` | ❌ | ✅ | ✅ |
-| citations (output) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| citations as `annotations` (output) | ✅ | ✅ | ❌ flattened to text | ✅ | ✅ |
 
 The matrix is deliberately conservative. A ✅ means "we write it and a test
 proves the body carries it", not "the vendor's docs mention it".
+
+The citations row is about the **client-facing artefact**, not about whether the
+upstream can report sources. A `/v1/messages` client has no citation block type,
+so the Anthropic renderer flattens a citation into inline text and the client
+receives a string rather than an `annotations` array. That is why the
+`anthropic` column is ❌ even though the upstream may well return sources. No
+protocol lets a client *request* citations, so this row is output-side only and
+can never produce a `400`.
 
 ### 4.3 Gemini is out of scope for this phase
 

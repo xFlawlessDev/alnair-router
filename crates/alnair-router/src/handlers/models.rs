@@ -142,7 +142,7 @@ pub struct TranslationMatrix {
     pub store: bool,
     pub prompt_cache_key: bool,
     pub verbosity: bool,
-    pub citations: bool,
+    pub citation_annotations: bool,
 }
 
 impl From<crate::upstream::chat_backend::TranslationSupport> for TranslationMatrix {
@@ -161,7 +161,7 @@ impl From<crate::upstream::chat_backend::TranslationSupport> for TranslationMatr
             store: support.store,
             prompt_cache_key: support.prompt_cache_key,
             verbosity: support.verbosity,
-            citations: support.citations,
+            citation_annotations: support.citation_annotations,
         }
     }
 }
@@ -182,7 +182,7 @@ impl TranslationMatrix {
         self.store &= other.store;
         self.prompt_cache_key &= other.prompt_cache_key;
         self.verbosity &= other.verbosity;
-        self.citations &= other.citations;
+        self.citation_annotations &= other.citation_annotations;
     }
 }
 
