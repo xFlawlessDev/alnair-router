@@ -83,6 +83,42 @@ async fn app() -> axum::Router {
     build_router(state)
 }
 
+#[tokio::test]
+async fn token_rate_uses_reported_usage_for_streaming_responses() {
+    let db = Db::connect_in_memory().await.unwrap();
+    let mut config = RouterConfig::default();
+    config.secrets.key = Some(TEST_SECRET.to_string());
+    config.server.require_api_key = true;
+    let app = build_router(AppState::new(config, db).unwrap());
+    let base_url = spawn_sse_upstream(TOOL_CALL_STREAM).await;
+    let model = route_model_to(&app, &base_url).await;
+    let (_, created) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({"name":"limited", "tokens_per_minute": 30}),
+    )
+    .await;
+    let secret = created["secret"].as_str().unwrap();
+    let body = serde_json::json!({"model": model, "stream": true, "messages": [{"role":"user", "content":"hi"}]}).to_string();
+    let send = || {
+        app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header(header::AUTHORIZATION, format!("Bearer {secret}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+    };
+    let first = send().await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    first.into_body().collect().await.unwrap();
+    let second = send().await.unwrap();
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
 /// Serves `body` as an SSE completion on the OpenAI-compatible chat path.
 async fn spawn_sse_upstream(body: &'static str) -> String {
     let router = axum::Router::new().route(

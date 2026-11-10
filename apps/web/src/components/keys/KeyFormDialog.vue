@@ -57,6 +57,7 @@ const name = ref("");
 const enabled = ref(true);
 const rateLimit = ref("");
 const maxConcurrent = ref("");
+const tokensPerMinute = ref("");
 const daily = ref("");
 const weekly = ref("");
 const monthly = ref("");
@@ -86,6 +87,8 @@ watch(
         : "";
     maxConcurrent.value =
       key?.max_concurrent != null ? String(key.max_concurrent) : "";
+    tokensPerMinute.value =
+      key?.tokens_per_minute != null ? String(key.tokens_per_minute) : "";
     daily.value =
       key?.daily_budget_usd != null ? String(key.daily_budget_usd) : "";
     weekly.value =
@@ -125,6 +128,15 @@ async function save(): Promise<void> {
       !Number.isSafeInteger(Number(maxConcurrent.value)))
   ) {
     toast.error("Concurrency must be a non-negative whole number");
+    return;
+  }
+
+  if (
+    tokensPerMinute.value.trim() &&
+    (!/^\d+$/.test(tokensPerMinute.value.trim()) ||
+      !Number.isSafeInteger(Number(tokensPerMinute.value)))
+  ) {
+    toast.error("Tokens per minute must be a non-negative whole number");
     return;
   }
 
@@ -184,6 +196,9 @@ async function save(): Promise<void> {
     rate_limit_per_minute: rpm,
     max_concurrent: maxConcurrent.value.trim()
       ? Number(maxConcurrent.value)
+      : null,
+    tokens_per_minute: tokensPerMinute.value.trim()
+      ? Number(tokensPerMinute.value)
       : null,
     daily_budget_usd: dailyUsd,
     weekly_budget_usd: weeklyUsd,
@@ -269,6 +284,22 @@ async function save(): Promise<void> {
           />
           <p class="text-xs text-muted-foreground">
             Includes streaming requests until they finish or disconnect.
+          </p>
+        </div>
+
+        <div class="grid gap-2">
+          <Label for="key-tpm">Tokens per minute</Label>
+          <Input
+            id="key-tpm"
+            v-model="tokensPerMinute"
+            type="number"
+            min="0"
+            step="1"
+            placeholder="Blank inherits; 0 means unlimited"
+          />
+          <p class="text-xs text-muted-foreground">
+            Estimated before a chat request; updated when the provider reports
+            usage.
           </p>
         </div>
 

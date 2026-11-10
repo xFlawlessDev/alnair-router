@@ -27,6 +27,7 @@ pub async fn chat_completions(
     axum::Extension(key): axum::Extension<Option<AuthenticatedKey>>,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Result<Response> {
+    let token_reservation = key.as_ref().and_then(|auth| auth.token_reservation.clone());
     let api_key_id = key.as_ref().map(|auth| auth.key.id.clone());
 
     let requested_model = request.model.clone();
@@ -61,12 +62,21 @@ pub async fn chat_completions(
             api_key_id,
             requested_model,
             include_usage,
+            token_reservation,
             saver_savings,
             executed,
         )
         .await)
     } else {
-        complete_response(state, api_key_id, requested_model, saver_savings, executed).await
+        complete_response(
+            state,
+            api_key_id,
+            requested_model,
+            token_reservation,
+            saver_savings,
+            executed,
+        )
+        .await
     }
 }
 
@@ -75,6 +85,7 @@ async fn complete_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    token_reservation: Option<crate::token_rate::SharedReservation>,
     saver_savings: crate::token_saver::Savings,
     executed: ExecutedStream,
 ) -> Result<Response> {
@@ -83,6 +94,7 @@ async fn complete_response(
     let attempt_count = executed.attempts.len();
 
     let completion = chat_backend::collect(executed.stream).await?;
+    crate::token_rate::reconcile(&token_reservation, completion.usage);
 
     let usage_snapshot = completion.usage.unwrap_or_default();
     let savings_totals = saver_savings.finalize(
@@ -170,6 +182,7 @@ async fn stream_response(
     api_key_id: Option<String>,
     requested_model: String,
     include_usage: bool,
+    token_reservation: Option<crate::token_rate::SharedReservation>,
     saver_savings: Savings,
     executed: ExecutedStream,
 ) -> Response {
@@ -191,7 +204,8 @@ async fn stream_response(
         attempt_count,
         latency_ms,
     )
-    .with_savings(saver_savings, price);
+    .with_savings(saver_savings, price)
+    .with_reservation(token_reservation);
 
     // OpenAI opens every stream with the assistant role, so clients that key
     // off `delta.role` see it exactly once.

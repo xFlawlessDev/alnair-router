@@ -115,6 +115,7 @@ pub struct StreamUsage {
     /// Rate to price those savings at; absent leaves the token counts only.
     price: Option<Price>,
     recorded: Arc<AtomicBool>,
+    reservation: Option<crate::token_rate::SharedReservation>,
 }
 
 impl StreamUsage {
@@ -139,6 +140,7 @@ impl StreamUsage {
             savings: Savings::default(),
             price: None,
             recorded: Arc::new(AtomicBool::new(false)),
+            reservation: None,
         }
     }
 
@@ -149,12 +151,21 @@ impl StreamUsage {
         self
     }
 
+    pub(crate) fn with_reservation(
+        mut self,
+        reservation: Option<crate::token_rate::SharedReservation>,
+    ) -> Self {
+        self.reservation = reservation;
+        self
+    }
+
     /// Writes the usage row, ignoring any call after the first.
     pub fn record(&mut self, usage: Option<TokenUsage>, status: &str) {
         if self.recorded.swap(true, Ordering::SeqCst) {
             return;
         }
 
+        crate::token_rate::reconcile(&self.reservation, usage);
         let usage = usage.unwrap_or_default();
         let totals = self.savings.finalize(usage.completion_tokens, self.price);
 

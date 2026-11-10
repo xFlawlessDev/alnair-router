@@ -41,6 +41,7 @@ pub(super) async fn responses_stream(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    token_reservation: Option<crate::token_rate::SharedReservation>,
     saver_savings: Savings,
     executed: ExecutedStream,
 ) -> Response {
@@ -60,7 +61,8 @@ pub(super) async fn responses_stream(
         attempt_count,
         latency_ms,
     )
-    .with_savings(saver_savings, price);
+    .with_savings(saver_savings, price)
+    .with_reservation(token_reservation);
 
     let mut stream_state = StreamState {
         usage: usage_state,

@@ -27,6 +27,7 @@ pub async fn messages(
     Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(request): Json<MessagesRequest>,
 ) -> Result<Response> {
+    let token_reservation = key.as_ref().and_then(|auth| auth.token_reservation.clone());
     let api_key_id = key.as_ref().map(|auth| auth.key.id.clone());
 
     let requested_model = request.model.clone();
@@ -53,9 +54,25 @@ pub async fn messages(
     record_failed_attempts(&state, &api_key_id, &requested_model, &executed.attempts).await;
 
     if stream_requested {
-        Ok(stream_response(state, api_key_id, requested_model, saver_savings, executed).await)
+        Ok(stream_response(
+            state,
+            api_key_id,
+            requested_model,
+            token_reservation,
+            saver_savings,
+            executed,
+        )
+        .await)
     } else {
-        complete_response(state, api_key_id, requested_model, saver_savings, executed).await
+        complete_response(
+            state,
+            api_key_id,
+            requested_model,
+            token_reservation,
+            saver_savings,
+            executed,
+        )
+        .await
     }
 }
 
@@ -63,6 +80,7 @@ async fn complete_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    token_reservation: Option<crate::token_rate::SharedReservation>,
     saver_savings: Savings,
     executed: ExecutedStream,
 ) -> Result<Response> {
@@ -71,6 +89,7 @@ async fn complete_response(
     let attempt_count = executed.attempts.len();
 
     let completion = chat_backend::collect(executed.stream).await?;
+    crate::token_rate::reconcile(&token_reservation, completion.usage);
     let usage = completion.usage.unwrap_or_default();
     let savings_totals =
         saver_savings.finalize(usage.completion_tokens, tier_price(&state, &target).await);
@@ -175,6 +194,7 @@ async fn stream_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    token_reservation: Option<crate::token_rate::SharedReservation>,
     saver_savings: Savings,
     executed: ExecutedStream,
 ) -> Response {
@@ -193,7 +213,8 @@ async fn stream_response(
         attempt_count,
         latency_ms,
     )
-    .with_savings(saver_savings, price);
+    .with_savings(saver_savings, price)
+    .with_reservation(token_reservation);
 
     // Anthropic clients expect `message_start` first; content blocks open
     // lazily, because the kind of the first block is only known once a chunk

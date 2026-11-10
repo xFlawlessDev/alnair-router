@@ -18,6 +18,7 @@ pub struct KeyPolicy {
     pub allowed_models: Vec<String>,
     pub rate_limit_per_minute: Option<u32>,
     pub max_concurrent: u64,
+    pub tokens_per_minute: u64,
     /// Spend caps per calendar window; empty means uncapped.
     pub budgets: BudgetWindows,
     /// Token caps per calendar window; empty means uncapped.
@@ -72,6 +73,10 @@ impl KeyPolicy {
             max_concurrent: key
                 .max_concurrent
                 .or_else(|| plan.and_then(|p| p.max_concurrent))
+                .unwrap_or(0) as u64,
+            tokens_per_minute: key
+                .tokens_per_minute
+                .or_else(|| plan.and_then(|p| p.tokens_per_minute))
                 .unwrap_or(0) as u64,
             budgets,
             token_limits,
@@ -154,6 +159,7 @@ mod tests {
             enabled: 1,
             rate_limit_per_minute: rate,
             max_concurrent: None,
+            tokens_per_minute: None,
             daily_budget_usd: budgets.daily,
             weekly_budget_usd: budgets.weekly,
             monthly_budget_usd: budgets.monthly,
@@ -190,6 +196,7 @@ mod tests {
             allowed_models: Json(allowed.iter().map(|m| m.to_string()).collect()),
             rate_limit_per_minute: rate,
             max_concurrent: None,
+            tokens_per_minute: None,
             daily_budget_usd: budgets.daily,
             weekly_budget_usd: budgets.weekly,
             monthly_budget_usd: budgets.monthly,
@@ -233,6 +240,16 @@ mod tests {
         assert_eq!(KeyPolicy::resolve(&key, Some(&plan)).max_concurrent, 0);
         key.max_concurrent = Some(1);
         assert_eq!(KeyPolicy::resolve(&key, Some(&plan)).max_concurrent, 1);
+    }
+
+    #[test]
+    fn tpm_inherits_plan_but_key_zero_overrides_it() {
+        let mut key = key(None, None, budgets(None, None, None, None), "off");
+        let mut plan = plan(&[], None, budgets(None, None, None, None), "off");
+        plan.tokens_per_minute = Some(100);
+        assert_eq!(KeyPolicy::resolve(&key, Some(&plan)).tokens_per_minute, 100);
+        key.tokens_per_minute = Some(0);
+        assert_eq!(KeyPolicy::resolve(&key, Some(&plan)).tokens_per_minute, 0);
     }
 
     #[test]

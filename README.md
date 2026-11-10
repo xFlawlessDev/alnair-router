@@ -566,6 +566,14 @@ Key settings:
   disables the cap. A slot remains held until the response body completes or
   the client disconnects. These limits are per process and apply only when
   `server.require_api_key` is enabled.
+- Keys and plans may set `tokens_per_minute` for `/v1/chat/completions`,
+  `/v1/messages` and `/v1/responses`. A key overrides its plan; `null` inherits
+  and `0` disables the limit. The in-process rolling window reserves an input
+  estimate (request JSON bytes divided by four) before dispatch; reported
+  prompt and completion usage replaces it when available. If usage is missing or
+  a request is interrupted, the input estimate remains charged. Other endpoints
+  are not covered. Actual output can temporarily exceed the limit, and limits
+  reset on restart; require API keys for these rules to apply.
 - `rate_limit.requests_per_minute` — default per-key token bucket (0 = off);
   keys can override it, and can carry daily, weekly, monthly and lifetime
   budgets in USD and token limits (calendar windows, UTC; lifetime never

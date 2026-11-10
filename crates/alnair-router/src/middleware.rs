@@ -114,6 +114,8 @@ fn apply_cors(
 pub struct AuthenticatedKey {
     pub key: crate::db::repos::api_keys::ApiKey,
     pub policy: KeyPolicy,
+    pub(crate) token_reservation:
+        Option<std::sync::Arc<std::sync::Mutex<crate::token_rate::TokenReservation>>>,
 }
 
 /// Authenticates router-issued API keys.
@@ -251,9 +253,31 @@ pub async fn require_api_key(
             state.metrics.record_rate_limited();
         })?;
 
-    request
-        .extensions_mut()
-        .insert(Some(AuthenticatedKey { key, policy }));
+    let token_reservation = if policy.tokens_per_minute > 0
+        && matches!(
+            path.as_str(),
+            "/v1/chat/completions" | "/v1/messages" | "/v1/responses"
+        ) {
+        let (parts, body) = request.into_parts();
+        let bytes = axum::body::to_bytes(body, usize::MAX)
+            .await
+            .map_err(|error| Error::BadRequest(format!("could not read request body: {error}")))?;
+        let estimate = (bytes.len() as u64).div_ceil(4).max(1);
+        request = Request::from_parts(parts, Body::from(bytes));
+        let reservation = state
+            .token_rate
+            .reserve(&key.id, policy.tokens_per_minute, estimate)
+            .inspect_err(|_| state.metrics.record_rate_limited())?;
+        Some(std::sync::Arc::new(std::sync::Mutex::new(reservation)))
+    } else {
+        None
+    };
+
+    request.extensions_mut().insert(Some(AuthenticatedKey {
+        key,
+        policy,
+        token_reservation: token_reservation.clone(),
+    }));
 
     let mut response = next.run(request).await;
     if let Some(warning) = budget_warning
@@ -269,6 +293,7 @@ pub async fn require_api_key(
     let (parts, body) = response.into_parts();
     let body = Body::from_stream(async_stream::stream! {
         let _permit = permit;
+        let _token_reservation = token_reservation;
         let mut stream = body.into_data_stream();
         while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
             yield chunk;

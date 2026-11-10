@@ -21,6 +21,7 @@ pub struct KeyPlan {
     pub allowed_models: Json<Vec<String>>,
     pub rate_limit_per_minute: Option<i64>,
     pub max_concurrent: Option<i64>,
+    pub tokens_per_minute: Option<i64>,
     /// Daily spend cap in USD; `None` is uncapped.
     pub daily_budget_usd: Option<f64>,
     /// Weekly spend cap in USD; `None` is uncapped.
@@ -101,6 +102,8 @@ pub struct CreateKeyPlan {
     #[serde(default)]
     pub max_concurrent: Option<i64>,
     #[serde(default)]
+    pub tokens_per_minute: Option<i64>,
+    #[serde(default)]
     pub daily_budget_usd: Option<f64>,
     #[serde(default)]
     pub weekly_budget_usd: Option<f64>,
@@ -136,6 +139,8 @@ pub struct UpdateKeyPlan {
     pub rate_limit_per_minute: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub max_concurrent: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "crate::db::repos::double_option")]
+    pub tokens_per_minute: Option<Option<i64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
     pub daily_budget_usd: Option<Option<f64>>,
     #[serde(default, deserialize_with = "crate::db::repos::double_option")]
@@ -191,6 +196,8 @@ impl KeyPlanRepository {
 
         let rate_limit = normalized_rate_limit(input.rate_limit_per_minute)?;
         let max_concurrent = normalize_runtime_limit(input.max_concurrent, "max_concurrent")?;
+        let tokens_per_minute =
+            normalize_runtime_limit(input.tokens_per_minute, "tokens_per_minute")?;
         let budgets = BudgetWindows::from_parts(
             normalized_budget(input.daily_budget_usd, "daily_budget_usd")?,
             normalized_budget(input.weekly_budget_usd, "weekly_budget_usd")?,
@@ -215,8 +222,8 @@ impl KeyPlanRepository {
                 (id, name, description, allowed_models, rate_limit_per_minute, daily_budget_usd,
                  weekly_budget_usd, monthly_budget_usd, lifetime_budget_usd, daily_token_limit,
                  weekly_token_limit, monthly_token_limit, lifetime_token_limit, budget_mode,
-                 created_at, updated_at, expires_at, max_concurrent)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 created_at, updated_at, expires_at, max_concurrent, tokens_per_minute)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(name)
@@ -236,6 +243,7 @@ impl KeyPlanRepository {
         .bind(now)
         .bind(input.expires_at)
         .bind(max_concurrent)
+        .bind(tokens_per_minute)
         .execute(&self.pool)
         .await?;
 
@@ -276,6 +284,12 @@ impl KeyPlanRepository {
         let max_concurrent = normalize_runtime_limit(
             input.max_concurrent.unwrap_or(existing.max_concurrent),
             "max_concurrent",
+        )?;
+        let tokens_per_minute = normalize_runtime_limit(
+            input
+                .tokens_per_minute
+                .unwrap_or(existing.tokens_per_minute),
+            "tokens_per_minute",
         )?;
         let budgets = BudgetWindows::from_parts(
             match &input.daily_budget_usd {
@@ -329,7 +343,7 @@ impl KeyPlanRepository {
                  daily_budget_usd = ?, weekly_budget_usd = ?, monthly_budget_usd = ?,
                  lifetime_budget_usd = ?, daily_token_limit = ?, weekly_token_limit = ?,
                  monthly_token_limit = ?, lifetime_token_limit = ?, budget_mode = ?,
-                 expires_at = ?, updated_at = ?, max_concurrent = ?
+                 expires_at = ?, updated_at = ?, max_concurrent = ?, tokens_per_minute = ?
              WHERE id = ?",
         )
         .bind(name)
@@ -348,6 +362,7 @@ impl KeyPlanRepository {
         .bind(expires_at)
         .bind(Utc::now())
         .bind(max_concurrent)
+        .bind(tokens_per_minute)
         .bind(id)
         .execute(&self.pool)
         .await?;

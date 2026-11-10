@@ -470,6 +470,7 @@ export interface ApiKey {
   /** Per-key requests-per-minute override; null inherits the plan or default. */
   rate_limit_per_minute: number | null;
   max_concurrent: number | null;
+  tokens_per_minute: number | null;
   /** Daily spend cap in USD; null inherits the plan or is uncapped. */
   daily_budget_usd: number | null;
   /** Weekly spend cap in USD; null inherits the plan or is uncapped. */
@@ -504,6 +505,7 @@ export interface ApiKeyInput {
   enabled?: boolean;
   rate_limit_per_minute?: number | null;
   max_concurrent?: number | null;
+  tokens_per_minute?: number | null;
   daily_budget_usd?: number | null;
   weekly_budget_usd?: number | null;
   monthly_budget_usd?: number | null;
@@ -527,6 +529,7 @@ export interface KeyPlan {
   allowed_models: string[];
   rate_limit_per_minute: number | null;
   max_concurrent: number | null;
+  tokens_per_minute: number | null;
   /** Daily spend cap in USD; null is uncapped. */
   daily_budget_usd: number | null;
   /** Weekly spend cap in USD; null is uncapped. */
@@ -556,6 +559,7 @@ export interface KeyPlanInput {
   allowed_models?: string[];
   rate_limit_per_minute?: number | null;
   max_concurrent?: number | null;
+  tokens_per_minute?: number | null;
   daily_budget_usd?: number | null;
   weekly_budget_usd?: number | null;
   monthly_budget_usd?: number | null;

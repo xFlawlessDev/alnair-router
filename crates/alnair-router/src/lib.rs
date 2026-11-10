@@ -32,6 +32,7 @@ pub mod server;
 pub mod settings;
 pub mod state;
 pub mod telemetry;
+mod token_rate;
 pub mod token_saver;
 pub mod update;
 pub mod upstream;

@@ -118,6 +118,7 @@ pub async fn responses(
     Extension(key): Extension<Option<AuthenticatedKey>>,
     Json(request): Json<ResponsesRequest>,
 ) -> Result<Response> {
+    let token_reservation = key.as_ref().and_then(|auth| auth.token_reservation.clone());
     let api_key_id = key.as_ref().map(|auth| auth.key.id.clone());
     if let Some(auth) = &key {
         auth.policy.ensure_model(&request.model)?;
@@ -152,13 +153,22 @@ pub async fn responses(
             state,
             api_key_id,
             request.model.clone(),
+            token_reservation,
             saver_savings,
             executed,
         )
         .await);
     }
 
-    complete_response(state, api_key_id, request.model, saver_savings, executed).await
+    complete_response(
+        state,
+        api_key_id,
+        request.model,
+        token_reservation,
+        saver_savings,
+        executed,
+    )
+    .await
 }
 
 /// Non-streaming path: drain the stream, then emit a single JSON body.
@@ -166,6 +176,7 @@ async fn complete_response(
     state: AppState,
     api_key_id: Option<String>,
     requested_model: String,
+    token_reservation: Option<crate::token_rate::SharedReservation>,
     saver_savings: crate::token_saver::Savings,
     executed: crate::upstream::ExecutedStream,
 ) -> Result<Response> {
@@ -174,6 +185,7 @@ async fn complete_response(
     let attempt_count = executed.attempts.len();
 
     let completion = chat_backend::collect(executed.stream).await?;
+    crate::token_rate::reconcile(&token_reservation, completion.usage);
     let usage = completion.usage.unwrap_or_default();
     let savings_totals =
         saver_savings.finalize(usage.completion_tokens, tier_price(&state, &target).await);
