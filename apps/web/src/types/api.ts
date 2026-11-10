@@ -283,6 +283,29 @@ export interface OAuthAccount {
   updated_at: string;
 }
 
+export interface OAuthQuotaWindow {
+  used_percent: number;
+  limit_window_seconds: number | null;
+  reset_at: number | null;
+}
+
+export interface OAuthQuotaLimits {
+  allowed: boolean | null;
+  limit_reached: boolean | null;
+  primary_window: OAuthQuotaWindow | null;
+  secondary_window: OAuthQuotaWindow | null;
+}
+
+export interface OAuthQuotaSnapshot {
+  plan_type: string | null;
+  rate_limit: OAuthQuotaLimits | null;
+  additional_rate_limits: {
+    limit_name: string | null;
+    metered_feature: string | null;
+    rate_limit: OAuthQuotaLimits | null;
+  }[];
+}
+
 /** The operator's own OAuth client registration, plus the endpoints to use. */
 export interface OAuthClientInput {
   client_id: string;

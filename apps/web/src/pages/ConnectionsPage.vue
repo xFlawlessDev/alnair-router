@@ -20,7 +20,7 @@ import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
-import StatusBadge from "@/components/StatusBadge.vue";
+import OAuthQuota from "@/components/connections/OAuthQuota.vue";
 import ConnectionCard from "@/components/connections/ConnectionCard.vue";
 import ConnectionFormDialog from "@/components/connections/ConnectionFormDialog.vue";
 import ConnectionsToolbar from "@/components/connections/ConnectionsToolbar.vue";
@@ -421,7 +421,7 @@ onMounted(load);
 
           <div
             v-if="view === 'grid'"
-            class="editorial-directory grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+            class="editorial-directory grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3"
           >
             <ConnectionCard
               v-for="connection in bucket.items"
@@ -443,17 +443,22 @@ onMounted(load);
           </div>
 
           <Card v-else class="editorial-panel editorial-table">
-            <Table>
+            <Table class="min-w-[1000px] table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Base URL</TableHead>
-                  <TableHead>API key</TableHead>
-                  <TableHead>Headers</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Enabled</TableHead>
-                  <TableHead>Updated</TableHead>
-                  <TableHead class="text-right">Actions</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead class="w-48">API key</TableHead>
+                  <TableHead class="w-36">Status</TableHead>
+                  <TableHead
+                    v-if="
+                      visible.some(
+                        (item) => item.provider_type === 'openai-codex',
+                      )
+                    "
+                    class="w-72"
+                    >Quota</TableHead
+                  >
+                  <TableHead class="w-32 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -463,7 +468,11 @@ onMounted(load);
                 >
                   <TableCell>
                     <div class="flex flex-col gap-1">
-                      <span class="font-medium">{{ connection.name }}</span>
+                      <span
+                        class="truncate font-medium"
+                        :title="connection.name"
+                        >{{ connection.name }}</span
+                      >
                       <div class="flex flex-wrap items-center gap-1">
                         <ProviderIcon
                           :id="connection.provider_id"
@@ -499,19 +508,25 @@ onMounted(load);
                         </Badge>
                       </div>
                     </div>
-                  </TableCell>
-                  <TableCell
-                    class="max-w-64 truncate font-mono text-xs"
-                    :title="connection.base_url"
-                  >
-                    {{ connection.base_url }}
+                    <p
+                      class="mt-2 truncate font-mono text-xs text-muted-foreground"
+                      :title="connection.base_url"
+                    >
+                      {{ connection.base_url }}
+                    </p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      {{ formatDateTime(connection.updated_at)
+                      }}<span v-if="headerCount(connection)">
+                        · {{ headerCount(connection) }} header(s)</span
+                      >
+                    </p>
                   </TableCell>
                   <TableCell>
                     <div
                       v-if="connection.api_key"
                       class="flex items-center gap-1"
                     >
-                      <code class="text-xs">
+                      <code class="min-w-0 truncate text-xs">
                         {{
                           revealed.has(connection.id)
                             ? connection.api_key
@@ -543,23 +558,30 @@ onMounted(load);
                     <span v-else class="text-muted-foreground">—</span>
                   </TableCell>
                   <TableCell>
-                    <Badge v-if="headerCount(connection)" variant="secondary">
-                      {{ headerCount(connection) }}
-                    </Badge>
-                    <span v-else class="text-muted-foreground">—</span>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <Switch
+                        :model-value="isEnabled(connection.enabled)"
+                        :aria-label="`Toggle ${connection.name}`"
+                        @update:model-value="toggleEnabled(connection)"
+                      />
+                      <span class="text-xs">{{
+                        isEnabled(connection.enabled) ? "Enabled" : "Disabled"
+                      }}</span>
+                    </div>
                   </TableCell>
-                  <TableCell>
-                    <StatusBadge :enabled="isEnabled(connection.enabled)" />
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      :model-value="isEnabled(connection.enabled)"
-                      :aria-label="`Toggle ${connection.name}`"
-                      @update:model-value="toggleEnabled(connection)"
+                  <TableCell
+                    v-if="
+                      visible.some(
+                        (item) => item.provider_type === 'openai-codex',
+                      )
+                    "
+                    class="whitespace-normal"
+                  >
+                    <OAuthQuota
+                      v-if="connection.provider_type === 'openai-codex'"
+                      :connection-id="connection.id"
                     />
-                  </TableCell>
-                  <TableCell class="text-xs text-muted-foreground">
-                    {{ formatDateTime(connection.updated_at) }}
+                    <span v-else class="text-muted-foreground">—</span>
                   </TableCell>
                   <TableCell class="text-right">
                     <div class="flex justify-end gap-1">

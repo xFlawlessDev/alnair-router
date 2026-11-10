@@ -90,6 +90,10 @@ pub fn build_router(state: AppState) -> Router {
             delete(handlers::oauth::delete_account).patch(handlers::oauth::update_account),
         )
         .route(
+            "/api/connections/{id}/oauth-accounts/{account_id}/quota",
+            get(handlers::oauth_quota::get_quota),
+        )
+        .route(
             "/api/connections/{id}/test",
             post(handlers::admin::connection_test),
         )

@@ -11,6 +11,7 @@ pub mod media;
 pub mod messages;
 pub mod models;
 pub mod oauth;
+pub mod oauth_quota;
 pub mod playground;
 pub mod provider_health;
 pub mod providers;

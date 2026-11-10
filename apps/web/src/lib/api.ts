@@ -33,6 +33,7 @@ import type {
   ModelUsage,
   MyUsageResponse,
   OAuthAccount,
+  OAuthQuotaSnapshot,
   OAuthLoginView,
   OAuthPresetResponse,
   PlaygroundChatRequest,
@@ -355,6 +356,11 @@ export const api = {
     request<void>("DELETE", `/api/oauth/logins/${loginId}`),
   listOAuthAccounts: (id: ID) =>
     request<OAuthAccount[]>("GET", `/api/connections/${id}/oauth-accounts`),
+  oauthAccountQuota: (id: ID, accountId: ID) =>
+    request<OAuthQuotaSnapshot>(
+      "GET",
+      `/api/connections/${id}/oauth-accounts/${accountId}/quota`,
+    ),
   updateOAuthAccount: (
     id: ID,
     accountId: ID,

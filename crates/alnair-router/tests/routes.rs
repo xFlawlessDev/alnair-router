@@ -5325,6 +5325,25 @@ async fn oauth_accounts_are_listed_renamed_and_deleted() {
         list[0]
     );
 
+    let (status, _) = get(
+        &app,
+        &format!(
+            "/api/connections/{connection_id}/oauth-accounts/{}/quota",
+            account.id
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = get(
+        &app,
+        &format!(
+            "/api/connections/another-connection/oauth-accounts/{}/quota",
+            account.id
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
     // Renaming is allowed; the credential is not replaceable by a PATCH.
     let (status, updated) = json_request(
         &app,

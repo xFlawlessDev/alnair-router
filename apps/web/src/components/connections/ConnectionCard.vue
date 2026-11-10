@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "@lucide/vue";
 
+import OAuthQuota from "@/components/connections/OAuthQuota.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +45,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <Card class="editorial-panel gap-0">
+  <Card class="editorial-panel min-w-0 gap-0">
     <CardContent class="flex flex-col gap-3 p-4">
       <p class="editorial-kicker border-b pb-2">Provider connection</p>
       <div class="flex items-start gap-2">
@@ -98,7 +99,7 @@ const emit = defineEmits<{
         <span>Updated {{ formatDateTime(connection.updated_at) }}</span>
       </div>
 
-      <div class="flex items-center gap-1">
+      <div v-if="connection.api_key || !oauth" class="flex items-center gap-1">
         <template v-if="connection.api_key">
           <code class="truncate text-xs">
             {{ revealed ? connection.api_key : maskSecret(connection.api_key) }}
@@ -123,6 +124,11 @@ const emit = defineEmits<{
         </template>
         <span v-else class="text-xs text-muted-foreground">No API key</span>
       </div>
+
+      <OAuthQuota
+        v-if="connection.provider_type === 'openai-codex'"
+        :connection-id="connection.id"
+      />
 
       <div class="flex justify-end gap-1 border-t pt-3">
         <Button
