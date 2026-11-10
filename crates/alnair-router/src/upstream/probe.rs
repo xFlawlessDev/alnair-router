@@ -5,6 +5,8 @@
 //! executor: an admin probe is allowed to fail loudly, and it never falls over
 //! to another tier.
 
+pub(crate) mod search;
+
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -49,6 +51,15 @@ struct UpstreamModelRaw {
     id: String,
     #[serde(default)]
     display_name: Option<String>,
+}
+
+/// Chooses a provider-specific health check without probing model routes on search APIs.
+pub(crate) async fn check_connection(connection: &Connection) -> Result<ProbeOutcome> {
+    if search::is_search(connection) {
+        search::check(connection).await
+    } else {
+        fetch_models(connection).await
+    }
 }
 
 /// Fetches `GET {base_url}/models` from the connection's upstream.

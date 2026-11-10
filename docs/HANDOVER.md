@@ -201,20 +201,23 @@ provider asserts it never receives one.
 
 ### Search and fetch
 
-`POST /v1/search` proxies the request to the resolved connection's `/search`,
-because the request shape is the upstream's own: Tavily and Perplexity both take
+`POST /v1/search` proxies the request to the resolved connection's configured
+`search_path` (default `/search`), with the upstream request shape: Tavily and Perplexity both take
 `query` + `max_results`, LiteLLM picks a provider with `search_tool_name`, and
-SearXNG wants form-encoded `q`. Only the base URL can absorb a different path;
-a different *encoding* would need a per-connection mode.
+SearXNG wants form-encoded `q`. A different *encoding* would need a per-connection mode.
 
 A request's `model` is a hint here, not a requirement. A harness may echo its
-chat model into a search body, so an unknown reference falls through to the
-search tiers instead of becoming a `404` — otherwise a configured provider is
-unreachable for any client that names a model. A *malformed* reference
+chat model into a search body, so unknown references and resolved chat-only
+targets yield to the configured search tiers instead of becoming a `404`.
+A *malformed* reference
 (`alias/` with no model segment) is still a `400`: answering it from a different
-provider would hide the caller's bug. When the primary provider answers `429`,
+provider would hide the caller's bug. When the primary search provider answers `402`, `429`,
 `432`, `433` or `434`, the request moves down the tiers, lowest first, rotating
-within a tier. A `404` never falls back, because it points at a wrong path.
+within a tier. A `404` from a configured search route never falls back, because it points at a wrong path.
+
+Manual connection checks use Tavily `GET /usage` and Firecrawl `GET /team/credit-usage`.
+Exa and custom search APIs use a minimal search request, which may consume credits.
+Search checks reject upstream errors and unexpected payloads rather than probing `/models`.
 
 The response is **verbatim by default** to preserve the provider-specific wire
 contract for existing clients. `?normalize=true` opts into a canonical

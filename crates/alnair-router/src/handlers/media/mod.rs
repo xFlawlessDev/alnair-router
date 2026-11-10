@@ -190,11 +190,11 @@ pub struct SearchQuery {
 /// `POST /v1/search` — sends the request to the named provider, falling back to
 /// search tiers when that provider is out of quota or rate limited.
 ///
-/// The primary target is `model` (or the default connection). If it answers a
-/// quota or rate-limit status, or cannot be reached at all, the request moves on
-/// to the configured search connections, lowest tier first; a tier's members
-/// rotate round-robin. Any other status, including `404`, is returned as is, so
-/// a misconfigured path stays visible instead of being papered over.
+/// Search-enabled connections (a `search_tier` or `search_path`) take precedence
+/// over an unrelated chat default or a chat model echoed by a harness. With no
+/// configured search tiers, a resolved primary remains usable for custom APIs.
+/// Quota, rate-limit and transport failures try the next tier; a configured
+/// search route returning 404 is surfaced so a wrong path remains visible.
 ///
 /// Add `?normalize=true` to map recognized search bodies onto the router's
 /// canonical shape. Normalization is opt-in to preserve the response contract
@@ -215,9 +215,19 @@ pub async fn search(
     // The primary is the named model's connection, or the default connection
     // when none is named. Search providers carry no model, so a request with
     // neither simply goes straight to the search tiers.
+    let fallbacks = search_fallbacks(&state).await?;
     let mut candidates = Vec::new();
     match resolve_target(&state, model.as_deref()).await {
-        Ok(primary) => candidates.push(primary),
+        Ok(primary) => {
+            // A harness can echo a valid chat model here. Its connection is
+            // not a search route unless it opted in through a path or tier.
+            if fallbacks.is_empty()
+                || primary.search_tier.is_some()
+                || primary.search_path.is_some()
+            {
+                candidates.push(primary);
+            }
+        }
         // A malformed reference the caller actually named is their error;
         // surface it rather than silently answering from a different provider.
         Err(error) if model.is_some() && is_reference_error(&error) => return Err(error),
@@ -227,7 +237,14 @@ pub async fn search(
         // provider instead of a 404.
         Err(_) => {}
     }
-    candidates.extend(search_fallbacks(&state).await?);
+    let primary_id = candidates
+        .first()
+        .map(|target| target.connection_id.clone());
+    candidates.extend(
+        fallbacks
+            .into_iter()
+            .filter(|target| Some(&target.connection_id) != primary_id.as_ref()),
+    );
 
     if candidates.is_empty() {
         return Err(crate::error::Error::NoRoute(
@@ -263,7 +280,7 @@ pub async fn search(
 /// next search tier should be tried. `404` is deliberately absent: it points to
 /// a wrong path, which fallback would only hide.
 fn is_search_fallback_status(status: reqwest::StatusCode) -> bool {
-    matches!(status.as_u16(), 429 | 432 | 433 | 434)
+    matches!(status.as_u16(), 402 | 429 | 432 | 433 | 434)
 }
 
 /// True when a resolve failure is about the *shape* of the model reference

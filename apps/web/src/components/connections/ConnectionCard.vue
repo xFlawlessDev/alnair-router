@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { connectionCheckHint } from "@/lib/connectionProbe";
 import {
   Activity,
   Copy,
@@ -136,7 +137,7 @@ const emit = defineEmits<{
           size="icon-sm"
           :disabled="testing"
           :aria-label="`Test ${connection.name}`"
-          :title="`Test ${connection.name} against its /models endpoint`"
+          :title="connectionCheckHint(connection)"
           @click="emit('test')"
         >
           <Loader2 v-if="testing" class="animate-spin" />

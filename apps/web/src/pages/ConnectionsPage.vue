@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { connectionCheckHint } from "@/lib/connectionProbe";
 import {
   Activity,
   Copy,
@@ -590,7 +591,7 @@ onMounted(load);
                         size="icon-sm"
                         :disabled="testingId === connection.id"
                         :aria-label="`Test ${connection.name}`"
-                        :title="`Test ${connection.name} against its /models endpoint`"
+                        :title="connectionCheckHint(connection)"
                         @click="runTest(connection)"
                       >
                         <Loader2

@@ -416,11 +416,16 @@ upstream request in its place; `/v1/search`, whose upstream takes no model,
 has the field removed instead. Calls are recorded in usage like chat requests,
 so a proxied request still shows up against its key and connection.
 
+When search tiers are configured, `/v1/search` skips chat-only targets even if
+the default connection or an echoed chat model resolves successfully. Set
+`search_path` or `search_tier` on a connection to use it as an explicit search target.
+
 `/v1/search` treats `model` as a hint: a reference that names no connection
 falls through to the configured search tiers rather than failing, so a harness
 that echoes its chat model still reaches a search provider. A malformed
-reference is still a `400`. A search connection only receives traffic once it
-carries a `search_tier`, and the built-in search presets supply one.
+reference is still a `400`. Search fallback connections need a `search_tier`;
+built-in search presets supply one. An explicitly selected connection may
+instead set `search_path`.
 
 `/v1/web/fetch` fetches locally unless the named connection sets
 `web_fetch_mode = "provider"`, in which case the URL goes to that connection's

@@ -69,6 +69,7 @@ async fn create_search_connection(
         "provider_type": "openai-compatible",
         "base_url": base_url,
         "api_key": "sk-search",
+        "search_path": "/search",
     });
     if let Some(tier) = tier {
         payload["search_tier"] = json!(tier);
@@ -252,4 +253,54 @@ async fn a_malformed_model_reference_is_still_an_error() {
         "a malformed reference must surface: {body}"
     );
     assert_eq!(search_hits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_chat_default_or_resolved_chat_model_does_not_shadow_search() {
+    let (app, _db) = app().await;
+    let (chat, chat_hits) = spawn_provider(404, "chat").await;
+    let (search, search_hits) = spawn_provider(200, "search").await;
+    json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        json!({
+            "name": "chat", "base_url": chat, "provider_type": "openai-compatible"
+        }),
+    )
+    .await;
+    alias_connection(&app, "chat", "chat").await;
+    let (status, settings) = json_request(
+        &app,
+        "PATCH",
+        "/api/settings",
+        json!({"default_connection":"chat"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    create_search_connection(&app, "tavily", &search, Some(1)).await;
+    for body in [
+        json!({"query":"rust"}),
+        json!({"model":"chat", "query":"rust"}),
+    ] {
+        let (status, body) = json_request(&app, "POST", "/v1/search", body).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["from"], "search");
+    }
+    assert_eq!(chat_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(search_hits.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn exhausted_search_credits_fall_through_on_402() {
+    let (app, _db) = app().await;
+    let (primary, primary_hits) = spawn_provider(402, "empty").await;
+    let (fallback, fallback_hits) = spawn_provider(200, "fallback").await;
+    create_search_connection(&app, "empty", &primary, Some(1)).await;
+    create_search_connection(&app, "fallback", &fallback, Some(2)).await;
+    let (status, body) = json_request(&app, "POST", "/v1/search", json!({"query":"rust"})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["from"], "fallback");
+    assert_eq!(primary_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(fallback_hits.load(Ordering::SeqCst), 1);
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { connectionCheckHint } from "@/lib/connectionProbe";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -85,7 +86,8 @@ const emit = defineEmits<{ test: [connection: Connection] }>();
             {{ formatNumber(activities[connection.id]!.requests) }} /
             {{ formatNumber(activities[connection.id]!.failures) }}
             <div class="text-xs text-muted-foreground">
-              {{ formatNumber(activities[connection.id]!.in_flight) }} awaiting response
+              {{ formatNumber(activities[connection.id]!.in_flight) }} awaiting
+              response
             </div>
           </template>
           <span v-else class="text-muted-foreground">{{
@@ -110,6 +112,7 @@ const emit = defineEmits<{ test: [connection: Connection] }>();
             size="sm"
             :disabled="!connection.enabled || testing.includes(connection.id)"
             :aria-label="`Check ${connection.name}`"
+            :title="connectionCheckHint(connection)"
             @click="emit('test', connection)"
           >
             {{ testing.includes(connection.id) ? "Checking…" : "Check" }}

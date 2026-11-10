@@ -474,10 +474,12 @@ pub async fn connection_test(
         .get(&id)
         .await?
         .ok_or_else(|| Error::NotFound(format!("connection '{id}' not found")))?;
-    let outcome = crate::upstream::probe::fetch_models(&connection).await?;
+    let outcome = crate::upstream::probe::check_connection(&connection).await?;
     let count = outcome.models.len();
 
-    let message = if let Some(_notice) = outcome.notice {
+    let message = if crate::upstream::probe::search::is_search(&connection) {
+        "Connected - search provider API check succeeded".to_string()
+    } else if let Some(_notice) = outcome.notice {
         // The list is real but compiled in, so say where it came from rather
         // than implying the backend just answered a `/models` call.
         format!("Connected — {count} built-in models (this provider publishes no /models list)")

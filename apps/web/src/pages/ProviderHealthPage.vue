@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { connectionCheckHint } from "@/lib/connectionProbe";
 import { RefreshCw } from "@lucide/vue";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
@@ -70,7 +71,7 @@ const providerRows = computed(() =>
           : status(historic);
     return {
       name: connection.name,
-      detail: `${connection.provider_type} · ${connection.account_count} extra keys`,
+      detail: `${connectionCheckHint(connection)} · ${connection.account_count} extra keys`,
       connectionId: connection.id,
       status: currentStatus,
       attempts: historic?.attempts ?? 0,

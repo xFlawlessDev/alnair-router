@@ -6483,3 +6483,69 @@ async fn web_fetch_sends_the_shape_the_provider_requires() {
     assert_eq!(sent[0]["format"], "markdown");
     assert!(sent[0].get("url").is_none(), "only `urls` may be sent");
 }
+
+#[tokio::test]
+async fn search_provider_checks_use_usage_or_search_instead_of_models() {
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    for (provider, path, payload) in [
+        (
+            "tavily",
+            "/usage",
+            serde_json::json!({"key":{"usage":1},"account":{"plan_usage":1}}),
+        ),
+        (
+            "firecrawl",
+            "/team/credit-usage",
+            serde_json::json!({"success":true,"data":{"remainingCredits":100}}),
+        ),
+        ("exa", "/search", serde_json::json!({"results":[]})),
+    ] {
+        let (app, _db) = app(false).await;
+        let handler = move |headers: axum::http::HeaderMap| {
+            let payload = payload.clone();
+            async move {
+                assert_eq!(headers["authorization"], "Bearer test-search-key");
+                Json(payload)
+            }
+        };
+        let route = if provider == "exa" {
+            post(handler)
+        } else {
+            get(handler)
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route(path, route))
+                .await
+                .unwrap()
+        });
+        let (status, connection) = json_request(&app, "POST", "/api/connections", serde_json::json!({
+            "provider_id":provider, "name":provider, "base_url":format!("http://{address}"), "api_key":"test-search-key"
+        })).await;
+        assert_eq!(status, StatusCode::CREATED, "{connection}");
+        let (status, result) = json_request(
+            &app,
+            "POST",
+            &format!(
+                "/api/connections/{}/test",
+                connection["id"].as_str().unwrap()
+            ),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["enumerable"], false);
+        assert!(
+            result["message"]
+                .as_str()
+                .unwrap()
+                .contains("search provider")
+        );
+        server.abort();
+    }
+}
