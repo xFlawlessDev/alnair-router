@@ -19,6 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import TierInput from "@/components/combos/TierInput.vue";
 import { ApiError, api } from "@/lib/api";
+import { normalizeTierRefs } from "@/lib/combos";
 import type { Alias, ComboWithEntries } from "@/types/api";
 
 const props = defineProps<{
@@ -72,7 +73,7 @@ async function save(): Promise<void> {
     toast.error("Name is required");
     return;
   }
-  const modelRefs = entries.value.map((entry) => entry.trim()).filter(Boolean);
+  const modelRefs = normalizeTierRefs(entries.value, props.aliases);
   if (!modelRefs.length) {
     toast.error("Add at least one tier to the fallback chain");
     return;
