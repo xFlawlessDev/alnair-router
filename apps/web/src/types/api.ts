@@ -418,6 +418,29 @@ export interface AliasInput {
   sort_order?: number;
 }
 
+export interface ModelCapabilities {
+  context: number | null;
+  reasoning: boolean | null;
+  tool_call: boolean | null;
+  reasoning_levels: string[] | null;
+  input_formats: string[] | null;
+  output_formats: string[] | null;
+}
+
+export interface CapabilityCatalog {
+  entries: {
+    provider: string;
+    model: string;
+    capabilities: ModelCapabilities;
+  }[];
+  updated_at: string | null;
+  overrides: {
+    scope: "alias" | "combo";
+    target_id: string;
+    capabilities: ModelCapabilities;
+  }[];
+}
+
 export interface UpstreamModel {
   id: string;
   name: string;

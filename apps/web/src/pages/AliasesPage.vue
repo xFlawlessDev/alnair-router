@@ -16,6 +16,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { toast } from "vue-sonner";
 
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import CapabilityPanel from "@/components/CapabilityPanel.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
@@ -26,10 +27,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { ApiError, api } from "@/lib/api";
+import { aliasTarget, useCapabilities } from "@/lib/capabilities";
 import { formatDateTime, isEnabled } from "@/lib/format";
 import type { Alias, Connection } from "@/types/api";
 
 const aliases = ref<Alias[]>([]);
+const {
+  catalog: capabilities,
+  error: capabilityError,
+  syncing: capabilitySyncing,
+  load: loadCapabilities,
+  sync: syncCapabilities,
+  initialize: initializeCapabilities,
+} = useCapabilities();
 const connections = ref<Connection[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -156,7 +166,10 @@ async function runTest(alias: Alias): Promise<void> {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void initializeCapabilities();
+});
 onBeforeUnmount(() => {
   if (copiedTimer) clearTimeout(copiedTimer);
 });
@@ -174,6 +187,14 @@ onBeforeUnmount(() => {
         </Button>
         <Button
           variant="outline"
+          :disabled="capabilitySyncing"
+          @click="syncCapabilities"
+          >{{
+            capabilitySyncing ? "Syncing capabilities…" : "Sync capabilities"
+          }}</Button
+        >
+        <Button
+          variant="outline"
           :disabled="!connections.length"
           title="Fetch the connection's /models and create aliases in bulk"
           @click="importOpen = true"
@@ -183,6 +204,16 @@ onBeforeUnmount(() => {
         <Button @click="openCreate"><Plus /> Add alias</Button>
       </template>
     </PageHeader>
+    <p v-if="capabilityError" class="text-sm text-destructive">
+      {{ capabilityError }}
+    </p>
+    <p
+      v-else-if="capabilities.updated_at"
+      class="text-xs text-muted-foreground"
+    >
+      Model capabilities from models.dev · updated
+      {{ formatDateTime(capabilities.updated_at) }}
+    </p>
 
     <Card v-if="error">
       <CardContent class="p-6 text-sm text-destructive">{{
@@ -251,6 +282,13 @@ onBeforeUnmount(() => {
               ><span v-else class="text-muted-foreground">None</span>
             </div>
           </div>
+          <CapabilityPanel
+            scope="alias"
+            :id="alias.id"
+            :targets="[aliasTarget(alias, connections)]"
+            :catalog="capabilities"
+            @changed="loadCapabilities"
+          />
           <p class="text-xs text-muted-foreground">
             Sort order {{ alias.sort_order }} · Updated
             {{ formatDateTime(alias.updated_at) }}

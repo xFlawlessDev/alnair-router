@@ -26,6 +26,8 @@ const DATA_TABLES: &[&str] = &[
     "api_keys",
     "usage_records",
     "model_prices",
+    "model_capability_catalog",
+    "model_capability_overrides",
     "pricing_sync_runs",
 ];
 

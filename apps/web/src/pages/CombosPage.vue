@@ -12,6 +12,7 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 import { toast } from "vue-sonner";
 
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import CapabilityPanel from "@/components/CapabilityPanel.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
@@ -20,11 +21,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { ApiError, api } from "@/lib/api";
+import { comboTargets, useCapabilities } from "@/lib/capabilities";
 import { formatDateTime, isEnabled } from "@/lib/format";
-import type { Alias, ComboWithEntries } from "@/types/api";
+import type { Alias, ComboWithEntries, Connection } from "@/types/api";
 
 const combos = ref<ComboWithEntries[]>([]);
 const aliases = ref<Alias[]>([]);
+const connections = ref<Connection[]>([]);
+const {
+  catalog: capabilities,
+  error: capabilityError,
+  syncing: capabilitySyncing,
+  load: loadCapabilities,
+  sync: syncCapabilities,
+  initialize: initializeCapabilities,
+} = useCapabilities();
 const loading = ref(true);
 const error = ref<string | null>(null);
 const formOpen = ref(false);
@@ -38,12 +49,14 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const [comboList, aliasList] = await Promise.all([
+    const [comboList, aliasList, connectionList] = await Promise.all([
       api.listCombos(),
       api.listAliases(),
+      api.listConnections(),
     ]);
     combos.value = comboList;
     aliases.value = aliasList;
+    connections.value = connectionList;
   } catch (caught) {
     error.value =
       caught instanceof ApiError ? caught.message : "Failed to load combos";
@@ -108,7 +121,10 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void initializeCapabilities();
+});
 onBeforeUnmount(() => {
   if (copiedTimer) clearTimeout(copiedTimer);
 });
@@ -124,9 +140,27 @@ onBeforeUnmount(() => {
         <Button variant="outline" :disabled="loading" @click="load">
           <RefreshCw :class="loading ? 'animate-spin' : ''" /> Refresh
         </Button>
+        <Button
+          variant="outline"
+          :disabled="capabilitySyncing"
+          @click="syncCapabilities"
+          >{{
+            capabilitySyncing ? "Syncing capabilities…" : "Sync capabilities"
+          }}</Button
+        >
         <Button @click="openCreate"><Plus /> New combo</Button>
       </template>
     </PageHeader>
+    <p v-if="capabilityError" class="text-sm text-destructive">
+      {{ capabilityError }}
+    </p>
+    <p
+      v-else-if="capabilities.updated_at"
+      class="text-xs text-muted-foreground"
+    >
+      Model capabilities from models.dev · updated
+      {{ formatDateTime(capabilities.updated_at) }}
+    </p>
 
     <Card v-if="error">
       <CardContent class="p-6 text-sm text-destructive">{{
@@ -183,6 +217,14 @@ onBeforeUnmount(() => {
           <p class="mt-3 text-xs text-muted-foreground">
             Updated {{ formatDateTime(combo.combo.updated_at) }}
           </p>
+          <CapabilityPanel
+            class="mt-3"
+            scope="combo"
+            :id="combo.combo.id"
+            :targets="comboTargets(combo, combos, aliases, connections)"
+            :catalog="capabilities"
+            @changed="loadCapabilities"
+          />
         </div>
         <div class="min-w-0">
           <p class="editorial-kicker mb-2">Fallback order</p>

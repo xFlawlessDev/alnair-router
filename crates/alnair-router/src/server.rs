@@ -159,6 +159,15 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/playground/chat", post(handlers::playground::chat))
         .route("/api/models", get(handlers::catalog::models_catalog))
+        .route("/api/model-capabilities", get(handlers::capabilities::list))
+        .route(
+            "/api/model-capabilities/sync",
+            post(handlers::capabilities::sync),
+        )
+        .route(
+            "/api/model-capabilities/{scope}/{id}",
+            axum::routing::put(handlers::capabilities::save).delete(handlers::capabilities::remove),
+        )
         .route(
             "/api/pricing",
             get(handlers::admin::list_pricing)

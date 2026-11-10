@@ -13,6 +13,8 @@ import type {
   AuthSession,
   AuthStatus,
   ComboWithEntries,
+  CapabilityCatalog,
+  ModelCapabilities,
   Connection,
   ConnectionAccount,
   ConnectionAccountInput,
@@ -381,6 +383,28 @@ export const api = {
     ),
 
   listAliases: () => request<Alias[]>("GET", "/api/aliases"),
+  listCapabilities: () =>
+    request<CapabilityCatalog>("GET", "/api/model-capabilities"),
+  syncCapabilities: () =>
+    request<{ count: number; updated_at: string }>(
+      "POST",
+      "/api/model-capabilities/sync",
+    ),
+  saveCapabilities: (
+    scope: "alias" | "combo",
+    id: string,
+    body: ModelCapabilities,
+  ) =>
+    request<void>(
+      "PUT",
+      `/api/model-capabilities/${scope}/${encodeURIComponent(id)}`,
+      { body },
+    ),
+  deleteCapabilities: (scope: "alias" | "combo", id: string) =>
+    request<void>(
+      "DELETE",
+      `/api/model-capabilities/${scope}/${encodeURIComponent(id)}`,
+    ),
   createAlias: (body: AliasInput) =>
     request<Alias>("POST", "/api/aliases", { body }),
   updateAlias: (id: ID, body: Partial<AliasInput>) =>

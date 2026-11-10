@@ -4,6 +4,7 @@ pub mod accounts;
 pub mod admin;
 pub mod auth;
 pub mod backup;
+pub mod capabilities;
 pub mod catalog;
 pub mod chat;
 pub mod connection_quota;
