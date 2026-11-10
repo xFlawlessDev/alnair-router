@@ -12,6 +12,12 @@ pub enum Error {
     #[error("bad request: {0}")]
     BadRequest(String),
 
+    /// A client asked for a feature the selected target's protocol cannot
+    /// honour. Modelled on OpenAI's own `unsupported_parameter` error: the
+    /// caller needs to know which parameter, and what to do about it.
+    #[error("unsupported parameter `{param}`: {message}")]
+    UnsupportedParameter { param: String, message: String },
+
     #[error("not found: {0}")]
     NotFound(String),
 
@@ -62,7 +68,9 @@ impl Error {
     /// HTTP status this error maps to.
     pub fn status(&self) -> StatusCode {
         match self {
-            Error::BadRequest(_) | Error::UnsupportedProviderType(_) => StatusCode::BAD_REQUEST,
+            Error::BadRequest(_)
+            | Error::UnsupportedProviderType(_)
+            | Error::UnsupportedParameter { .. } => StatusCode::BAD_REQUEST,
             Error::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Error::Forbidden(_) => StatusCode::FORBIDDEN,
             Error::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
@@ -82,7 +90,9 @@ impl Error {
     /// OpenAI-compatible error `type` string.
     pub fn error_type(&self) -> &'static str {
         match self {
-            Error::BadRequest(_) | Error::UnsupportedProviderType(_) => "invalid_request_error",
+            Error::BadRequest(_)
+            | Error::UnsupportedProviderType(_)
+            | Error::UnsupportedParameter { .. } => "invalid_request_error",
             Error::Unauthorized(_) => "authentication_error",
             Error::Forbidden(_) => "permission_error",
             Error::RateLimited { .. } => "rate_limit_error",

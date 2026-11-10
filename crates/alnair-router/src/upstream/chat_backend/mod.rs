@@ -1,12 +1,22 @@
 //! The single seam to the vendored provider layer.
 //!
-//! **This is the only module in the crate permitted to reach into
-//! [`alnair_llm`].** The provider stack is vendored so the router builds
-//! standalone; funnelling every coupling point through here keeps that boundary
-//! honest. Verify with:
+//! **This is the only module permitted to reach into the provider stack.** The
+//! vendored crate is referenced from this file alone, and
+//! `vendored_llm_layer_is_imported_from_exactly_one_file` (in
+//! `tests/routes.rs`) enforces it, so every coupling point stays in one
+//! reviewable place.
+//!
+//! Layout:
+//!
+//! - [`hub`] — the canonical types every endpoint and provider translates
+//!   against. No provider-crate names appear there.
+//! - this file — the conversion layer: router types → provider options, and
+//!   provider chunks → [`StreamChunk`].
+//!
+//! Verify the boundary with:
 //!
 //! ```text
-//! grep -rl "alnair_llm" src | grep -v "src/upstream/chat_backend.rs"   # expect no output
+//! cargo test -p alnair-router vendored_llm_layer_is_imported_from_exactly_one_file
 //! ```
 
 use std::collections::BTreeMap;
@@ -22,35 +32,31 @@ use crate::error::{Error, Result};
 use crate::pricing::Price;
 use alnair_llm::{
     AuthStyle, CacheRetention, ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions,
-    Message, MessageContent, MessageToolCall, ModelConfig, ModelCostRates, ProviderType,
-    TextContentPart, ThinkingLevel, WireApi,
+    Message, MessageContent, MessageToolCall, ModelConfig, ModelCostRates, TextContentPart,
+    ThinkingLevel,
 };
 
-/// Re-exported provider registry, so callers never name `alnair_llm` directly.
+mod capability;
+mod filter;
+mod hub;
+
+pub(crate) use capability::effective_wire_api;
+pub use capability::{
+    TranslationSupport, UnsupportedFeature, translation_support, unsupported_features,
+};
+pub(crate) use filter::filter_targets;
+pub use hub::*;
+
+/// Re-exported at crate visibility so the seam's own submodules can name the
+/// provider enums without each reaching into the provider crate; the boundary
+/// guard allows exactly one file to do that.
+pub(crate) use alnair_llm::{ProviderType, WireApi};
+
+/// Re-exported provider registry, so callers never name the provider crate.
 pub use alnair_llm::ProviderRegistry;
 
-/// Re-exported conversation message, so callers never name `alnair_llm` directly.
+/// Re-exported conversation message, so callers never name the provider crate.
 pub type RouterMessage = Message;
-
-/// A single multimodal part of a message, in router-owned form.
-#[derive(Debug, Clone)]
-pub enum MessagePart {
-    Text(String),
-    ImageUrl(String),
-    /// An audio, video or file part, kept as the exact wire object the client
-    /// sent. OpenAI-compatible upstreams disagree on the spelling of these
-    /// parts, so the router validates the shape and replays it verbatim rather
-    /// than translating it into one canonical form.
-    Media(serde_json::Value),
-}
-
-/// A tool call an assistant message is asking the model to run.
-#[derive(Debug, Clone)]
-pub struct ToolCallSpec {
-    pub id: String,
-    pub name: String,
-    pub arguments: String,
-}
 
 /// Builds a plain-text message.
 pub fn message_text(role: impl Into<String>, text: impl Into<String>) -> RouterMessage {
@@ -154,112 +160,6 @@ pub fn message_tool_result(
     }
 }
 
-/// Token accounting reported by a provider.
-#[derive(Debug, Clone, Default, Copy)]
-pub struct TokenUsage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub cached_tokens: u64,
-    /// Reasoning tokens included in `completion_tokens`, when reported.
-    pub reasoning_tokens: u64,
-    /// Input-token cost in USD.
-    pub cost_input_usd: f64,
-    /// Output-token cost in USD (reasoning premium excluded).
-    pub cost_output_usd: f64,
-    /// Reasoning premium over the output rate, in USD.
-    pub cost_reasoning_usd: f64,
-    /// The part of `cost_input_usd` billed at the cache rate, in USD.
-    pub cost_cache_usd: f64,
-    /// Total cost in USD: input + output + reasoning.
-    pub cost_usd: f64,
-}
-
-/// One streamed chunk from an upstream provider.
-#[derive(Debug, Clone)]
-pub enum StreamChunk {
-    Text(String),
-    Thinking(String),
-    /// Signature for the preceding thinking block, replayed to Anthropic on the
-    /// next turn.
-    ThinkingSignature(String),
-    /// Redacted thinking block payload, replayed verbatim.
-    RedactedThinking(String),
-    ToolCall {
-        id: String,
-        name: String,
-        arguments: String,
-    },
-    Usage(TokenUsage),
-    /// Terminal chunk, carrying the provider's finish reason when it reports one.
-    Done(Option<String>),
-}
-
-/// Normalizes a provider finish reason onto OpenAI's vocabulary.
-///
-/// Providers disagree on the terminal token (`tool_use` vs `tool_calls`,
-/// `end_turn` vs `stop`), so the wire shape is decided here rather than letting
-/// an Anthropic-flavoured reason leak to an OpenAI client. A completed tool call
-/// always wins over a generic `stop`, because clients drive their tool loop off
-/// `finish_reason`.
-pub fn openai_finish_reason(reason: Option<&str>, has_tool_calls: bool) -> String {
-    match reason.unwrap_or_default() {
-        "tool_calls" | "tool-calls" | "tool_use" | "toolUse" => "tool_calls",
-        "length" | "max_tokens" | "max-tokens" | "max_output_tokens" => "length",
-        _ if has_tool_calls => "tool_calls",
-        _ => "stop",
-    }
-    .to_string()
-}
-
-/// Normalizes a provider finish reason onto Anthropic's vocabulary.
-///
-/// The inverse of [`openai_finish_reason`]: an OpenAI-flavoured `length` becomes
-/// `max_tokens`, and any completed tool call becomes `tool_use`.
-pub fn anthropic_stop_reason(reason: Option<&str>, has_tool_calls: bool) -> String {
-    match reason.unwrap_or_default() {
-        "tool_calls" | "tool-calls" | "tool_use" | "toolUse" => "tool_use",
-        "length" | "max_tokens" | "max-tokens" | "max_output_tokens" => "max_tokens",
-        "stop_sequence" => "stop_sequence",
-        _ if has_tool_calls => "tool_use",
-        _ => "end_turn",
-    }
-    .to_string()
-}
-
-/// Completion result in router-owned types.
-#[derive(Debug, Clone, Default)]
-pub struct CompletionResponse {
-    pub content: String,
-    /// Concatenated reasoning text, when the provider emits any.
-    pub thinking: Option<String>,
-    /// Anthropic signature for `thinking`, replayed on the next turn.
-    pub thinking_signature: Option<String>,
-    /// Anthropic `redacted_thinking` payload, replayed verbatim.
-    pub redacted_thinking: Option<String>,
-    pub finish_reason: Option<String>,
-    pub usage: Option<TokenUsage>,
-    /// Tool calls the model requested, in arrival order.
-    pub tool_calls: Vec<ToolCallSpec>,
-}
-
-/// Generation options in router-owned form.
-#[derive(Debug, Clone, Default)]
-pub struct GenerationOptions {
-    pub temperature: Option<f64>,
-    pub top_p: Option<f64>,
-    pub max_tokens: Option<i32>,
-    pub stop: Option<Vec<String>>,
-    pub seed: Option<i64>,
-    pub presence_penalty: Option<f64>,
-    pub frequency_penalty: Option<f64>,
-    /// Extended-thinking effort, one of `minimal|low|medium|high|max`.
-    pub thinking_level: Option<String>,
-    /// OpenAI `web_search_options`, carried through to an OpenAI-compatible
-    /// upstream untouched. The router validates the shape but never rewrites
-    /// it, because each provider exposes its own knobs.
-    pub web_search_options: Option<serde_json::Value>,
-}
-
 /// Parses a thinking effort string into the provider enum, ignoring unknowns.
 ///
 /// OpenAI's own vocabulary is `none|minimal|low|medium|high|xhigh|max`, where
@@ -274,17 +174,6 @@ fn parse_thinking_level(value: Option<&str>) -> Option<ThinkingLevel> {
         "high" => Some(ThinkingLevel::High),
         "xhigh" | "max" => Some(ThinkingLevel::Max),
         _ => None,
-    }
-}
-
-/// Maps an Anthropic `thinking.budget_tokens` value onto an effort level.
-pub fn thinking_level_from_budget(budget: u64) -> &'static str {
-    match budget {
-        0..=1024 => "minimal",
-        1025..=4096 => "low",
-        4097..=8192 => "medium",
-        8193..=16384 => "high",
-        _ => "max",
     }
 }
 
@@ -390,11 +279,27 @@ impl GenerationOptions {
         LlmStreamOptions {
             temperature: self.temperature,
             top_p: self.top_p,
+            top_k: self.top_k,
             max_tokens: self.max_tokens,
             stop: self.stop.clone(),
             seed: self.seed,
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
+            tool_choice: self.tool_choice.as_ref().map(to_provider_tool_choice),
+            parallel_tool_calls: self.parallel_tool_calls,
+            response_format: self
+                .response_format
+                .as_ref()
+                .map(to_provider_response_format),
+            metadata: self.metadata.clone(),
+            user: self.user.clone(),
+            service_tier: self.service_tier.clone(),
+            store: self.store,
+            prompt_cache_key: self.prompt_cache_key.clone(),
+            verbosity: self.verbosity.clone(),
+            logprobs: self.logprobs,
+            top_logprobs: self.top_logprobs,
+            include: self.include.clone(),
             max_status_retries: retry.max_retries_per_tier,
             max_transport_retries: retry.transport_retries,
             max_retry_delay_ms: retry.max_retry_delay_ms,
@@ -402,6 +307,33 @@ impl GenerationOptions {
             web_search_options: self.web_search_options.clone(),
             ..Default::default()
         }
+    }
+}
+
+/// Maps the hub's tool choice onto the provider enum.
+fn to_provider_tool_choice(choice: &ToolChoice) -> alnair_llm::ToolChoice {
+    match choice {
+        ToolChoice::Auto => alnair_llm::ToolChoice::Auto,
+        ToolChoice::Required => alnair_llm::ToolChoice::Required,
+        ToolChoice::None => alnair_llm::ToolChoice::None,
+        ToolChoice::Named { name } => alnair_llm::ToolChoice::Named { name: name.clone() },
+    }
+}
+
+/// Maps the hub's structured-output request onto the provider enum.
+fn to_provider_response_format(format: &ResponseFormat) -> alnair_llm::ResponseFormat {
+    match format {
+        ResponseFormat::Text => alnair_llm::ResponseFormat::Text,
+        ResponseFormat::JsonObject => alnair_llm::ResponseFormat::JsonObject,
+        ResponseFormat::JsonSchema {
+            name,
+            schema,
+            strict,
+        } => alnair_llm::ResponseFormat::JsonSchema {
+            name: name.clone(),
+            schema: schema.clone(),
+            strict: *strict,
+        },
     }
 }
 
@@ -702,6 +634,12 @@ fn to_stream_chunk(
                 + cost_output_usd.unwrap_or(0.0)
                 + cost_reasoning_usd.unwrap_or(0.0),
         })),
+        Ok(LlmStreamChunk::Citation(citation)) => Ok(StreamChunk::Citation(Citation {
+            url: citation.url,
+            title: citation.title,
+            start_index: citation.start_index,
+            end_index: citation.end_index,
+        })),
         Ok(LlmStreamChunk::Done(reason)) => Ok(StreamChunk::Done(reason)),
         // A rejected request is not an upstream fault: an Anthropic connection
         // with no credential, or a body the provider layer refuses to build,
@@ -740,6 +678,7 @@ pub async fn collect(stream: ChunkStream) -> Result<CompletionResponse> {
                 name,
                 arguments,
             }),
+            StreamChunk::Citation(citation) => response.citations.push(citation),
             StreamChunk::Usage(usage) => response.usage = Some(usage),
             StreamChunk::Done(reason) => {
                 response.finish_reason = Some(openai_finish_reason(

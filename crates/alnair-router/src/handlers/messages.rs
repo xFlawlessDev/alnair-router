@@ -37,7 +37,7 @@ pub async fn messages(
     let stream_requested = request.stream;
 
     let chat_request = request.into_chat_request()?;
-    let options = chat_request.generation_options();
+    let options = chat_request.generation_options()?;
     let tools = chat_request.tools.clone();
     let messages = chat_request.into_messages()?;
     let (messages, saver_savings) =
@@ -155,6 +155,14 @@ async fn complete_response(
     if !completion.content.is_empty() {
         content.push(AnthropicResponseBlock::Text {
             text: completion.content.clone(),
+        });
+    }
+    // A citation is a content block of its own in the Anthropic shape, placed
+    // after the text it annotates. An upstream that produced none simply adds
+    // no block.
+    for citation in &completion.citations {
+        content.push(AnthropicResponseBlock::Text {
+            text: citation_marker(citation),
         });
     }
     for call in &completion.tool_calls {
@@ -430,6 +438,20 @@ fn message_events(
                 json!({ "type": "content_block_stop", "index": index }).to_string(),
             )));
         }
+        Ok(StreamChunk::Citation(citation)) => {
+            // Citations arrive interleaved with the text they annotate, so the
+            // open text block is closed and a marker block follows it.
+            let text = citation_marker(&citation);
+            let index = ensure_block(state, &mut events, BlockKind::Text);
+            events.push(Ok(Event::default().event("content_block_delta").data(
+                json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": { "type": "text_delta", "text": text }
+                })
+                .to_string(),
+            )));
+        }
         Ok(StreamChunk::Usage(usage)) => {
             state.totals = Some(usage);
             state.usage.record(Some(usage), "ok");
@@ -482,6 +504,20 @@ pub async fn count_tokens(
     Ok(Json(CountTokensResponse {
         input_tokens: estimate_messages(&messages),
     }))
+}
+
+/// Renders a citation as Anthropic-visible text.
+///
+/// The Messages API has no citation block type, so a citation reaches an
+/// Anthropic client as an inline source marker next to the text it annotates.
+/// The alternative — dropping it — would lose something the caller paid for.
+fn citation_marker(citation: &chat_backend::Citation) -> String {
+    match &citation.title {
+        Some(title) if !title.trim().is_empty() => {
+            format!("\n\n[{title}]({})", citation.url)
+        }
+        _ => format!("\n\n[{}]({})", citation.url, citation.url),
+    }
 }
 
 fn message_id() -> String {

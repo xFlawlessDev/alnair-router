@@ -990,8 +990,12 @@ async fn responses_endpoint_rejects_an_unknown_model() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// Guards the provider seam: only `upstream/chat_backend.rs` may reference the
-/// `alnair_llm` crate, so the provider layer stays swappable.
+/// Guards the provider seam: only the `upstream/chat_backend` module root may
+/// reference the `alnair_llm` crate, so the provider layer stays swappable.
+///
+/// The seam is a folder, so "one file" means one *production* file: `mod.rs`.
+/// Its submodules reach the provider crate through the names it re-exports,
+/// which keeps the dependency count at exactly one.
 #[test]
 fn vendored_llm_layer_is_imported_from_exactly_one_file() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -1000,7 +1004,7 @@ fn vendored_llm_layer_is_imported_from_exactly_one_file() {
 
     assert!(
         offenders.is_empty(),
-        "only upstream/chat_backend.rs may reach into the alnair_llm crate, \
+        "only upstream/chat_backend/mod.rs may reach into the alnair_llm crate, \
          but found: {offenders:?}"
     );
 }
@@ -1015,12 +1019,12 @@ fn visit(dir: &std::path::Path, offenders: &mut Vec<String>) {
         if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
             continue;
         }
-        if path.ends_with("upstream/chat_backend.rs") {
+        // The seam's module root is the one allowed coupling point.
+        if path.ends_with("upstream/chat_backend/mod.rs") {
             continue;
         }
         // The seam's own tests may name the crate; they are not production
-        // dependencies. The restriction is to `upstream/chat_backend/mod.rs` so
-        // this exception cannot swallow a second production file.
+        // dependencies.
         if path.ends_with("upstream/chat_backend/tests.rs") {
             continue;
         }
@@ -6586,5 +6590,361 @@ async fn search_provider_checks_use_usage_or_search_instead_of_models() {
                 .contains("search provider")
         );
         server.abort();
+    }
+}
+
+#[tokio::test]
+async fn models_info_publishes_the_translation_matrix() {
+    let (app, _db) = app(false).await;
+
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "claude-main",
+            "provider_type": "anthropic-native",
+            "base_url": "https://example.invalid/v1"
+        }),
+    )
+    .await;
+    let connection_id = connection["id"].as_str().expect("connection id");
+
+    json_request(
+        &app,
+        "POST",
+        "/api/aliases",
+        serde_json::json!({ "prefix": "claude", "connection_id": connection_id }),
+    )
+    .await;
+
+    let (status, body) = get(&app, "/v1/models/info").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let alias = body["data"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|entry| entry["id"] == "claude")
+        .expect("alias present");
+
+    let translation = &alias["translation"];
+    assert_eq!(translation["tool_choice_required"], serde_json::json!(true));
+    assert_eq!(translation["top_k"], serde_json::json!(true));
+    // The Messages API cannot express a JSON schema request, so the published
+    // matrix must say so rather than let a client discover it as a 400.
+    assert_eq!(
+        translation["response_format_json_schema"],
+        serde_json::json!(false)
+    );
+    assert_eq!(translation["seed"], serde_json::json!(false));
+}
+
+/// Spawns a capturing Anthropic Messages upstream, so the translated body can
+/// be inspected after a request goes through `/v1/chat/completions`.
+async fn spawn_capturing_anthropic_upstream() -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+) {
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = captured.clone();
+
+    let router = axum::Router::new().route(
+        "/v1/messages",
+        axum::routing::post(move |body: axum::Json<serde_json::Value>| {
+            let sink = sink.clone();
+            async move {
+                let streaming = body.0.get("stream").and_then(|v| v.as_bool()) == Some(true);
+                sink.lock().expect("capture lock").push(body.0);
+
+                // The Anthropic provider overrides `complete()`, so a
+                // non-streaming request expects a JSON body rather than SSE.
+                if !streaming {
+                    return (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "application/json")],
+                        r#"{"content":[{"type":"text","text":"pong"}],"usage":{"input_tokens":1,"output_tokens":1}}"#,
+                    );
+                }
+
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    concat!(
+                        "event: content_block_start\n",
+                        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+                        "event: content_block_delta\n",
+                        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"pong\"}}\n\n",
+                        "event: message_delta\n",
+                        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n",
+                        "event: message_stop\n",
+                        "data: {\"type\":\"message_stop\"}\n\n"
+                    ),
+                )
+            }
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    (format!("http://{address}/v1"), captured)
+}
+
+/// Spawns a capturing Responses upstream (`POST /v1/responses`).
+async fn spawn_capturing_responses_upstream() -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+) {
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = captured.clone();
+
+    let router = axum::Router::new().route(
+        "/v1/responses",
+        axum::routing::post(move |body: axum::Json<serde_json::Value>| {
+            let sink = sink.clone();
+            async move {
+                let streaming = body.0.get("stream").and_then(|v| v.as_bool()) == Some(true);
+                sink.lock().expect("capture lock").push(body.0);
+
+                if !streaming {
+                    return (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "application/json")],
+                        r#"{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"pong"}]}],"usage":{"input_tokens":1,"output_tokens":1}}"#,
+                    );
+                }
+
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "text/event-stream")],
+                    concat!(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"pong\"}\n\n",
+                        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+                    ),
+                )
+            }
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock upstream");
+    let address = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    (format!("http://{address}/v1"), captured)
+}
+
+/// A `tool_choice: "required"` from the chat endpoint must reach a chat
+/// upstream as `required`, an Anthropic upstream as `{"type":"any"}` and a
+/// Responses upstream as `required` — the acceptance criterion for the hub
+/// widening.
+#[tokio::test]
+async fn tool_choice_required_reaches_each_upstream_dialect() {
+    let (app, _db) = app(false).await;
+
+    // The chat dialect, spelling it the way chat completions does.
+    let (chat_url, chat_bodies) = spawn_capturing_chat_upstream().await;
+    let chat_connection = create_probe_connection(&app, &chat_url).await;
+    create_alias_for(&app, &chat_connection, "chatroute", Some("gpt-4o")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "chatroute",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "tools": [{ "type": "function", "function": { "name": "search" } }],
+            "tool_choice": "required"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(
+        chat_bodies.lock().expect("capture lock")[0]["tool_choice"],
+        serde_json::json!("required")
+    );
+
+    // The Anthropic dialect spells it `any`.
+    let (anthropic_url, anthropic_bodies) = spawn_capturing_anthropic_upstream().await;
+    let (status, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "claude-translate",
+            "provider_type": "anthropic-native",
+            "base_url": anthropic_url,
+            "api_key": "sk-ant-test"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {connection}");
+    let connection_id = connection["id"].as_str().expect("connection id");
+    create_alias_for(&app, connection_id, "clauderoute", Some("claude-sonnet-4")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "clauderoute",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "tools": [{ "type": "function", "function": { "name": "search" } }],
+            "tool_choice": "required"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(
+        anthropic_bodies.lock().expect("capture lock")[0]["tool_choice"],
+        serde_json::json!({ "type": "any" })
+    );
+
+    // The Responses dialect keeps the chat spelling.
+    let (responses_url, responses_bodies) = spawn_capturing_responses_upstream().await;
+    let (status, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "responses-translate",
+            "provider_type": "openai-compatible",
+            "base_url": responses_url,
+            "api_key": "sk-test",
+            "wire_api": "responses"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "unexpected body: {connection}");
+    let connection_id = connection["id"].as_str().expect("connection id");
+    create_alias_for(&app, connection_id, "responseroute", Some("gpt-5.1")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "responseroute",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "tools": [{ "type": "function", "function": { "name": "search" } }],
+            "tool_choice": "required"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(
+        responses_bodies.lock().expect("capture lock")[0]["tool_choice"],
+        serde_json::json!("required")
+    );
+}
+
+/// A feature the only available target cannot honour is a `400` naming the
+/// parameter, the protocol that refused, and what to do about it.
+#[tokio::test]
+async fn an_unservable_parameter_is_a_400_naming_what_to_change() {
+    let (app, _db) = app(false).await;
+
+    let (status, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({
+            "name": "claude-no-schema",
+            "provider_type": "anthropic-native",
+            "base_url": "https://example.invalid/v1",
+            "api_key": "sk-ant-test"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let connection_id = connection["id"].as_str().expect("connection id");
+    create_alias_for(&app, connection_id, "schemaroute", Some("claude-sonnet-4")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "schemaroute",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "ticket",
+                    "schema": { "type": "object", "properties": {} }
+                }
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected body: {body}");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+
+    let message = body["error"]["message"]
+        .as_str()
+        .expect("error message")
+        .to_string();
+    assert!(message.contains("response_format"), "{message}");
+    assert!(message.contains("ticket"), "{message}");
+    assert!(message.contains("anthropic-native"), "{message}");
+    assert!(
+        message.contains("Remove") || message.contains("route"),
+        "the message must say what to do: {message}"
+    );
+}
+
+/// A request that sets only today's fields must keep working untouched: the
+/// regression guard for the whole change.
+#[tokio::test]
+async fn a_request_that_sets_nothing_new_still_reaches_the_upstream() {
+    let (app, _db) = app(false).await;
+    let (base_url, captured) = spawn_capturing_chat_upstream().await;
+    let connection_id = create_probe_connection(&app, &base_url).await;
+    create_alias_for(&app, &connection_id, "plainroute", Some("gpt-4o")).await;
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "model": "plainroute",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "temperature": 0.2
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+
+    let sent = captured.lock().expect("capture lock");
+    let body = &sent[0];
+    for field in [
+        "tool_choice",
+        "parallel_tool_calls",
+        "response_format",
+        "metadata",
+        "user",
+        "service_tier",
+        "store",
+        "prompt_cache_key",
+        "verbosity",
+        "logprobs",
+        "top_k",
+    ] {
+        assert!(
+            body.get(field).is_none(),
+            "`{field}` must not appear in the upstream body a plain request produces"
+        );
     }
 }

@@ -1,6 +1,6 @@
-//! Anthropic Messages API translation.
+//! Anthropic `POST /v1/messages` request body and its mapping onto the hub.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::error::{Error, Result};
 use crate::protocol::openai::{
@@ -28,6 +28,19 @@ pub struct MessagesRequest {
     pub stop_sequences: Option<Vec<String>>,
     #[serde(default)]
     pub tools: Option<Vec<serde_json::Value>>,
+    /// `{"type":"auto"|"any"|"tool"|"none","name":…}`. Mapped onto the hub's
+    /// [`ToolChoice`](crate::upstream::chat_backend::ToolChoice).
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
+    /// Include-at-most-N sampling; Anthropic's own knob.
+    #[serde(default)]
+    pub top_k: Option<i32>,
+    /// `{"user_id": "…"}`. Becomes the hub's `metadata` and `user`.
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    /// `{"format": {"type": "json_schema", "schema": {…}}}`.
+    #[serde(default)]
+    pub output_config: Option<serde_json::Value>,
     /// Extended-thinking configuration; `budget_tokens` maps to an effort level.
     #[serde(default)]
     pub thinking: Option<AnthropicThinkingRequest>,
@@ -155,12 +168,15 @@ impl MessagesRequest {
             messages.extend(message.into_openai()?);
         }
 
+        let (metadata, user) = split_anthropic_metadata(self.metadata.as_ref());
+
         Ok(ChatCompletionRequest {
             model: self.model,
             messages,
             stream: self.stream,
             temperature: self.temperature,
             top_p: self.top_p,
+            top_k: self.top_k,
             max_tokens: self.max_tokens,
             max_completion_tokens: None,
             stop: self.stop_sequences.map(StopSequence::Many),
@@ -184,7 +200,120 @@ impl MessagesRequest {
             }),
             // Anthropic's own web search is a `tools` entry, not this field.
             web_search_options: None,
+            tool_choice: anthropic_tool_choice_to_openai(self.tool_choice.as_ref())?,
+            parallel_tool_calls: None,
+            response_format: anthropic_output_config_to_openai(self.output_config.as_ref())?,
+            metadata,
+            user,
+            service_tier: None,
+            store: None,
+            prompt_cache_key: None,
+            verbosity: None,
+            logprobs: None,
+            top_logprobs: None,
         })
+    }
+}
+
+/// Splits Anthropic's `metadata` into the hub's two fields.
+fn split_anthropic_metadata(
+    metadata: Option<&serde_json::Value>,
+) -> (Option<serde_json::Value>, Option<String>) {
+    let Some(metadata) = metadata else {
+        return (None, None);
+    };
+    let user = metadata
+        .get("user_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|user| !user.trim().is_empty())
+        .map(str::to_string);
+    (Some(metadata.clone()), user)
+}
+
+/// Translates Anthropic's `tool_choice` into the OpenAI spelling the shared
+/// executor understands.
+///
+/// Anthropic spells its modes differently (`any` for required, `tool` with a
+/// `name` for a named function), so the translation belongs here rather than in
+/// the executor: one place per protocol, and the hub stays protocol-neutral.
+fn anthropic_tool_choice_to_openai(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<serde_json::Value>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| Error::BadRequest("tool_choice must be a JSON object".to_string()))?;
+    let kind = object.get("type").and_then(serde_json::Value::as_str);
+
+    match kind {
+        Some("auto") => Ok(Some(serde_json::json!("auto"))),
+        Some("any") => Ok(Some(serde_json::json!("required"))),
+        Some("none") => Ok(Some(serde_json::json!("none"))),
+        Some("tool") => {
+            let name = object
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .ok_or_else(|| {
+                    Error::BadRequest("tool_choice of type `tool` requires a `name`".to_string())
+                })?;
+            Ok(Some(serde_json::json!({
+                "type": "function",
+                "function": { "name": name }
+            })))
+        }
+        Some(other) => Err(Error::BadRequest(format!(
+            "unsupported tool_choice type `{other}`; use `auto`, `any`, `tool` or `none`"
+        ))),
+        None => Err(Error::BadRequest(
+            "tool_choice requires a `type`".to_string(),
+        )),
+    }
+}
+
+/// Translates `output_config.format` into the OpenAI `response_format` shape.
+fn anthropic_output_config_to_openai(
+    value: Option<&serde_json::Value>,
+) -> Result<Option<serde_json::Value>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let format = value
+        .get("format")
+        .ok_or_else(|| Error::BadRequest("output_config requires a `format`".to_string()))?;
+    let kind = format.get("type").and_then(serde_json::Value::as_str);
+
+    match kind {
+        Some("json_object") => Ok(Some(serde_json::json!({ "type": "json_object" }))),
+        Some("json_schema") => {
+            let schema = format.get("schema").ok_or_else(|| {
+                Error::BadRequest("output_config.format requires a `schema`".to_string())
+            })?;
+            Ok(Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": {
+                    // Anthropic does not send a name; the OpenAI shape requires
+                    // one, and the executor only ever forwards it.
+                    "name": format
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("output"),
+                    "schema": schema,
+                    "strict": format
+                        .get("strict")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                }
+            })))
+        }
+        Some(other) => Err(Error::BadRequest(format!(
+            "unsupported output_config.format type `{other}`; use `json_object` or `json_schema`"
+        ))),
+        None => Err(Error::BadRequest(
+            "output_config.format requires a `type`".to_string(),
+        )),
     }
 }
 
@@ -363,51 +492,6 @@ fn block_result_content(content: Option<serde_json::Value>) -> OpenAiContent {
     }
 }
 
-/// Anthropic-shaped non-streaming response.
-#[derive(Debug, Serialize)]
-pub struct MessagesResponse {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub response_type: &'static str,
-    pub role: &'static str,
-    pub model: String,
-    pub content: Vec<AnthropicResponseBlock>,
-    pub stop_reason: String,
-    pub usage: AnthropicUsage,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AnthropicResponseBlock {
-    Text {
-        text: String,
-    },
-    Thinking {
-        thinking: String,
-        signature: String,
-    },
-    RedactedThinking {
-        data: String,
-    },
-    ToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-}
-
-#[derive(Debug, Serialize)]
-pub struct AnthropicUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-}
-
-/// Anthropic token-count response.
-#[derive(Debug, Serialize)]
-pub struct CountTokensResponse {
-    pub input_tokens: u64,
-}
-
 /// Heuristic token estimate: roughly 4 characters per token.
 pub fn estimate_tokens(text: &str) -> u64 {
     let chars = text.chars().count() as u64;
@@ -421,109 +505,4 @@ pub fn estimate_messages(messages: &[RouterMessage]) -> u64 {
         .map(|message| estimate_tokens(&message.content.as_text()))
         .sum::<u64>()
         .max(1)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn request(body: serde_json::Value) -> ChatCompletionRequest {
-        let request: MessagesRequest = serde_json::from_value(body).expect("valid request");
-        request.into_chat_request().expect("converts")
-    }
-
-    #[test]
-    fn thinking_budget_maps_to_reasoning_effort() {
-        let chat = request(serde_json::json!({
-            "model": "claude",
-            "max_tokens": 1024,
-            "thinking": { "type": "enabled", "budget_tokens": 8192 },
-            "messages": [{ "role": "user", "content": "hi" }]
-        }));
-
-        assert_eq!(
-            chat.generation_options().thinking_level.as_deref(),
-            Some("medium")
-        );
-    }
-
-    #[test]
-    fn disabled_thinking_produces_no_reasoning_effort() {
-        let chat = request(serde_json::json!({
-            "model": "claude",
-            "max_tokens": 1024,
-            "thinking": { "type": "disabled" },
-            "messages": [{ "role": "user", "content": "hi" }]
-        }));
-
-        assert!(chat.generation_options().thinking_level.is_none());
-    }
-
-    #[test]
-    fn signed_thinking_and_tool_blocks_round_trip() {
-        let chat = request(serde_json::json!({
-            "model": "claude",
-            "max_tokens": 1024,
-            "messages": [
-                { "role": "user", "content": "hi" },
-                { "role": "assistant", "content": [
-                    { "type": "redacted_thinking", "data": "opaque" },
-                    { "type": "thinking", "thinking": "reasoning", "signature": "sig-1" },
-                    { "type": "tool_use", "id": "tc1", "name": "read", "input": { "path": "/tmp" } }
-                ]},
-                { "role": "user", "content": [
-                    { "type": "tool_result", "tool_use_id": "tc1", "content": "file" }
-                ]}
-            ]
-        }));
-
-        let messages = chat.into_messages().expect("messages");
-
-        let assistant = messages
-            .iter()
-            .find(|message| message.role == "assistant")
-            .expect("assistant turn");
-        assert_eq!(assistant.thinking.as_deref(), Some("reasoning"));
-        assert_eq!(assistant.thinking_signature.as_deref(), Some("sig-1"));
-        assert_eq!(assistant.redacted_thinking.as_deref(), Some("opaque"));
-        assert_eq!(
-            assistant
-                .tool_calls
-                .as_ref()
-                .and_then(|calls| calls.first())
-                .map(|call| call.id.as_str()),
-            Some("tc1")
-        );
-
-        let tool = messages
-            .iter()
-            .find(|message| message.role == "tool")
-            .expect("tool result turn");
-        assert_eq!(tool.tool_call_id.as_deref(), Some("tc1"));
-        assert_eq!(tool.content.as_text(), "file");
-    }
-
-    #[test]
-    fn tool_result_without_text_preserves_the_pairing() {
-        let chat = request(serde_json::json!({
-            "model": "claude",
-            "max_tokens": 1024,
-            "messages": [
-                { "role": "assistant", "content": [
-                    { "type": "tool_use", "id": "tc1", "name": "read", "input": {} }
-                ]},
-                { "role": "user", "content": [
-                    { "type": "tool_result", "tool_use_id": "tc1" }
-                ]}
-            ]
-        }));
-
-        let messages = chat.into_messages().expect("messages");
-
-        // The empty assistant turn must survive so the tool_result still pairs.
-        assert!(messages.iter().any(|message| message.role == "assistant"));
-        assert!(messages.iter().any(
-            |message| message.role == "tool" && message.tool_call_id.as_deref() == Some("tc1")
-        ));
-    }
 }

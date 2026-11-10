@@ -683,3 +683,37 @@ fn does_not_retry_without_tools_in_body() {
         &body,
     ));
 }
+
+#[test]
+fn a_url_citation_annotation_is_read_from_a_message() {
+    let message = serde_json::json!({
+        "role": "assistant",
+        "content": "the answer",
+        "annotations": [
+            {
+                "type": "url_citation",
+                "url_citation": {
+                    "url": "https://example.com/a",
+                    "title": "Example",
+                    "start_index": 0,
+                    "end_index": 10
+                }
+            },
+            // A kind the hub does not carry must be skipped, not guessed at.
+            { "type": "file_citation", "file_id": "f-1" }
+        ]
+    });
+
+    let citations = extract_annotations(&message);
+
+    assert_eq!(citations.len(), 1, "only url citations are carried");
+    assert_eq!(citations[0].url, "https://example.com/a");
+    assert_eq!(citations[0].title.as_deref(), Some("Example"));
+    assert_eq!(citations[0].end_index, Some(10));
+}
+
+#[test]
+fn a_message_without_annotations_yields_no_citations() {
+    assert!(extract_annotations(&serde_json::json!({ "content": "hi" })).is_empty());
+    assert!(extract_annotations(&serde_json::json!({ "annotations": [] })).is_empty());
+}

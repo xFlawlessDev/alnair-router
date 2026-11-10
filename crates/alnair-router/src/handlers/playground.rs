@@ -206,6 +206,9 @@ fn frame_events(
             "text": text,
         })))],
         Ok(StreamChunk::ThinkingSignature(_)) | Ok(StreamChunk::RedactedThinking(_)) => Vec::new(),
+        // The playground transcript has no citation rendering; the sources are
+        // still attached to the stored message by the non-streaming path.
+        Ok(StreamChunk::Citation(_)) => Vec::new(),
         Ok(StreamChunk::ToolCall {
             id,
             name,

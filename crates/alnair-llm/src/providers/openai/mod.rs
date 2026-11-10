@@ -239,6 +239,10 @@ impl OpenAiProvider {
                                 yield Ok(LlmStreamChunk::Thinking(reasoning.to_string()));
                             }
 
+                            for citation in extract_annotations(message) {
+                                yield Ok(LlmStreamChunk::Citation(citation));
+                            }
+
                             if let Some(content) = message.get("content").and_then(|c| c.as_str())
                                 && !content.is_empty()
                             {
@@ -419,6 +423,10 @@ impl OpenAiProvider {
                                 && !reasoning.is_empty()
                             {
                                 yield Ok(LlmStreamChunk::Thinking(reasoning.to_string()));
+                            }
+
+                            for citation in extract_annotations(delta) {
+                                yield Ok(LlmStreamChunk::Citation(citation));
                             }
 
                             if let Some(content) = delta.get("content").and_then(|c| c.as_str())

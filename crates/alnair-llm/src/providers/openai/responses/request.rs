@@ -99,7 +99,16 @@ pub(super) fn build_request_body(
     let tools = convert_tools(tools);
     if let Some(tools) = tools {
         body["tools"] = tools;
-        body["tool_choice"] = json!("auto");
+        // The default stays `auto`, but only when the client asked for nothing:
+        // writing it unconditionally would override an explicit choice, which
+        // is exactly the bug this layer exists to fix.
+        body["tool_choice"] = match &options.tool_choice {
+            Some(choice) => tool_choice_to_responses(choice),
+            None => json!("auto"),
+        };
+    }
+    if let Some(parallel) = options.parallel_tool_calls {
+        body["parallel_tool_calls"] = json!(parallel);
     }
     if let Some(max_output_tokens) = options.max_tokens.filter(|max| *max > 0) {
         body["max_output_tokens"] = json!(max_output_tokens);
@@ -110,6 +119,24 @@ pub(super) fn build_request_body(
     if let Some(top_p) = options.top_p {
         body["top_p"] = json!(top_p);
     }
+    if let Some(text) = text_config(options) {
+        body["text"] = text;
+    }
+    if let Some(metadata) = &options.metadata {
+        body["metadata"] = metadata.clone();
+    }
+    if let Some(tier) = &options.service_tier {
+        body["service_tier"] = json!(tier);
+    }
+    if let Some(store) = options.store {
+        body["store"] = json!(store);
+    }
+    if let Some(key) = &options.prompt_cache_key {
+        body["prompt_cache_key"] = json!(key);
+    }
+    if !options.include.is_empty() {
+        body["include"] = json!(options.include);
+    }
     if config.supports_thinking
         && let Some(effort) = reasoning_effort(options.thinking_level)
     {
@@ -117,6 +144,59 @@ pub(super) fn build_request_body(
     }
 
     body
+}
+
+/// The Responses spelling of a tool choice.
+///
+/// The API declares tools flat, so a named function is `{"type":"function",
+/// "name":…}` rather than the chat-completions nested shape.
+fn tool_choice_to_responses(choice: &crate::model_config::ToolChoice) -> Value {
+    use crate::model_config::ToolChoice;
+    match choice {
+        ToolChoice::Auto => json!("auto"),
+        ToolChoice::Required => json!("required"),
+        ToolChoice::None => json!("none"),
+        ToolChoice::Named { name } => json!({ "type": "function", "name": name }),
+    }
+}
+
+/// Builds the `text` object: `format` for structured output, `verbosity` for
+/// the length dial.
+fn text_config(options: &crate::model_config::LlmStreamOptions) -> Option<Value> {
+    use crate::model_config::ResponseFormat;
+
+    let format = match &options.response_format {
+        None => None,
+        Some(ResponseFormat::Text) => Some(json!({ "type": "text" })),
+        Some(ResponseFormat::JsonObject) => Some(json!({ "type": "json_object" })),
+        Some(ResponseFormat::JsonSchema {
+            name,
+            schema,
+            strict,
+        }) => Some(json!({
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+            "strict": strict,
+        })),
+    };
+    let verbosity = options
+        .verbosity
+        .as_ref()
+        .map(|verbosity| ("verbosity".to_string(), Value::String(verbosity.clone())));
+
+    if format.is_none() && verbosity.is_none() {
+        return None;
+    }
+
+    let mut text = serde_json::Map::new();
+    if let Some(format) = format {
+        text.insert("format".to_string(), format);
+    }
+    if let Some((key, value)) = verbosity {
+        text.insert(key, value);
+    }
+    Some(Value::Object(text))
 }
 
 fn text_item(role: &str, kind: &str, text: String) -> Value {

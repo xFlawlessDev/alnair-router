@@ -11,7 +11,9 @@ use crate::token_saver::Savings;
 use crate::upstream::ExecutedStream;
 use crate::upstream::chat_backend::{StreamChunk, TokenUsage};
 
-use super::{ResponsesContent, ResponsesOutput, ResponsesUsage, message_id};
+use super::response::{
+    AnnotationPayload, ResponsesContent, ResponsesOutput, ResponsesUsage, message_id,
+};
 
 /// One SSE item; the error type is uninhabited, so a stream never fails mid-flight.
 type SseItem = std::result::Result<Event, std::convert::Infallible>;
@@ -33,6 +35,10 @@ struct StreamState {
     /// Closed items are removed from the open slots above, so the final output
     /// has to be accumulated as they finish rather than read back.
     items: Vec<(usize, ResponsesOutput)>,
+    /// Next `annotation_index` on the open text item.
+    next_annotation: usize,
+    /// Annotations collected for the open text item, emitted when it closes.
+    annotations: Vec<AnnotationPayload>,
     totals: Option<TokenUsage>,
 }
 
@@ -66,7 +72,7 @@ pub(super) async fn responses_stream(
 
     let mut stream_state = StreamState {
         usage: usage_state,
-        response_id: super::response_id(),
+        response_id: super::response::response_id(),
         created_at,
         model: requested_model.clone(),
         sequence: 0,
@@ -74,6 +80,8 @@ pub(super) async fn responses_stream(
         reasoning: None,
         text: None,
         items: Vec::new(),
+        next_annotation: 0,
+        annotations: Vec::new(),
         totals: None,
     };
 
@@ -138,6 +146,33 @@ fn advance(state: &mut StreamState, chunk: crate::error::Result<StreamChunk>) ->
             ));
         }
         Ok(StreamChunk::ThinkingSignature(_)) | Ok(StreamChunk::RedactedThinking(_)) => {}
+        Ok(StreamChunk::Citation(citation)) => {
+            // `response.output_text.annotation.added` is the documented event;
+            // it references the open text item, so one is opened if the model
+            // cited before emitting any text.
+            let (index, id) = ensure_text(state, &mut events);
+            let annotation_index = state.next_annotation;
+            state.next_annotation += 1;
+            let annotation = AnnotationPayload {
+                annotation_type: "url_citation",
+                url: citation.url,
+                title: citation.title,
+                start_index: citation.start_index,
+                end_index: citation.end_index,
+            };
+            events.push(state.event(
+                "response.output_text.annotation.added",
+                json!({
+                    "type": "response.output_text.annotation.added",
+                    "item_id": id,
+                    "output_index": index,
+                    "content_index": 0,
+                    "annotation_index": annotation_index,
+                    "annotation": annotation,
+                }),
+            ));
+            state.annotations.push(annotation);
+        }
         Ok(StreamChunk::Text(text)) => {
             close_reasoning(state, &mut events);
             let (index, id) = ensure_text(state, &mut events);
@@ -374,6 +409,7 @@ fn close_reasoning(state: &mut StreamState, events: &mut Vec<SseItem>) {
             summary: vec![ResponsesContent {
                 content_type: "summary_text",
                 text,
+                annotations: None,
             }],
         },
     ));
@@ -459,6 +495,7 @@ fn close_text(state: &mut StreamState, events: &mut Vec<SseItem>) {
         }),
     ));
 
+    let annotations = std::mem::take(&mut state.annotations);
     state.items.push((
         index,
         ResponsesOutput::Message {
@@ -468,6 +505,7 @@ fn close_text(state: &mut StreamState, events: &mut Vec<SseItem>) {
             content: vec![ResponsesContent {
                 content_type: "output_text",
                 text,
+                annotations: (!annotations.is_empty()).then_some(annotations),
             }],
         },
     ));

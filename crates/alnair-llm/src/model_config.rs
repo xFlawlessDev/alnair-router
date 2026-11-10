@@ -79,6 +79,44 @@ pub struct ModelCostRates {
     pub reasoning_per_million_usd: Option<f64>,
 }
 
+/// Who picks the tool, and which one. Provider-neutral, so every dialect can
+/// spell it the way its own endpoint documents.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolChoice {
+    Auto,
+    Required,
+    None,
+    Named { name: String },
+}
+
+/// Structured-output constraint, provider-neutral.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text,
+    JsonObject,
+    JsonSchema {
+        name: String,
+        schema: serde_json::Value,
+        #[serde(default)]
+        strict: bool,
+    },
+}
+
+/// A citation an upstream attached to a span of output text.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Citation {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Byte range in the accumulated output text, when the protocol reports one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_index: Option<usize>,
+}
+
 /// Options passed to a single LLM streaming call.
 #[derive(Debug, Clone)]
 pub struct LlmStreamOptions {
@@ -92,6 +130,30 @@ pub struct LlmStreamOptions {
     pub stop: Option<Vec<String>>,
     pub thinking_level: Option<ThinkingLevel>,
     pub cache_retention: CacheRetention,
+    /// Who picks the tool. `None` leaves the upstream's own default in place.
+    pub tool_choice: Option<ToolChoice>,
+    /// Whether the model may issue tool calls concurrently.
+    pub parallel_tool_calls: Option<bool>,
+    /// Structured-output constraint.
+    pub response_format: Option<ResponseFormat>,
+    /// Client metadata, replayed on the dialects that define it.
+    pub metadata: Option<serde_json::Value>,
+    /// End-user identifier.
+    pub user: Option<String>,
+    /// Priority tier, e.g. `auto`, `default`, `flex`.
+    pub service_tier: Option<String>,
+    /// Ask the upstream to retain the turn server-side.
+    pub store: Option<bool>,
+    /// Prompt-cache routing hint.
+    pub prompt_cache_key: Option<String>,
+    /// Output verbosity, `low|medium|high`.
+    pub verbosity: Option<String>,
+    /// Whether the caller wants log probabilities.
+    pub logprobs: Option<bool>,
+    /// Alternatives per position, 0-20.
+    pub top_logprobs: Option<u8>,
+    /// Responses `include` opt-ins, e.g. `message.output_text.logprobs`.
+    pub include: Vec<String>,
     /// OpenAI `web_search_options`, replayed verbatim on an OpenAI-compatible
     /// upstream. The router does not interpret the object; providers that
     /// support built-in web search read it, and the rest reject the request,
@@ -121,6 +183,18 @@ impl Default for LlmStreamOptions {
             stop: None,
             thinking_level: None,
             cache_retention: CacheRetention::None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            response_format: None,
+            metadata: None,
+            user: None,
+            service_tier: None,
+            store: None,
+            prompt_cache_key: None,
+            verbosity: None,
+            logprobs: None,
+            top_logprobs: None,
+            include: Vec::new(),
             web_search_options: None,
             max_retry_delay_ms: 30_000,
             max_transport_retries: PROVIDER_MAX_TRANSPORT_RETRIES,
@@ -237,7 +311,44 @@ impl From<&GenerationOptions> for LlmStreamOptions {
             max_retry_delay_ms: 30_000,
             max_transport_retries: PROVIDER_MAX_TRANSPORT_RETRIES,
             max_status_retries: PROVIDER_MAX_TRANSPORT_RETRIES,
+            ..Self::default()
         }
+    }
+}
+
+/// The OpenAI spelling of a tool choice.
+///
+/// Anthropic's `any`/`{type: "tool"}` are handled by its own conversion; this
+/// is the chat-completions and Responses shape.
+pub fn tool_choice_to_openai(choice: &ToolChoice) -> serde_json::Value {
+    match choice {
+        ToolChoice::Auto => serde_json::json!("auto"),
+        ToolChoice::Required => serde_json::json!("required"),
+        ToolChoice::None => serde_json::json!("none"),
+        ToolChoice::Named { name } => serde_json::json!({
+            "type": "function",
+            "function": { "name": name }
+        }),
+    }
+}
+
+/// The OpenAI `response_format` spelling of a structured-output request.
+pub fn response_format_to_openai(format: &ResponseFormat) -> serde_json::Value {
+    match format {
+        ResponseFormat::Text => serde_json::json!({ "type": "text" }),
+        ResponseFormat::JsonObject => serde_json::json!({ "type": "json_object" }),
+        ResponseFormat::JsonSchema {
+            name,
+            schema,
+            strict,
+        } => serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "schema": schema,
+                "strict": strict,
+            }
+        }),
     }
 }
 
@@ -279,6 +390,55 @@ impl LlmStreamOptions {
         // the provider's own web-search knobs.
         if let Some(web_search_options) = &self.web_search_options {
             body["web_search_options"] = web_search_options.clone();
+        }
+        self.apply_translation_fields_to_chat_body(body);
+    }
+
+    /// Writes the fields the widened hub carries onto an OpenAI chat body.
+    ///
+    /// Kept separate from the sampler knobs above because the two have
+    /// different rules: the sampler block is unconditional, while a field here
+    /// is only written when the client actually set it, so a request that sets
+    /// nothing produces the same body it always did.
+    fn apply_translation_fields_to_chat_body(&self, body: &mut serde_json::Value) {
+        if let Some(choice) = &self.tool_choice {
+            body["tool_choice"] = tool_choice_to_openai(choice);
+        }
+        if let Some(parallel) = self.parallel_tool_calls {
+            body["parallel_tool_calls"] = serde_json::json!(parallel);
+        }
+        if let Some(format) = &self.response_format {
+            body["response_format"] = response_format_to_openai(format);
+        }
+        if let Some(metadata) = &self.metadata {
+            body["metadata"] = metadata.clone();
+        }
+        if let Some(user) = &self.user {
+            body["user"] = serde_json::json!(user);
+        }
+        if let Some(tier) = &self.service_tier {
+            body["service_tier"] = serde_json::json!(tier);
+        }
+        if let Some(store) = self.store {
+            body["store"] = serde_json::json!(store);
+        }
+        if let Some(key) = &self.prompt_cache_key {
+            body["prompt_cache_key"] = serde_json::json!(key);
+        }
+        if let Some(verbosity) = &self.verbosity {
+            body["verbosity"] = serde_json::json!(verbosity);
+        }
+        if let Some(logprobs) = self.logprobs {
+            body["logprobs"] = serde_json::json!(logprobs);
+            if let Some(top) = self.top_logprobs {
+                body["top_logprobs"] = serde_json::json!(top);
+            }
+        }
+        // `top_k` is not part of the chat-completions API but several vendors
+        // accept it. It is forwarded optimistically; a refusal is handled by
+        // the provider's strip-and-retry path rather than failing the turn.
+        if let Some(top_k) = self.top_k {
+            body["top_k"] = serde_json::json!(top_k);
         }
     }
 
@@ -396,4 +556,98 @@ mod tests {
         assert_eq!(options.max_status_retries, PROVIDER_MAX_TRANSPORT_RETRIES);
         assert_eq!(options.max_retry_delay_ms, 30_000);
     }
+}
+
+#[test]
+fn a_bare_request_writes_none_of_the_widened_fields() {
+    // The regression guard for the whole change: a request that uses only
+    // today's fields must produce the body it always did.
+    let mut body = serde_json::json!({});
+    LlmStreamOptions::default().apply_to_openai_compatible_body(&mut body, false, false);
+
+    for field in [
+        "tool_choice",
+        "parallel_tool_calls",
+        "response_format",
+        "metadata",
+        "user",
+        "service_tier",
+        "store",
+        "prompt_cache_key",
+        "verbosity",
+        "logprobs",
+        "top_k",
+    ] {
+        assert!(
+            body.get(field).is_none(),
+            "`{field}` must be absent from a request that did not ask for it"
+        );
+    }
+}
+
+#[test]
+fn the_widened_fields_reach_the_chat_body() {
+    let options = LlmStreamOptions {
+        tool_choice: Some(ToolChoice::Required),
+        parallel_tool_calls: Some(false),
+        response_format: Some(ResponseFormat::JsonObject),
+        metadata: Some(serde_json::json!({ "trace": "abc" })),
+        user: Some("user-42".to_string()),
+        service_tier: Some("flex".to_string()),
+        store: Some(true),
+        prompt_cache_key: Some("key-1".to_string()),
+        verbosity: Some("low".to_string()),
+        logprobs: Some(true),
+        top_logprobs: Some(3),
+        top_k: Some(40),
+        ..Default::default()
+    };
+
+    let mut body = serde_json::json!({});
+    options.apply_to_openai_compatible_body(&mut body, false, false);
+
+    assert_eq!(body["tool_choice"], serde_json::json!("required"));
+    assert_eq!(body["parallel_tool_calls"], serde_json::json!(false));
+    assert_eq!(
+        body["response_format"]["type"],
+        serde_json::json!("json_object")
+    );
+    assert_eq!(body["metadata"]["trace"], serde_json::json!("abc"));
+    assert_eq!(body["user"], serde_json::json!("user-42"));
+    assert_eq!(body["service_tier"], serde_json::json!("flex"));
+    assert_eq!(body["store"], serde_json::json!(true));
+    assert_eq!(body["prompt_cache_key"], serde_json::json!("key-1"));
+    assert_eq!(body["verbosity"], serde_json::json!("low"));
+    assert_eq!(body["logprobs"], serde_json::json!(true));
+    assert_eq!(body["top_logprobs"], serde_json::json!(3));
+    assert_eq!(body["top_k"], serde_json::json!(40));
+}
+
+#[test]
+fn a_tool_choice_translates_to_each_dialect_spelling() {
+    assert_eq!(
+        tool_choice_to_openai(&ToolChoice::Required),
+        serde_json::json!("required")
+    );
+    assert_eq!(
+        tool_choice_to_openai(&ToolChoice::Named {
+            name: "search".to_string()
+        }),
+        serde_json::json!({ "type": "function", "function": { "name": "search" } })
+    );
+}
+
+#[test]
+fn a_json_schema_response_format_carries_its_name_and_strictness() {
+    let format = ResponseFormat::JsonSchema {
+        name: "ticket".to_string(),
+        schema: serde_json::json!({ "type": "object" }),
+        strict: true,
+    };
+
+    let wire = response_format_to_openai(&format);
+
+    assert_eq!(wire["type"], serde_json::json!("json_schema"));
+    assert_eq!(wire["json_schema"]["name"], serde_json::json!("ticket"));
+    assert_eq!(wire["json_schema"]["strict"], serde_json::json!(true));
 }

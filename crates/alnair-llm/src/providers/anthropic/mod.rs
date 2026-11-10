@@ -38,6 +38,17 @@ struct AnthropicRequest {
     messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<AnthropicTool>>,
+    /// `{"type":"auto"|"any"|"tool"|"none"}`. Written only when the client set
+    /// one, so a request that sets nothing keeps today's body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<serde_json::Value>,
+    /// `metadata.user_id`. The hub keeps the whole object too, but this is the
+    /// only property the Messages API defines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<serde_json::Value>,
+    /// `{"format": {"type": "json_schema", "schema": {…}}}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<serde_json::Value>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<AnthropicThinking>,
@@ -245,7 +256,6 @@ impl LlmProvider for AnthropicNativeProvider {
         );
         request.model = config.model_id.clone();
         request.stream = true;
-
         let endpoint = format!("{}/messages", normalize_base_url(&config.base_url));
         let api_key = config.api_key.clone();
         let auth_style = config.auth_style;

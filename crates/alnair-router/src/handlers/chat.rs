@@ -14,7 +14,7 @@ use crate::middleware::AuthenticatedKey;
 use crate::protocol::openai::{
     ChatChoice, ChatChoiceMessage, ChatCompletionChunk, ChatCompletionRequest,
     ChatCompletionResponse, ChunkChoice, ChunkDelta, FunctionDelta, ToolCallDelta,
-    tool_calls_payload, usage_payload,
+    annotations_payload, tool_calls_payload, usage_payload,
 };
 use crate::state::AppState;
 use crate::token_saver::Savings;
@@ -39,7 +39,7 @@ pub async fn chat_completions(
     let include_usage = request
         .stream_options
         .is_some_and(|options| options.include_usage);
-    let options = request.generation_options();
+    let options = request.generation_options()?;
     let tools = request.tools.clone();
     let messages = request.into_messages()?;
     let (messages, saver_savings) =
@@ -154,6 +154,7 @@ async fn complete_response(
                 role: "assistant",
                 content: (!completion.content.is_empty()).then(|| completion.content.clone()),
                 tool_calls: tool_calls_payload(&completion.tool_calls),
+                annotations: annotations_payload(&completion.citations),
             },
             finish_reason: completion
                 .finish_reason
@@ -280,6 +281,10 @@ fn stream_events(
         ))],
         // Anthropic-only block metadata has no OpenAI wire representation.
         Ok(StreamChunk::ThinkingSignature(_)) | Ok(StreamChunk::RedactedThinking(_)) => Vec::new(),
+        // Citations are emitted into an `annotations` array on the terminal
+        // message rather than as a delta, so the SSE path drops the chunk and
+        // the non-streaming body carries them.
+        Ok(StreamChunk::Citation(_)) => Vec::new(),
         Ok(StreamChunk::ToolCall {
             id: call_id,
             name,

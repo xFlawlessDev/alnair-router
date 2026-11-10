@@ -429,3 +429,104 @@ fn a_one_shot_body_yields_text_reasoning_tool_call_usage_and_done() {
         Some(LlmStreamChunk::Done(reason)) if reason.as_deref() == Some("stop")
     ));
 }
+
+#[test]
+fn an_explicit_tool_choice_is_carried_instead_of_being_overridden() {
+    use crate::model_config::ToolChoice;
+
+    let tools = vec![json!({ "type": "function", "function": { "name": "search" } })];
+
+    // Left unset, the historical default still applies.
+    let default_body = body(
+        &[Message::new("user", "hi")],
+        &LlmStreamOptions::default(),
+        Some(&tools),
+    );
+    assert_eq!(default_body["tool_choice"], json!("auto"));
+
+    for (choice, expected) in [
+        (ToolChoice::Required, json!("required")),
+        (ToolChoice::None, json!("none")),
+        (
+            ToolChoice::Named {
+                name: "search".to_string(),
+            },
+            json!({ "type": "function", "name": "search" }),
+        ),
+    ] {
+        let options = LlmStreamOptions {
+            tool_choice: Some(choice),
+            ..Default::default()
+        };
+        let body = body(&[Message::new("user", "hi")], &options, Some(&tools));
+        assert_eq!(body["tool_choice"], expected);
+    }
+}
+
+#[test]
+fn parallel_tool_calls_and_text_config_reach_the_body() {
+    use crate::model_config::ResponseFormat;
+
+    let options = LlmStreamOptions {
+        parallel_tool_calls: Some(false),
+        response_format: Some(ResponseFormat::JsonSchema {
+            name: "ticket".to_string(),
+            schema: json!({ "type": "object" }),
+            strict: true,
+        }),
+        verbosity: Some("low".to_string()),
+        store: Some(true),
+        metadata: Some(json!({ "trace": "abc" })),
+        include: vec!["message.output_text.logprobs".to_string()],
+        ..Default::default()
+    };
+
+    let body = body(&[Message::new("user", "hi")], &options, None);
+
+    assert_eq!(body["parallel_tool_calls"], json!(false));
+    assert_eq!(body["text"]["format"]["type"], json!("json_schema"));
+    assert_eq!(body["text"]["format"]["name"], json!("ticket"));
+    assert_eq!(body["text"]["format"]["strict"], json!(true));
+    assert_eq!(body["text"]["verbosity"], json!("low"));
+    assert_eq!(body["store"], json!(true));
+    assert_eq!(body["metadata"]["trace"], json!("abc"));
+    assert_eq!(body["include"][0], json!("message.output_text.logprobs"));
+}
+
+#[test]
+fn a_url_citation_annotation_becomes_a_citation_chunk() {
+    let event = json!({
+        "type": "response.output_text.annotation.added",
+        "annotation": {
+            "type": "url_citation",
+            "url": "https://example.com/a",
+            "title": "Example",
+            "start_index": 3,
+            "end_index": 12
+        }
+    });
+
+    let chunk = handle_event(&event, None)
+        .expect("no error")
+        .expect("a citation chunk");
+
+    match chunk {
+        LlmStreamChunk::Citation(citation) => {
+            assert_eq!(citation.url, "https://example.com/a");
+            assert_eq!(citation.title.as_deref(), Some("Example"));
+            assert_eq!(citation.start_index, Some(3));
+            assert_eq!(citation.end_index, Some(12));
+        }
+        other => panic!("expected a citation, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_citation_kind_the_hub_cannot_carry_is_skipped() {
+    let event = json!({
+        "type": "response.output_text.annotation.added",
+        "annotation": { "type": "file_citation", "file_id": "f-1" }
+    });
+
+    assert!(handle_event(&event, None).expect("no error").is_none());
+}

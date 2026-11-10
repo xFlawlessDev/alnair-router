@@ -13,7 +13,7 @@
 
 use serde_json::Value;
 
-use crate::model_config::ModelCostRates;
+use crate::model_config::{Citation, ModelCostRates};
 use crate::providers::common::{calculate_token_costs, parse_tool_arguments_strict};
 use crate::types::{ChatError, LlmStreamChunk};
 
@@ -41,12 +41,57 @@ pub(super) fn handle_event(
             }
             tool_call_from_item(item).map(Some)
         }
+        // A citation is attached to the text stream, so it is reported as its
+        // own chunk exactly where it arrived rather than batched at the end.
+        "response.output_text.annotation.added" => {
+            Ok(annotation(event).map(LlmStreamChunk::Citation))
+        }
         "response.failed" => Err(ChatError::Provider(
             response_error_message(event)
                 .unwrap_or_else(|| "the upstream reported a failed response".to_string()),
         )),
         _ => Ok(None),
     }
+}
+
+/// Reads a `url_citation` annotation out of its event.
+///
+/// Any other annotation kind (file citations, containers) is skipped rather
+/// than guessed at: the hub carries URL citations only.
+fn annotation(event: &Value) -> Option<Citation> {
+    let annotation = event.get("annotation")?;
+    if annotation.get("type").and_then(Value::as_str) != Some("url_citation") {
+        return None;
+    }
+    let url = annotation.get("url").and_then(Value::as_str)?;
+    if url.trim().is_empty() {
+        return None;
+    }
+
+    Some(Citation {
+        url: url.to_string(),
+        title: annotation
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|title| !title.trim().is_empty())
+            .map(str::to_string),
+        start_index: annotation
+            .get("start_index")
+            .and_then(Value::as_u64)
+            .map(|index| index as usize),
+        end_index: annotation
+            .get("end_index")
+            .and_then(Value::as_u64)
+            .map(|index| index as usize),
+    })
+}
+
+/// Pulls the annotations out of a completed `output_text` part.
+fn part_annotations(part: &Value) -> Vec<Citation> {
+    let Some(annotations) = part.get("annotations").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    annotations.iter().filter_map(annotation).collect()
 }
 
 /// True for the events that close a stream.
@@ -115,6 +160,9 @@ pub(super) fn completion_chunks(
                     let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
                     if !text.is_empty() {
                         chunks.push(LlmStreamChunk::Text(text.to_string()));
+                    }
+                    for citation in part_annotations(&part) {
+                        chunks.push(LlmStreamChunk::Citation(citation));
                     }
                 }
             }

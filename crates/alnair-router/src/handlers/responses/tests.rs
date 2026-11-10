@@ -1,4 +1,6 @@
+use super::request::{build_messages, normalize_tools, resolve_tools};
 use super::*;
+use crate::upstream::chat_backend::{self, ToolChoice};
 use serde_json::json;
 
 fn request(input: serde_json::Value) -> ResponsesRequest {
@@ -268,24 +270,47 @@ fn with_choice(choice: serde_json::Value) -> ResponsesRequest {
 #[test]
 fn tool_choice_none_drops_the_tools() {
     let request = with_choice(json!("none"));
-    assert!(resolve_tools(&request).expect("tools").is_none());
+    let (tools, choice) = resolve_tools(&request).expect("tools");
+    assert!(tools.is_none());
+    assert_eq!(choice, Some(ToolChoice::None));
 }
 
 #[test]
 fn tool_choice_auto_keeps_the_tools() {
     let request = with_choice(json!("auto"));
-    assert!(resolve_tools(&request).expect("tools").is_some());
+    let (tools, choice) = resolve_tools(&request).expect("tools");
+    assert!(tools.is_some());
+    assert_eq!(choice, Some(ToolChoice::Auto));
 }
 
 #[test]
-fn tool_choice_required_is_rejected_rather_than_downgraded() {
-    let error = resolve_tools(&with_choice(json!("required"))).expect_err("denied");
-    assert!(error.to_string().contains("required"), "{error}");
+fn tool_choice_required_travels_instead_of_being_rejected() {
+    // The capability filter decides whether the target can honour it; the
+    // handler must not pre-empt that, because a combo's later tier may.
+    let request = with_choice(json!("required"));
+    let (tools, choice) = resolve_tools(&request).expect("tools");
+
+    assert!(tools.is_some(), "required still needs the tools declared");
+    assert_eq!(choice, Some(ToolChoice::Required));
 }
 
 #[test]
-fn naming_a_function_in_tool_choice_is_rejected() {
+fn naming_a_function_in_tool_choice_becomes_a_named_choice() {
     let request = with_choice(json!({ "type": "function", "name": "search" }));
+    let (tools, choice) = resolve_tools(&request).expect("tools");
+
+    assert!(tools.is_some());
+    assert_eq!(
+        choice,
+        Some(ToolChoice::Named {
+            name: "search".to_string()
+        })
+    );
+}
+
+#[test]
+fn a_malformed_tool_choice_is_still_rejected() {
+    let request = with_choice(json!({ "type": "function" }));
     assert!(resolve_tools(&request).is_err());
 }
 
@@ -298,5 +323,10 @@ fn absent_tool_choice_keeps_the_tools() {
     }))
     .expect("valid request");
 
-    assert!(resolve_tools(&request).expect("tools").is_some());
+    let (tools, choice) = resolve_tools(&request).expect("tools");
+    assert!(tools.is_some());
+    assert!(
+        choice.is_none(),
+        "no choice means the upstream's own default"
+    );
 }

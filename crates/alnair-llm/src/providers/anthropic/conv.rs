@@ -154,8 +154,47 @@ pub(crate) fn convert_messages_to_anthropic(
         system,
         messages,
         tools: convert_tools_to_anthropic(tools, final_tool_marker),
+        tool_choice: options.tool_choice.as_ref().map(tool_choice_to_anthropic),
+        metadata: options
+            .user
+            .as_ref()
+            .map(|user| serde_json::json!({ "user_id": user })),
+        output_config: options
+            .response_format
+            .as_ref()
+            .map(output_config_from_format),
         stream: true,
         thinking,
+    }
+}
+
+/// The Anthropic spelling of a tool choice.
+///
+/// `required` is `any` here, and a named function is `{"type":"tool","name":…}`
+/// rather than the nested OpenAI shape.
+fn tool_choice_to_anthropic(choice: &crate::model_config::ToolChoice) -> serde_json::Value {
+    use crate::model_config::ToolChoice;
+    match choice {
+        ToolChoice::Auto => serde_json::json!({ "type": "auto" }),
+        ToolChoice::Required => serde_json::json!({ "type": "any" }),
+        ToolChoice::None => serde_json::json!({ "type": "none" }),
+        ToolChoice::Named { name } => serde_json::json!({ "type": "tool", "name": name }),
+    }
+}
+
+/// Maps structured output onto `output_config.format`.
+///
+/// `json_object` has no Anthropic equivalent, so it is not written: the caller
+/// is guarded by the capability matrix, which refuses that request before it
+/// reaches this provider.
+fn output_config_from_format(format: &crate::model_config::ResponseFormat) -> serde_json::Value {
+    use crate::model_config::ResponseFormat;
+    match format {
+        ResponseFormat::JsonSchema { schema, .. } => serde_json::json!({
+            "format": { "type": "json_schema", "schema": schema }
+        }),
+        // A bare `text` request is the default; writing it would be noise.
+        ResponseFormat::Text | ResponseFormat::JsonObject => serde_json::json!({}),
     }
 }
 

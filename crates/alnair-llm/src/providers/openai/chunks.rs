@@ -2,6 +2,7 @@
 
 use tracing::warn;
 
+use crate::model_config::Citation;
 use crate::providers::common::parse_tool_arguments_strict;
 use crate::types::{ChatError, LlmStreamChunk};
 
@@ -271,6 +272,50 @@ pub(super) fn extract_usage(value: &serde_json::Value) -> Option<&serde_json::Va
             .and_then(|choices| choices.first())
             .and_then(|choice| choice.get("usage"))
     })
+}
+
+/// Reads `url_citation` annotations off a message or delta object.
+///
+/// OpenAI attaches them as `annotations`; the entries it does not define (file
+/// citations, container references) are skipped rather than guessed at, because
+/// the hub only carries URL citations.
+pub(super) fn extract_annotations(message: &serde_json::Value) -> Vec<Citation> {
+    let Some(annotations) = message
+        .get("annotations")
+        .and_then(|value| value.as_array())
+    else {
+        return Vec::new();
+    };
+
+    annotations
+        .iter()
+        .filter(|annotation| {
+            annotation.get("type").and_then(|value| value.as_str()) == Some("url_citation")
+        })
+        .filter_map(|annotation| {
+            let citation = annotation.get("url_citation").unwrap_or(annotation);
+            let url = citation.get("url").and_then(|value| value.as_str())?;
+            if url.trim().is_empty() {
+                return None;
+            }
+            Some(Citation {
+                url: url.to_string(),
+                title: citation
+                    .get("title")
+                    .and_then(|value| value.as_str())
+                    .filter(|title| !title.trim().is_empty())
+                    .map(str::to_string),
+                start_index: citation
+                    .get("start_index")
+                    .and_then(|value| value.as_u64())
+                    .map(|index| index as usize),
+                end_index: citation
+                    .get("end_index")
+                    .and_then(|value| value.as_u64())
+                    .map(|index| index as usize),
+            })
+        })
+        .collect()
 }
 
 /// Reasoning tokens reported inside `completion_tokens_details`, when present.

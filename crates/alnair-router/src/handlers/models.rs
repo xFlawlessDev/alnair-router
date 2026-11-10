@@ -112,6 +112,114 @@ pub struct ModelInfo {
     pub upstream_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tiers: Option<Vec<String>>,
+    /// Which translation features this reference can honour.
+    ///
+    /// Published so a client can plan ahead instead of discovering a `400` at
+    /// request time. Absent for a combo with no resolvable tier, because the
+    /// answer would be a guess.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translation: Option<TranslationMatrix>,
+}
+
+/// The per-reference capability matrix, in the same shape as
+/// [`crate::upstream::chat_backend::TranslationSupport`].
+///
+/// Snake_case end to end, and mirrored in `apps/web/src/types/api.ts`.
+#[derive(Debug, Serialize)]
+pub struct TranslationMatrix {
+    /// Every capability is `supported: true` only when *every* tier of this
+    /// reference supports it, so a combo reports the intersection of its tiers.
+    pub tool_choice_required: bool,
+    pub tool_choice_named: bool,
+    pub parallel_tool_calls: bool,
+    pub response_format_json_object: bool,
+    pub response_format_json_schema: bool,
+    pub top_k: bool,
+    pub logprobs: bool,
+    pub seed: bool,
+    pub metadata: bool,
+    pub service_tier: bool,
+    pub store: bool,
+    pub prompt_cache_key: bool,
+    pub verbosity: bool,
+    pub citations: bool,
+}
+
+impl From<crate::upstream::chat_backend::TranslationSupport> for TranslationMatrix {
+    fn from(support: crate::upstream::chat_backend::TranslationSupport) -> Self {
+        Self {
+            tool_choice_required: support.tool_choice_required,
+            tool_choice_named: support.tool_choice_named,
+            parallel_tool_calls: support.parallel_tool_calls,
+            response_format_json_object: support.response_format_json_object,
+            response_format_json_schema: support.response_format_json_schema,
+            top_k: support.top_k,
+            logprobs: support.logprobs,
+            seed: support.seed,
+            metadata: support.metadata,
+            service_tier: support.service_tier,
+            store: support.store,
+            prompt_cache_key: support.prompt_cache_key,
+            verbosity: support.verbosity,
+            citations: support.citations,
+        }
+    }
+}
+
+impl TranslationMatrix {
+    /// Narrows this matrix to the intersection with `other`.
+    fn retain(&mut self, other: &Self) {
+        self.tool_choice_required &= other.tool_choice_required;
+        self.tool_choice_named &= other.tool_choice_named;
+        self.parallel_tool_calls &= other.parallel_tool_calls;
+        self.response_format_json_object &= other.response_format_json_object;
+        self.response_format_json_schema &= other.response_format_json_schema;
+        self.top_k &= other.top_k;
+        self.logprobs &= other.logprobs;
+        self.seed &= other.seed;
+        self.metadata &= other.metadata;
+        self.service_tier &= other.service_tier;
+        self.store &= other.store;
+        self.prompt_cache_key &= other.prompt_cache_key;
+        self.verbosity &= other.verbosity;
+        self.citations &= other.citations;
+    }
+}
+
+/// The matrix for a single connection, from its stored provider and wire API.
+fn matrix_for(provider_type: &str, wire_api: &str) -> Option<TranslationMatrix> {
+    use crate::upstream::chat_backend::{
+        effective_wire_api, provider_type_from_str, translation_support, wire_api_from_str,
+    };
+
+    let provider_type = provider_type_from_str(provider_type).ok()?;
+    let support = translation_support(
+        &provider_type,
+        effective_wire_api(&provider_type, wire_api_from_str(wire_api)),
+    );
+    Some(TranslationMatrix::from(support))
+}
+
+/// The intersection of every tier's matrix, or `None` when there is no tier.
+///
+/// A combo is only as capable as its weakest tier for a given feature: a `true`
+/// here means every tier can honour it, which is exactly what a caller needs to
+/// know before sending a request that must not fail over differently.
+fn translation_for(targets: &[crate::model::ResolvedTarget]) -> Option<TranslationMatrix> {
+    let mut result: Option<TranslationMatrix> = None;
+
+    for target in targets {
+        // An unknown provider type has no matrix; report nothing rather than
+        // claim capability we cannot vouch for.
+        let matrix = matrix_for(&target.provider_type, &target.wire_api)?;
+
+        match &mut result {
+            Some(accumulated) => accumulated.retain(&matrix),
+            None => result = Some(matrix),
+        }
+    }
+
+    result
 }
 
 #[derive(Debug, Serialize)]
@@ -141,15 +249,18 @@ pub async fn models_info(State(state): State<AppState>) -> Result<Json<ModelInfo
             base_url: connection.map(|c| c.base_url.clone()),
             upstream_model: alias.model_override.clone(),
             tiers: None,
+            // An alias resolves to exactly one connection, so its matrix is
+            // that connection's.
+            translation: connection.and_then(|c| matrix_for(&c.provider_type, &c.wire_api)),
         });
     }
 
     for combo in catalog.combos.iter().filter(|c| c.is_enabled()) {
         // Resolution reports the concrete models each tier maps to.
-        let tiers = resolver
-            .resolve(&combo.name)
-            .map(|targets| targets.iter().map(|t| t.model.clone()).collect())
-            .ok();
+        let resolved = resolver.resolve(&combo.name).ok();
+        let tiers = resolved
+            .as_ref()
+            .map(|targets| targets.iter().map(|t| t.model.clone()).collect());
 
         data.push(ModelInfo {
             id: combo.name.clone(),
@@ -158,6 +269,7 @@ pub async fn models_info(State(state): State<AppState>) -> Result<Json<ModelInfo
             base_url: None,
             upstream_model: None,
             tiers,
+            translation: resolved.as_deref().and_then(translation_for),
         });
     }
 

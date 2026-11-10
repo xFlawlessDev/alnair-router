@@ -323,6 +323,41 @@ how a caller addresses them.
 
 ---
 
+## P4 — Protocol translation fidelity
+
+**P4.1–P4.4 landed.** Design: [`docs/TRANSLATION.md`](TRANSLATION.md).
+
+The three client endpoints already share one canonical hub, so any client
+protocol already reaches any upstream. What the hub could not express used to be
+dropped silently — `tool_choice`, `response_format`, `parallel_tool_calls`,
+`top_k`, `metadata`, `service_tier`, `logprobs` and citations all disappeared
+between parsing and the wire body, and `tool_choice: "required"` was a `400` on
+`/v1/responses`. The hub is now the union of the three protocols, "requested a
+feature the target cannot honour" is an explicit `400`, and combo tiers are
+filtered by capability so failover still works.
+
+- [x] **P4.1 Widen the canonical hub.** `ToolChoice`, `ResponseFormat`,
+      `Citation`; `GenerationOptions` covers the union; `protocol/openai.rs`,
+      `protocol/anthropic.rs`, `handlers/responses/mod.rs` and the provider seam
+      were split into module folders first.
+- [x] **P4.2 Honour the new fields in `alnair-llm`.** `tool_choice` and
+      `parallel_tool_calls` are no longer hardcoded in the `responses` and
+      `codex` arms; `AnthropicRequest` carries `tool_choice`, `metadata` and
+      `output_config`; URL citations are parsed on output.
+- [x] **P4.3 Capability matrix + `400`.** `translation_support(provider_type,
+      wire_api)`, `Error::UnsupportedParameter`, and a pure tier filter in the
+      executor so a combo falls through to a tier that can honour the request.
+- [x] **P4.4 Publish the matrix.** Per-model `translation` block on
+      `/v1/models/info`, reporting the intersection across a combo's tiers.
+- [ ] **P4.5 Native Gemini.** `ProviderType::GeminiNative` in `alnair-llm` plus
+      `/v1beta/models/{m}:generateContent` and `:countTokens` as client
+      endpoints, unlocking `thoughtSignature`, `groundingMetadata`,
+      `googleSearch` and `thinkingConfig`. Out of scope for P4.1–P4.4: Gemini is
+      currently served through its OI-compatibility endpoint, so it inherits the
+      `chat` column of the matrix.
+
+---
+
 ## Explicitly out of scope
 
 Carried over from the original design, still deferred. Not "todo" — these are
@@ -340,8 +375,10 @@ deliberate exclusions so the package stays small:
 
 Everything through P3 is closed. What remains:
 
-1. Follow-ups: decide when to publish `alnair-llm` (P3.3), fold the budget spend
+1. **P4 (protocol translation fidelity)** — the only user-facing gap left. Start
+   with P4.1; the two protocol modules must be split before they can grow.
+2. Follow-ups: decide when to publish `alnair-llm` (P3.3), fold the budget spend
    rollup into the catalog cache, and prune idle token buckets.
-2. Optional OAuth follow-ups: a `provider_type` for non-OpenAI/Anthropic wire
+3. Optional OAuth follow-ups: a `provider_type` for non-OpenAI/Anthropic wire
    formats (Codex responses, Cursor protobuf), and provider-specific presets
    once someone has an app registration worth shipping defaults for.

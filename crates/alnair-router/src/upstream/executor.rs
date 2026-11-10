@@ -184,6 +184,19 @@ impl Executor {
             return Err(Error::NoRoute("no resolved targets".to_string()));
         }
 
+        // Capability filtering happens here, after resolution and before any
+        // upstream call: a tier that cannot honour a requested feature is
+        // dropped so a combo falls through to one that can. Only when nothing
+        // survives does the request become a 400.
+        let filtered: Vec<ResolvedTarget> = match options {
+            Some(options) => chat_backend::filter_targets(targets.to_vec(), options)?,
+            None => targets.to_vec(),
+        };
+        if filtered.is_empty() {
+            return Err(Error::NoRoute("no resolved targets".to_string()));
+        }
+        let targets = filtered.as_slice();
+
         // One snapshot per request: a settings save mid-request must not mix
         // retry policies between tiers.
         let settings = self.settings();

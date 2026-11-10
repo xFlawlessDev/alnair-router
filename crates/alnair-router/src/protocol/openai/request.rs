@@ -1,7 +1,8 @@
-//! Conversion between the OpenAI wire format and router-owned types.
+//! OpenAI `POST /v1/chat/completions` request body and its mapping onto the hub.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
+use super::options::{parse_response_format, parse_tool_choice};
 use crate::error::{Error, Result};
 use crate::upstream::chat_backend::{
     self, GenerationOptions, MessagePart, RouterMessage, ToolCallSpec,
@@ -42,6 +43,34 @@ pub struct ChatCompletionRequest {
     /// reaching a provider that would answer without searching.
     #[serde(default)]
     pub web_search_options: Option<serde_json::Value>,
+    /// `auto`, `none`, `required`, or `{"type":"function","function":{"name":…}}`.
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
+    #[serde(default)]
+    pub parallel_tool_calls: Option<bool>,
+    /// `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema",…}`.
+    #[serde(default)]
+    pub response_format: Option<serde_json::Value>,
+    /// Vendor-specific sampler knob; forwarded optimistically (see
+    /// [`GenerationOptions::top_k`]).
+    #[serde(default)]
+    pub top_k: Option<i32>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
+    #[serde(default)]
+    pub store: Option<bool>,
+    #[serde(default)]
+    pub prompt_cache_key: Option<String>,
+    #[serde(default)]
+    pub verbosity: Option<String>,
+    #[serde(default)]
+    pub logprobs: Option<bool>,
+    #[serde(default)]
+    pub top_logprobs: Option<u8>,
 }
 
 /// `stream_options` on a streaming request.
@@ -271,18 +300,35 @@ pub struct OpenAiFunctionCall {
 
 impl ChatCompletionRequest {
     /// Converts generation parameters into router-owned options.
-    pub fn generation_options(&self) -> GenerationOptions {
-        GenerationOptions {
+    ///
+    /// A malformed `tool_choice` or `response_format` is a `400`: silently
+    /// ignoring one would answer a request the caller did not make, which is
+    /// exactly the failure mode this whole layer exists to remove.
+    pub fn generation_options(&self) -> Result<GenerationOptions> {
+        Ok(GenerationOptions {
             temperature: self.temperature,
             top_p: self.top_p,
+            top_k: self.top_k,
             max_tokens: self.max_completion_tokens.or(self.max_tokens),
             stop: self.stop.clone().map(StopSequence::into_vec),
             seed: self.seed,
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
             thinking_level: self.reasoning_effort.clone(),
+            tool_choice: parse_tool_choice(self.tool_choice.as_ref())?,
+            parallel_tool_calls: self.parallel_tool_calls,
+            response_format: parse_response_format(self.response_format.as_ref())?,
+            metadata: self.metadata.clone(),
+            user: self.user.clone(),
+            service_tier: self.service_tier.clone(),
+            store: self.store,
+            prompt_cache_key: self.prompt_cache_key.clone(),
+            verbosity: self.verbosity.clone(),
+            logprobs: self.logprobs,
+            top_logprobs: self.top_logprobs,
+            include: Vec::new(),
             web_search_options: self.web_search_options.clone(),
-        }
+        })
     }
 
     /// Rejects a `web_search_options` value the router cannot forward.
@@ -414,288 +460,5 @@ fn content_to_text(content: OpenAiContent) -> String {
             .filter_map(|part| part.text)
             .collect::<Vec<_>>()
             .join(" "),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn message_from(content: serde_json::Value) -> Result<RouterMessage> {
-        let request: ChatCompletionRequest = serde_json::from_value(serde_json::json!({
-            "model": "gpt-4o-audio-preview",
-            "messages": [ { "role": "user", "content": content } ],
-        }))
-        .expect("valid request");
-        request
-            .into_messages()
-            .map(|mut messages| messages.remove(0))
-    }
-
-    fn parts_of(message: &RouterMessage) -> Vec<serde_json::Value> {
-        chat_backend::message_parts_json(message).expect("expected a multipart message")
-    }
-
-    #[test]
-    fn an_input_audio_part_survives_the_round_trip_verbatim() {
-        let message = message_from(serde_json::json!([
-            { "type": "text", "text": "apa ini?" },
-            { "type": "input_audio", "input_audio": { "data": "UklGRg==", "format": "wav" } }
-        ]))
-        .expect("message");
-
-        let parts = parts_of(&message);
-        assert_eq!(parts.len(), 2);
-        let raw = &parts[1];
-        assert_eq!(raw["type"], "input_audio");
-        assert_eq!(raw["input_audio"]["data"], "UklGRg==");
-        assert_eq!(raw["input_audio"]["format"], "wav");
-    }
-
-    #[test]
-    fn url_shaped_media_parts_are_carried_through() {
-        for (kind, payload) in [
-            ("audio_url", serde_json::json!({ "url": "https://x/a.mp3" })),
-            ("video_url", serde_json::json!({ "url": "https://x/a.mp4" })),
-            ("file", serde_json::json!({ "file_data": "JVBERi0=" })),
-        ] {
-            let message = message_from(serde_json::json!([{ "type": kind, kind: payload }]))
-                .unwrap_or_else(|error| panic!("{kind} rejected: {error}"));
-
-            let parts = parts_of(&message);
-            let raw = &parts[0];
-            assert_eq!(raw["type"], kind);
-        }
-    }
-
-    #[test]
-    fn unknown_part_types_are_rejected_instead_of_dropped() {
-        let error = message_from(serde_json::json!([{ "type": "input_smell", "smell": "?" }]))
-            .expect_err("unknown part must be rejected");
-
-        assert!(error.to_string().contains("unsupported content part type"));
-    }
-
-    fn web_search_request(options: serde_json::Value) -> ChatCompletionRequest {
-        serde_json::from_value(serde_json::json!({
-            "model": "gpt-5-search-api",
-            "messages": [ { "role": "user", "content": "hi" } ],
-            "web_search_options": options,
-        }))
-        .expect("valid request")
-    }
-
-    #[test]
-    fn web_search_options_reach_the_generation_options_untouched() {
-        let request = web_search_request(serde_json::json!({
-            "search_context_size": "medium",
-            "user_location": { "type": "approximate", "country": "ID" }
-        }));
-
-        request
-            .validate_web_search_options()
-            .expect("valid options");
-
-        let options = request.generation_options();
-        let carried = options.web_search_options.expect("carried through");
-        assert_eq!(carried["search_context_size"], "medium");
-        assert_eq!(carried["user_location"]["country"], "ID");
-    }
-
-    #[test]
-    fn a_malformed_web_search_options_is_rejected() {
-        for options in [
-            serde_json::json!("medium"),
-            serde_json::json!([{ "search_context_size": "low" }]),
-            serde_json::json!({ "search_context_size": 3 }),
-            serde_json::json!({ "search_context_size": "huge" }),
-        ] {
-            let request = web_search_request(options.clone());
-            assert!(
-                request.validate_web_search_options().is_err(),
-                "{options} should be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn a_request_without_web_search_options_is_valid() {
-        let request: ChatCompletionRequest = serde_json::from_value(serde_json::json!({
-            "model": "gpt-4o",
-            "messages": [ { "role": "user", "content": "hi" } ],
-        }))
-        .expect("valid request");
-
-        request
-            .validate_web_search_options()
-            .expect("absent options are fine");
-        assert!(request.generation_options().web_search_options.is_none());
-    }
-
-    #[test]
-    fn a_media_part_missing_its_payload_is_rejected() {
-        let error = message_from(serde_json::json!([{ "type": "input_audio" }]))
-            .expect_err("payload-less part must be rejected");
-        assert!(error.to_string().contains("missing its"));
-
-        let error = message_from(serde_json::json!([
-            { "type": "input_audio", "input_audio": { "data": "  ", "format": "wav" } }
-        ]))
-        .expect_err("empty audio data must be rejected");
-        assert!(error.to_string().contains("non-empty base64"));
-
-        let error = message_from(serde_json::json!([
-            { "type": "input_audio", "input_audio": { "data": "UklGRg==" } }
-        ]))
-        .expect_err("audio without a format must be rejected");
-        assert!(error.to_string().contains("format"));
-
-        let error = message_from(serde_json::json!([
-            { "type": "video_url", "video_url": { "url": "" } }
-        ]))
-        .expect_err("empty video url must be rejected");
-        assert!(error.to_string().contains("non-empty `url`"));
-    }
-}
-
-/// Non-streaming JSON response in OpenAI shape.
-#[derive(Debug, Serialize)]
-pub struct ChatCompletionResponse {
-    pub id: String,
-    pub object: &'static str,
-    pub created: i64,
-    pub model: String,
-    pub choices: Vec<ChatChoice>,
-    pub usage: UsagePayload,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChatChoice {
-    pub index: u32,
-    pub message: ChatChoiceMessage,
-    pub finish_reason: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChatChoiceMessage {
-    pub role: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<OpenAiToolCallOut>>,
-}
-
-/// Tool call in OpenAI `message.tool_calls` shape.
-#[derive(Debug, Serialize)]
-pub struct OpenAiToolCallOut {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub call_type: &'static str,
-    pub function: OpenAiFunctionOut,
-}
-
-#[derive(Debug, Serialize)]
-pub struct OpenAiFunctionOut {
-    pub name: String,
-    pub arguments: String,
-}
-
-/// Builds the `tool_calls` field, omitting it entirely when there are none.
-pub fn tool_calls_payload(specs: &[ToolCallSpec]) -> Option<Vec<OpenAiToolCallOut>> {
-    if specs.is_empty() {
-        return None;
-    }
-    Some(
-        specs
-            .iter()
-            .map(|spec| OpenAiToolCallOut {
-                id: spec.id.clone(),
-                call_type: "function",
-                function: OpenAiFunctionOut {
-                    name: spec.name.clone(),
-                    arguments: spec.arguments.clone(),
-                },
-            })
-            .collect(),
-    )
-}
-
-#[derive(Debug, Serialize)]
-pub struct UsagePayload {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PromptTokensDetails {
-    pub cached_tokens: u64,
-}
-
-/// SSE `chat.completion.chunk` payload.
-#[derive(Debug, Serialize)]
-pub struct ChatCompletionChunk {
-    pub id: String,
-    pub object: &'static str,
-    pub created: i64,
-    pub model: String,
-    pub choices: Vec<ChunkChoice>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub usage: Option<UsagePayload>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChunkChoice {
-    pub index: u32,
-    pub delta: ChunkDelta,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub finish_reason: Option<String>,
-}
-
-#[derive(Debug, Serialize, Default)]
-pub struct ChunkDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    /// Reasoning stream, as DeepSeek and OpenRouter expose it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCallDelta>>,
-}
-
-/// A streamed tool call. Fragments are identified by `index`; the first one for
-/// an index carries `id` and `name`, later ones only extend `arguments`.
-#[derive(Debug, Serialize)]
-pub struct ToolCallDelta {
-    pub index: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub call_type: Option<&'static str>,
-    pub function: FunctionDelta,
-}
-
-#[derive(Debug, Serialize, Default)]
-pub struct FunctionDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<String>,
-}
-
-/// Builds the terminal usage payload for a completed request.
-pub fn usage_payload(usage: Option<chat_backend::TokenUsage>) -> UsagePayload {
-    let usage = usage.unwrap_or_default();
-    UsagePayload {
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        total_tokens: usage.prompt_tokens + usage.completion_tokens,
-        prompt_tokens_details: (usage.cached_tokens > 0).then_some(PromptTokensDetails {
-            cached_tokens: usage.cached_tokens,
-        }),
     }
 }

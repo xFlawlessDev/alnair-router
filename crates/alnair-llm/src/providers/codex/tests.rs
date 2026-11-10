@@ -264,3 +264,59 @@ async fn codex_streams_upstream_for_both_client_modes() {
     }
     server.abort();
 }
+
+#[test]
+fn codex_keeps_the_documented_defaults_when_the_client_says_nothing() {
+    let body = build_request_body(
+        &config(),
+        &[Message::new("user", "hi")],
+        &LlmStreamOptions::default(),
+        None,
+    );
+
+    assert_eq!(body["tool_choice"], json!("auto"));
+    assert_eq!(body["parallel_tool_calls"], json!(true));
+    assert_eq!(body["store"], json!(false));
+    assert_eq!(body["include"][0], json!("reasoning.encrypted_content"));
+}
+
+#[test]
+fn codex_honours_an_explicit_tool_choice_and_parallel_flag() {
+    use crate::model_config::ToolChoice;
+
+    let options = LlmStreamOptions {
+        tool_choice: Some(ToolChoice::Named {
+            name: "search".to_string(),
+        }),
+        parallel_tool_calls: Some(false),
+        ..Default::default()
+    };
+    let body = build_request_body(&config(), &[Message::new("user", "hi")], &options, None);
+
+    assert_eq!(
+        body["tool_choice"],
+        json!({ "type": "function", "name": "search" })
+    );
+    assert_eq!(body["parallel_tool_calls"], json!(false));
+}
+
+#[test]
+fn codex_client_includes_extend_rather_than_replace_the_encrypted_reasoning_include() {
+    let options = LlmStreamOptions {
+        include: vec![
+            "reasoning.encrypted_content".to_string(),
+            "message.output_text.logprobs".to_string(),
+        ],
+        ..Default::default()
+    };
+    let body = build_request_body(&config(), &[Message::new("user", "hi")], &options, None);
+
+    let includes = body["include"].as_array().expect("array");
+    assert_eq!(
+        includes.len(),
+        2,
+        "the backend contract include must survive: {includes:?}"
+    );
+    assert_eq!(includes[0], json!("reasoning.encrypted_content"));
+    assert_eq!(includes[1], json!("message.output_text.logprobs"));
+}

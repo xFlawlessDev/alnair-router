@@ -2,6 +2,7 @@ use super::*;
 use crate::model_config::{AuthStyle, CacheRetention, ThinkingLevel};
 use crate::types::{Message, MessageToolCall};
 use futures::StreamExt;
+use serde_json::json;
 
 #[test]
 fn api_key_style_sends_x_api_key() {
@@ -636,4 +637,91 @@ async fn stream_accepts_a_normal_event_stream() {
         .expect("a served stream parses");
 
     assert!(matches!(first, LlmStreamChunk::Text(text) if text == "pong"));
+}
+
+#[test]
+fn a_named_tool_choice_uses_the_anthropic_tool_shape() {
+    use crate::model_config::ToolChoice;
+
+    for (choice, expected) in [
+        (ToolChoice::Auto, json!({ "type": "auto" })),
+        (ToolChoice::Required, json!({ "type": "any" })),
+        (ToolChoice::None, json!({ "type": "none" })),
+        (
+            ToolChoice::Named {
+                name: "search".to_string(),
+            },
+            json!({ "type": "tool", "name": "search" }),
+        ),
+    ] {
+        let options = LlmStreamOptions {
+            tool_choice: Some(choice),
+            ..Default::default()
+        };
+        let request = convert_messages_to_anthropic(
+            &[Message::new("user", "hi")],
+            None,
+            &options,
+            false,
+            false,
+        );
+        let body = serde_json::to_value(&request).expect("serialize");
+
+        assert_eq!(body["tool_choice"], expected);
+    }
+}
+
+#[test]
+fn a_user_id_becomes_anthropic_metadata() {
+    let options = LlmStreamOptions {
+        user: Some("user-42".to_string()),
+        ..Default::default()
+    };
+    let request =
+        convert_messages_to_anthropic(&[Message::new("user", "hi")], None, &options, false, false);
+    let body = serde_json::to_value(&request).expect("serialize");
+
+    assert_eq!(body["metadata"]["user_id"], json!("user-42"));
+}
+
+#[test]
+fn a_json_schema_becomes_output_config_format() {
+    use crate::model_config::ResponseFormat;
+
+    let options = LlmStreamOptions {
+        response_format: Some(ResponseFormat::JsonSchema {
+            name: "ticket".to_string(),
+            schema: json!({ "type": "object", "properties": {} }),
+            strict: true,
+        }),
+        ..Default::default()
+    };
+    let request =
+        convert_messages_to_anthropic(&[Message::new("user", "hi")], None, &options, false, false);
+    let body = serde_json::to_value(&request).expect("serialize");
+
+    assert_eq!(
+        body["output_config"]["format"]["type"],
+        json!("json_schema")
+    );
+    assert_eq!(
+        body["output_config"]["format"]["schema"]["type"],
+        json!("object")
+    );
+}
+
+#[test]
+fn a_request_that_sets_nothing_writes_no_new_fields() {
+    let request = convert_messages_to_anthropic(
+        &[Message::new("user", "hi")],
+        None,
+        &LlmStreamOptions::default(),
+        false,
+        false,
+    );
+    let body = serde_json::to_value(&request).expect("serialize");
+
+    assert!(body.get("tool_choice").is_none());
+    assert!(body.get("metadata").is_none());
+    assert!(body.get("output_config").is_none());
 }

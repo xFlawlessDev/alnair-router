@@ -95,11 +95,18 @@ pub(super) fn build_request_body(
         "model": config.model_id,
         "input": input,
         "tools": convert_tools(tools),
-        "tool_choice": "auto",
-        "parallel_tool_calls": true,
+        // `auto` remains the default for a request that says nothing, but an
+        // explicit choice must survive: writing these unconditionally is what
+        // silently overrode the client's request before.
+        "tool_choice": match &options.tool_choice {
+            Some(choice) => tool_choice_to_codex(choice),
+            None => Value::String("auto".to_string()),
+        },
+        "parallel_tool_calls": options.parallel_tool_calls.unwrap_or(true),
+        // The backend is stateless, so `store` is forced off and a prompt-cache
+        // hint would be ignored.
         "store": false,
-        "include": ["reasoning.encrypted_content"],
-        // The backend is stateless, so a prompt-cache hint would be ignored.
+        "include": include_list(options),
         "prompt_cache_key": Value::Null,
         "stream": true,
     });
@@ -140,6 +147,30 @@ pub(super) fn build_request_body(
 
 fn text_item(role: &str, kind: &str, text: String) -> Value {
     json!({ "role": role, "content": [{ "type": kind, "text": text }] })
+}
+
+/// The backend always needs `reasoning.encrypted_content` so a multi-turn tool
+/// loop can replay the reasoning it produced; any client opt-ins are added to
+/// it rather than replacing it.
+fn include_list(options: &LlmStreamOptions) -> Value {
+    let mut includes = vec![Value::String("reasoning.encrypted_content".to_string())];
+    for include in &options.include {
+        if include != "reasoning.encrypted_content" {
+            includes.push(Value::String(include.clone()));
+        }
+    }
+    Value::Array(includes)
+}
+
+/// The Codex dialect spells a named choice the flat Responses way.
+fn tool_choice_to_codex(choice: &crate::model_config::ToolChoice) -> Value {
+    use crate::model_config::ToolChoice;
+    match choice {
+        ToolChoice::Auto => Value::String("auto".to_string()),
+        ToolChoice::Required => Value::String("required".to_string()),
+        ToolChoice::None => Value::String("none".to_string()),
+        ToolChoice::Named { name } => json!({ "type": "function", "name": name }),
+    }
 }
 
 /// Public model tiers are `minimal|low|medium|high`; Codex adds `xhigh` and

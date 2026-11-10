@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model_config::ThinkingLevel;
+use crate::model_config::{Citation, ThinkingLevel};
 
 // =============================================================================
 // Generation options
@@ -334,6 +334,11 @@ pub enum LlmStreamChunk {
         name: String,
         arguments: serde_json::Value,
     },
+    /// A citation the model attached to a span of the text it has emitted.
+    ///
+    /// Output-side only: an upstream that produces none sends none, and that is
+    /// a normal response rather than an error.
+    Citation(Citation),
     Usage {
         total_duration: Option<u64>,
         prompt_eval_count: Option<u64>,

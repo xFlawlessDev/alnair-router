@@ -39,7 +39,10 @@ const openAiEndpoints = [
   ],
   ["POST /v1/responses", "OpenAI Responses shape."],
   ["GET /v1/models", "Lists configured aliases and combos as model ids."],
-  ["GET /v1/models/info", "Per-reference metadata, including combo tiers."],
+  [
+    "GET /v1/models/info",
+    "Per-reference metadata: combo tiers, and a translation matrix per model.",
+  ],
   ["POST /v1/embeddings", "Proxied to the resolved connection."],
   ["POST /v1/images/generations", "Proxied."],
   [
