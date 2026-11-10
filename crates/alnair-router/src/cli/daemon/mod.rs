@@ -11,6 +11,7 @@
 mod control;
 mod record;
 
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -115,6 +116,10 @@ pub fn start(tray: Option<bool>, port: Option<u16>) -> Result<()> {
 
     let home = prepare_home()?;
     let log = open_log()?;
+    // Only read this launch's output: older codes in the appended log expire
+    // on restart and must not be shown after a password has been configured.
+    let mut startup_log = std::fs::File::open(log_path()).map_err(io_error)?;
+    startup_log.seek(SeekFrom::End(0)).map_err(io_error)?;
     let exe = std::env::current_exe()
         .map_err(|error| Error::Config(format!("cannot resolve the executable path: {error}")))?;
 
@@ -164,6 +169,14 @@ pub fn start(tray: Option<bool>, port: Option<u16>) -> Result<()> {
         );
         println!("  log:  {}", log_path().display());
         println!("  stop: alnair-router stop");
+        for line in BufReader::new(startup_log).lines() {
+            let line = line.map_err(io_error)?;
+            if line.starts_with("alnair-router setup code: ") {
+                println!("{line}");
+                println!("  setup: {}/login", config.server.browser_url());
+                break;
+            }
+        }
         Ok(())
     } else {
         Err(Error::Config(format!(

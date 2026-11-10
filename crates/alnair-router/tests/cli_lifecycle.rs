@@ -472,6 +472,69 @@ fn a_custom_port_is_used_recorded_and_stoppable() {
     );
 }
 
+#[tokio::test]
+async fn a_background_start_prints_a_usable_setup_code_only_until_a_password_exists() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let (port, address) = address();
+    write_config(home.path(), port);
+    let _cleanup = DetachedGuard(home.path().to_path_buf());
+
+    // An earlier run's code must never be presented as the current code.
+    std::fs::create_dir_all(home.path().join("logs")).expect("logs");
+    std::fs::write(
+        home.path().join("logs/router.log"),
+        "alnair-router setup code: 0000-0000-0000-0000\n",
+    )
+    .expect("old log");
+
+    let output = router(home.path())
+        .args(["serve", "--detach"])
+        .output()
+        .expect("run serve --detach");
+    assert!(
+        output.status.success(),
+        "start failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let code = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("alnair-router setup code: "))
+        .expect("the terminal output should contain the setup code");
+    assert_ne!(code, "0000-0000-0000-0000");
+    assert!(stdout.contains(&format!("http://{address}/login")));
+
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("client")
+        .post(format!("http://{address}/api/auth/setup"))
+        .json(&serde_json::json!({
+            "setup_code": code,
+            "password": "first-run-password"
+        }))
+        .send()
+        .await
+        .expect("submit setup code");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+    let restarted = router(home.path())
+        .arg("restart")
+        .output()
+        .expect("restart configured router");
+    assert!(
+        restarted.status.success(),
+        "restart failed: {}",
+        String::from_utf8_lossy(&restarted.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&restarted.stdout);
+    assert!(
+        !stdout.contains("setup code:"),
+        "a configured router must not print an old setup code: {stdout}"
+    );
+}
+
 /// Detaching must not leave the caller's stdout open.
 ///
 /// Windows only: a shell marks its own output inheritable so its children can

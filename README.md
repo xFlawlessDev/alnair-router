@@ -135,11 +135,14 @@ cargo run -p alnair-router
 # alnair-router started in the background (pid 12345) at http://127.0.0.1:7878
 #   log:  ~/.alnair-router/logs/router.log
 #   stop: alnair-router stop
+# alnair-router setup code: 8f3a-2b91-c4d7-e5f6
+#   setup: http://127.0.0.1:7878/login
 ```
 
 The router keeps running after the command returns, so the terminal is free and
-closing it does not stop the router. Read the setup code at `/login` from the
-dashboard itself, or from the log:
+closing it does not stop the router. When no dashboard password exists, the
+command prints the current setup code and the `/login` URL directly in the
+terminal. The code is also available in the log:
 
 ```bash
 tail -f ~/.alnair-router/logs/router.log     # Get-Content -Wait on Windows
@@ -340,7 +343,8 @@ settings for anonymous pulls.
 
 The dashboard is protected by a **password** (no username). First-run flow:
 
-1. Start the router; when no password exists the log prints a one-time code:
+1. Start the router; when no password exists startup output prints a one-time code
+   (also recorded in the log):
    `alnair-router setup code: 8f3a-2b91-c4d7-e5f6`.
 2. Open `/login`, paste the code and choose a password (8+ characters). Sessions
    use rotating access/refresh tokens stored hashed in SQLite; replaying a

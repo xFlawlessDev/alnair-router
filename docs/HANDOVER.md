@@ -841,7 +841,10 @@ suite should tell you.
     asks `daemon::should_detach(mode, console_attached)`: with a terminal it
     re-executes itself as `serve --foreground` with stdio pointed at
     `$ALNAIR_ROUTER_HOME/logs/router.log`, waits for `/api/health`, prints the
-    pid/url/log and returns. `--foreground` / `ALNAIR_ROUTER_FOREGROUND=1` keep
+    pid/url/log and returns. If no dashboard password exists, it also forwards
+    the setup code and `/login` URL to the calling terminal. Only log output
+    appended during this launch is read, so an old code is never replayed.
+    `--foreground` / `ALNAIR_ROUTER_FOREGROUND=1` keep
     the old behaviour, `--detach` forces the hand-off, and a launch with no
     console (auto-start, double-click, a container) serves in place — PID 1
     never detaches, or the container would exit immediately. The tray is
