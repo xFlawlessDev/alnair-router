@@ -208,7 +208,14 @@ SearXNG wants form-encoded `q`. A different *encoding* would need a per-connecti
 
 A request's `model` is a hint here, not a requirement. A harness may echo its
 chat model into a search body, so unknown references and resolved chat-only
-targets yield to the configured search tiers instead of becoming a `404`.
+targets yield to enabled search providers instead of becoming a `404`.
+Search-category presets inherit tier 1 at resolution time when the stored
+connection has no tier. A custom chat `search_path` alone does not take priority.
+Providers with hosted web capabilities go directly through their native adapter
+before search connections are considered. Codex uses `/responses` with
+`web_search` and parses completed tool actions and source citations. Fetch
+requires an actual `open_page` action for the requested URL; model text alone
+does not count as a successful page read.
 A *malformed* reference
 (`alias/` with no model segment) is still a `400`: answering it from a different
 provider would hide the caller's bug. When the primary search provider answers `402`, `429`,
@@ -219,6 +226,10 @@ Manual connection checks use Tavily `GET /usage` and Firecrawl `GET /team/credit
 Exa and custom search APIs use a minimal search request, which may consume credits.
 Search checks reject upstream errors and unexpected payloads rather than probing `/models`.
 
+`GET /api/connections/{id}/quota` returns sanitized Tavily key/plan usage from
+`GET {base_url}/usage`. The dashboard shows it in provider rows and cards,
+refreshes every minute, and marks retained readings as stale after an error.
+
 The response is **verbatim by default** to preserve the provider-specific wire
 contract for existing clients. `?normalize=true` opts into a canonical
 `results[]` shape (`title`, `url`, `snippet`, `score`, `published_at`,
@@ -227,21 +238,23 @@ Tavily/Perplexity/Brave field variations. Normalization is best-effort: a body
 with no recognizable result array is forwarded verbatim, and a non-2xx response
 is never rewritten.
 
-`POST /v1/web/fetch` fetches the URL itself by default, so no connection, base
-URL or provider is involved. That is why the SSRF guard is the only thing between
-it and the internal network: every hop is validated, hostnames resolve up front,
+`POST /v1/web/fetch` uses the resolved provider's hosted fetch, then an explicit
+provider extract route or the search presets' extract routes. Older search
+connections inherit extract paths and shapes without needing a settings update.
+If no provider is available, it fetches locally. The local SSRF guard is the only
+thing between it and the internal network: every hop is validated, hostnames resolve up front,
 and the client connects only to the pinned addresses. The guard also rejects
 `100.64.0.0/10` (RFC 6598 CGNAT), which some cloud metadata proxies sit inside.
 
 A connection can opt into `web_fetch_mode = provider` with a `web_fetch_path`
 (e.g. `/v1/scrape`), in which case a request carrying that connection's model is
-forwarded to its extract endpoint instead. That is the only way to reach pages
-that need JavaScript rendering. The reply is normalized into the same
+forwarded to its extract endpoint instead, allowing providers to render pages.
+The reply is normalized into the same
 `{ url, title, content: { format, text, length } }` envelope the local path
 returns, so a client switches modes without changing how it reads the response;
 a shape the router does not recognize keeps the whole upstream body under `raw`
-rather than reporting an empty page. `local` stays the default, so no existing
-connection changes behaviour.
+rather than reporting an empty page. Custom connections keep local fetching
+unless they explicitly select provider mode; search presets inherit extraction.
 
 The extract **body** is not standardized either, which is what `web_fetch_shape`
 exists for. Firecrawl's `/v1/scrape` takes `{ "url": … }` (`target`), while
@@ -261,6 +274,10 @@ implementation exposes its own set. A malformed value is a `400` before any
 upstream call, and the option is rejected on `anthropic-native`,
 `command-code` and `codebuddy-intl` connections: those stacks cannot carry it,
 so accepting it would silently answer without searching.
+
+Codex translates `web_search_options` into a Responses `web_search` tool.
+Explicit `web_search`/`web_search_preview` tools are preserved rather than
+being dropped by function-tool conversion.
 
 Anthropic's equivalent is a `tools` entry (`web_search_20250305`), not this
 field; the router leaves non-function tools untouched in `/v1/responses`.

@@ -181,7 +181,7 @@ fn web_search_options_are_rejected_on_a_non_openai_provider() {
     };
     let text = error.to_string();
     assert!(text.contains("web_search_options"), "{text}");
-    assert!(text.contains("openai-compatible"), "{text}");
+    assert!(text.contains("hosted web search"), "{text}");
 }
 
 #[test]

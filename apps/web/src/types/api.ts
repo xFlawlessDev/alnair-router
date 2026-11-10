@@ -283,6 +283,17 @@ export interface OAuthAccount {
   updated_at: string;
 }
 
+export interface TavilyQuotaSnapshot {
+  key: { usage: number; limit: number | null };
+  account: {
+    current_plan: string | null;
+    plan_usage: number;
+    plan_limit: number | null;
+    paygo_usage: number | null;
+    paygo_limit: number | null;
+  };
+}
+
 export interface OAuthQuotaWindow {
   used_percent: number;
   limit_window_seconds: number | null;

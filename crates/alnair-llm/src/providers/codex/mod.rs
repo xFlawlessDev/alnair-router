@@ -19,6 +19,7 @@
 
 mod request;
 mod stream;
+mod web;
 
 #[cfg(test)]
 mod tests;
@@ -27,7 +28,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 
 use crate::model_config::{LlmStreamOptions, ModelConfig};
-use crate::provider::LlmProvider;
+use crate::provider::{LlmProvider, ProviderCapabilities, WebRequest};
 use crate::providers::common::normalize_base_url;
 use crate::types::{ChatError, LlmStreamChunk, Message};
 
@@ -66,6 +67,22 @@ impl Default for CodexProvider {
 }
 
 impl LlmProvider for CodexProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        // Search and open_page run inside /responses via the hosted web tool.
+        ProviderCapabilities {
+            web_search: true,
+            web_fetch: true,
+        }
+    }
+
+    fn web_request<'a>(
+        &'a self,
+        config: &'a ModelConfig,
+        request: &'a WebRequest,
+    ) -> futures::future::BoxFuture<'a, Result<serde_json::Value, ChatError>> {
+        Box::pin(web::execute(&self.client, config, request))
+    }
+
     fn stream<'a>(
         &'a self,
         config: &'a ModelConfig,

@@ -21,7 +21,8 @@ import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
-import OAuthQuota from "@/components/connections/OAuthQuota.vue";
+import ProviderQuota from "@/components/connections/ProviderQuota.vue";
+import { hasConnectionQuota } from "@/lib/connectionQuota";
 import ConnectionCard from "@/components/connections/ConnectionCard.vue";
 import ConnectionFormDialog from "@/components/connections/ConnectionFormDialog.vue";
 import ConnectionsToolbar from "@/components/connections/ConnectionsToolbar.vue";
@@ -451,11 +452,7 @@ onMounted(load);
                   <TableHead class="w-48">API key</TableHead>
                   <TableHead class="w-36">Status</TableHead>
                   <TableHead
-                    v-if="
-                      visible.some(
-                        (item) => item.provider_type === 'openai-codex',
-                      )
-                    "
+                    v-if="visible.some(hasConnectionQuota)"
                     class="w-72"
                     >Quota</TableHead
                   >
@@ -571,16 +568,12 @@ onMounted(load);
                     </div>
                   </TableCell>
                   <TableCell
-                    v-if="
-                      visible.some(
-                        (item) => item.provider_type === 'openai-codex',
-                      )
-                    "
+                    v-if="visible.some(hasConnectionQuota)"
                     class="whitespace-normal"
                   >
-                    <OAuthQuota
-                      v-if="connection.provider_type === 'openai-codex'"
-                      :connection-id="connection.id"
+                    <ProviderQuota
+                      v-if="hasConnectionQuota(connection)"
+                      :connection="connection"
                     />
                     <span v-else class="text-muted-foreground">—</span>
                   </TableCell>

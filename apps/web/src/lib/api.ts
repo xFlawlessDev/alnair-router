@@ -34,6 +34,7 @@ import type {
   MyUsageResponse,
   OAuthAccount,
   OAuthQuotaSnapshot,
+  TavilyQuotaSnapshot,
   OAuthLoginView,
   OAuthPresetResponse,
   PlaygroundChatRequest,
@@ -361,6 +362,8 @@ export const api = {
       "GET",
       `/api/connections/${id}/oauth-accounts/${accountId}/quota`,
     ),
+  connectionQuota: (id: ID) =>
+    request<TavilyQuotaSnapshot>("GET", `/api/connections/${id}/quota`),
   updateOAuthAccount: (
     id: ID,
     accountId: ID,

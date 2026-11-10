@@ -12,7 +12,7 @@ import {
   Trash2,
 } from "@lucide/vue";
 
-import OAuthQuota from "@/components/connections/OAuthQuota.vue";
+import ProviderQuota from "@/components/connections/ProviderQuota.vue";
 import ProviderIcon from "@/components/ProviderIcon.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import { Badge } from "@/components/ui/badge";
@@ -126,10 +126,7 @@ const emit = defineEmits<{
         <span v-else class="text-xs text-muted-foreground">No API key</span>
       </div>
 
-      <OAuthQuota
-        v-if="connection.provider_type === 'openai-codex'"
-        :connection-id="connection.id"
-      />
+      <ProviderQuota :connection="connection" />
 
       <div class="flex justify-end gap-1 border-t pt-3">
         <Button

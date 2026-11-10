@@ -11,6 +11,10 @@
 
 use std::collections::BTreeMap;
 
+mod web;
+pub use alnair_llm::WebRequest;
+pub use web::{hosted_web, supports_hosted_web};
+
 use futures::StreamExt;
 use futures::stream::{BoxStream, Stream};
 
@@ -586,14 +590,15 @@ pub fn stream(
         )));
     }
 
-    // `web_search_options` is OpenAI's own knob; only an OpenAI-compatible
-    // upstream can carry it. Accepting it elsewhere would drop the option and
-    // answer without searching.
+    // Codex translates this option into its hosted Responses web tool.
     if provider_type != ProviderType::OpenaiCompatible
+        && !registry
+            .get(&provider_type)
+            .is_some_and(|provider| provider.capabilities().web_search)
         && options.is_some_and(|options| options.web_search_options.is_some())
     {
         return Err(Error::BadRequest(format!(
-            "`web_search_options` is only supported on openai-compatible connections; \
+            "`web_search_options` requires a provider with hosted web search; \
              this model is served by a {} connection",
             provider_type.as_key()
         )));

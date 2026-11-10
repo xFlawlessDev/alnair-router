@@ -416,25 +416,31 @@ upstream request in its place; `/v1/search`, whose upstream takes no model,
 has the field removed instead. Calls are recorded in usage like chat requests,
 so a proxied request still shows up against its key and connection.
 
-When search tiers are configured, `/v1/search` skips chat-only targets even if
-the default connection or an echoed chat model resolves successfully. Set
-`search_path` or `search_tier` on a connection to use it as an explicit search target.
+When the resolved model's provider has hosted search/fetch capabilities, the
+router uses that provider directly. Codex runs `web_search` through its
+`/responses` endpoint; page reads use the tool's `open_page` action. These
+requests consume the provider's model/tool quota. Hosted fetch returns the
+model's reading of the page with sources, not the original HTTP document.
 
 `/v1/search` treats `model` as a hint: a reference that names no connection
-falls through to the configured search tiers rather than failing, so a harness
-that echoes its chat model still reaches a search provider. A malformed
-reference is still a `400`. Search fallback connections need a `search_tier`;
-built-in search presets supply one. An explicitly selected connection may
-instead set `search_path`.
+or resolves to a chat-only provider falls through to enabled search providers.
+Connections labelled Tavily, Exa or Firecrawl participate automatically, even
+when older stored connections have no `search_tier`. Custom providers opt in
+with `search_tier`; `search_path` overrides the request path but does not make
+a chat connection the default search provider. Tiers are tried lowest first,
+with round-robin rotation within each tier. A malformed reference is a `400`.
 
-`/v1/web/fetch` fetches locally unless the named connection sets
-`web_fetch_mode = "provider"`, in which case the URL goes to that connection's
+`/v1/web/fetch` uses the resolved provider's hosted fetch, an explicitly
+configured extract endpoint, or an enabled search provider's extract API in
+that order. Without a provider route it fetches locally. Search presets supply
+their extract paths and body shapes at routing time, including for older
+connections. Custom connections use `web_fetch_mode = "provider"` and
 `web_fetch_path`. `web_fetch_shape` picks the body the endpoint expects:
 `target` (a `url` field, as Firecrawl's `/scrape` takes) or `urls` (as Tavily's
 `/extract` and Exa's `/contents` require).
 
 > **`/v1/web/fetch` caveat.** Unlike the other proxied endpoints it fetches an
-> arbitrary URL server-side rather than through a configured connection, so its
+> arbitrary URL server-side when no provider route is available, so its
 > SSRF guard is the only thing standing between it and your internal network.
 > The guard allows only `http`/`https`, rejects loopback, RFC-1918, link-local,
 > unique-local, unspecified and broadcast addresses (including IPv4-mapped IPv6

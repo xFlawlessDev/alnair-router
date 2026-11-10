@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 
 use crate::model_config::{LlmStreamOptions, ModelConfig};
@@ -10,8 +11,38 @@ use crate::providers::{
 };
 use crate::types::{ChatError, LlmStreamChunk, Message, ProviderType};
 
+/// Hosted web tools available within a provider's model requests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    pub web_search: bool,
+    /// Reading pages through the hosted web tool; not a raw HTTP fetch API.
+    pub web_fetch: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum WebRequest {
+    Search { query: String, max_results: usize },
+    Fetch { url: String, format: String },
+}
+
 /// A streaming LLM provider contract.
 pub trait LlmProvider: Send + Sync {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
+    fn web_request<'a>(
+        &'a self,
+        _config: &'a ModelConfig,
+        _request: &'a WebRequest,
+    ) -> BoxFuture<'a, Result<serde_json::Value, ChatError>> {
+        Box::pin(async {
+            Err(ChatError::BadRequest(
+                "provider has no hosted web API".to_string(),
+            ))
+        })
+    }
+
     fn stream<'a>(
         &'a self,
         config: &'a ModelConfig,

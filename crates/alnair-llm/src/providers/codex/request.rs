@@ -104,6 +104,20 @@ pub(super) fn build_request_body(
         "stream": true,
     });
 
+    if let Some(search_options) = &options.web_search_options {
+        let tools = body["tools"].as_array_mut().expect("tools array");
+        if !tools.iter().any(|tool| {
+            matches!(
+                tool["type"].as_str(),
+                Some("web_search" | "web_search_preview")
+            )
+        }) {
+            let mut tool = search_options.as_object().cloned().unwrap_or_default();
+            tool.insert("type".to_string(), json!("web_search"));
+            tools.push(Value::Object(tool));
+        }
+    }
+
     if !instructions.is_empty() {
         body["instructions"] = Value::String(instructions.join("\n\n"));
     }
@@ -149,6 +163,12 @@ pub(super) fn convert_tools(tools: Option<&[Value]>) -> Value {
             .unwrap_or_default()
             .iter()
             .filter_map(|tool| {
+                if matches!(
+                    tool["type"].as_str(),
+                    Some("web_search" | "web_search_preview")
+                ) {
+                    return Some(tool.clone());
+                }
                 let function = tool.get("function").unwrap_or(tool);
                 let name = function.get("name").and_then(Value::as_str)?;
                 Some(json!({

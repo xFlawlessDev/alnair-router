@@ -6,6 +6,7 @@ pub mod auth;
 pub mod backup;
 pub mod catalog;
 pub mod chat;
+pub mod connection_quota;
 pub mod control;
 pub mod media;
 pub mod messages;

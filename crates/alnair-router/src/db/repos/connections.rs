@@ -352,8 +352,8 @@ impl ConnectionRepository {
         let provider_id = preset.as_ref().map(|preset| preset.id.to_string());
 
         // A preset fills the values that make its endpoint reachable, but an
-        // explicit field in the request always wins. A search preset without a
-        // tier never receives a `/v1/search` request, so its default matters.
+        // explicit field in the request always wins. Older search connections
+        // also inherit these defaults at routing time.
         let search_tier = match input.search_tier {
             Some(tier) => search_tier_value(Some(tier))?,
             None => preset

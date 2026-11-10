@@ -6,7 +6,9 @@
 //! helpers in `multipart`, and `/v1/web/fetch` in `fetch`.
 
 mod fetch;
+mod fetch_route;
 mod multipart;
+mod native_web;
 mod proxy;
 mod search;
 
@@ -23,6 +25,7 @@ use crate::error::Result;
 use crate::middleware::AuthenticatedKey;
 use crate::model::ResolvedTarget;
 use crate::state::AppState;
+use crate::upstream::chat_backend::{WebRequest, supports_hosted_web};
 use crate::upstream::media::MediaProxy;
 
 use multipart::{multipart_field, rewrite_multipart_field};
@@ -190,7 +193,8 @@ pub struct SearchQuery {
 /// `POST /v1/search` — sends the request to the named provider, falling back to
 /// search tiers when that provider is out of quota or rate limited.
 ///
-/// Search-enabled connections (a `search_tier` or `search_path`) take precedence
+/// Hosted web capabilities use the resolved model's native provider first.
+/// Search providers and connections with a `search_tier` take precedence
 /// over an unrelated chat default or a chat model echoed by a harness. With no
 /// configured search tiers, a resolved primary remains usable for custom APIs.
 /// Quota, rate-limit and transport failures try the next tier; a configured
@@ -219,12 +223,34 @@ pub async fn search(
     let mut candidates = Vec::new();
     match resolve_target(&state, model.as_deref()).await {
         Ok(primary) => {
-            // A harness can echo a valid chat model here. Its connection is
-            // not a search route unless it opted in through a path or tier.
-            if fallbacks.is_empty()
-                || primary.search_tier.is_some()
-                || primary.search_path.is_some()
-            {
+            if supports_hosted_web(&primary.provider_type, false) {
+                let query = body
+                    .get("query")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|query| !query.trim().is_empty())
+                    .ok_or_else(|| {
+                        crate::error::Error::BadRequest("query is required".to_string())
+                    })?;
+                let max_results = body
+                    .get("max_results")
+                    .or_else(|| body.get("numResults"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(5)
+                    .clamp(1, 100) as usize;
+                return native_web::dispatch(
+                    &state,
+                    &key,
+                    &model,
+                    &primary,
+                    WebRequest::Search {
+                        query: query.to_string(),
+                        max_results,
+                    },
+                )
+                .await;
+            }
+            // An echoed chat model's path alone must not shadow a search provider.
+            if fallbacks.is_empty() || primary.search_tier.is_some() {
                 candidates.push(primary);
             }
         }
@@ -377,7 +403,8 @@ async fn finish_search(response: reqwest::Response, normalize: bool) -> Result<R
 
 /// `POST /v1/web/fetch` — fetches a URL server-side.
 ///
-/// Without a `model` the router fetches the URL itself, behind the SSRF guard.
+/// Without a fetch-capable `model`, enabled search providers supply extraction.
+/// With no provider available, the router fetches locally behind the SSRF guard.
 /// A `model` naming a connection with `web_fetch_mode = provider` forwards the
 /// URL to that connection's extract endpoint instead, which is how pages that
 /// need JavaScript rendering are reached.
@@ -392,54 +419,37 @@ pub async fn web_fetch(
         .ok_or_else(|| crate::error::Error::BadRequest("url is required".to_string()))?
         .to_string();
 
-    let model = model_of(&body);
-    let Some(model) = model.filter(|model| !model.trim().is_empty()) else {
-        // No connection named: the router's own fetch is the default.
-        return local_web_fetch(Json(body)).await;
-    };
-
-    // `model` is a hint, not a requirement. Before provider fetches existed this
-    // endpoint ignored the field entirely, so a reference that does not resolve
-    // must keep fetching locally rather than turning a working request into a
-    // 404. The allowlist still applies: a key may not reach a model it was not
-    // granted, even by accident.
-    ensure_model_allowed(&key, Some(&model))?;
-    let Ok(target) = resolve_target(&state, Some(&model)).await else {
-        return local_web_fetch(Json(body)).await;
-    };
-
-    let mode = state
-        .connections()
-        .get(&target.connection_id)
-        .await?
-        .map(|connection| {
-            (
-                connection.web_fetch_mode,
-                connection.web_fetch_path,
-                connection.web_fetch_shape,
-            )
-        })
-        .unwrap_or_default();
-
-    let (mode, path, shape) = mode;
-    if mode != "provider" {
-        // The connection exists but fetches locally; behave exactly as before.
-        return local_web_fetch(Json(body)).await;
+    let model = model_of(&body).filter(|model| !model.trim().is_empty());
+    ensure_model_allowed(&key, model.as_deref())?;
+    if let Ok(target) = resolve_target(&state, model.as_deref()).await
+        && supports_hosted_web(&target.provider_type, true)
+    {
+        let format = body
+            .get("format")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("markdown");
+        return native_web::dispatch(
+            &state,
+            &key,
+            &model,
+            &target,
+            WebRequest::Fetch {
+                url,
+                format: format.to_string(),
+            },
+        )
+        .await;
     }
-
-    let path = path.ok_or_else(|| {
-        crate::error::Error::BadRequest(format!(
-            "connection `{}` is set to fetch through its provider but has no web_fetch_path",
-            target.connection_name
-        ))
-    })?;
+    let Some((target, path, shape)) = fetch_route::select(&state, model.as_deref()).await? else {
+        return local_web_fetch(Json(body)).await;
+    };
 
     let format = body
         .get("format")
         .and_then(|value| value.as_str())
         .unwrap_or("markdown");
 
-    let context = ProxyContext::new(state, &key, &Some(model));
+    let context = ProxyContext::new(state, &key, &model);
     let _permit = context.state.limiter.acquire(&target.connection_id).await?;
     let started = std::time::Instant::now();
 

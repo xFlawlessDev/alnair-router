@@ -32,6 +32,34 @@ fn codex_identity_constants_match_the_cli_contract() {
 }
 
 #[test]
+fn hosted_web_tools_are_preserved_and_options_enable_search_once() {
+    use crate::provider::LlmProvider;
+    let capabilities = super::CodexProvider::new().capabilities();
+    assert!(capabilities.web_search && capabilities.web_fetch);
+    let native = json!({"type":"web_search", "external_web_access":true});
+    assert_eq!(
+        convert_tools(Some(std::slice::from_ref(&native))),
+        json!([native])
+    );
+    let options = LlmStreamOptions {
+        web_search_options: Some(json!({"search_context_size":"low"})),
+        ..Default::default()
+    };
+    let body = build_request_body(&config(), &[Message::new("user", "search")], &options, None);
+    assert_eq!(
+        body["tools"][0],
+        json!({"type":"web_search", "search_context_size":"low"})
+    );
+    let body = build_request_body(
+        &config(),
+        &[Message::new("user", "search")],
+        &options,
+        Some(&[native]),
+    );
+    assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn system_messages_are_hoisted_into_instructions() {
     let messages = vec![
         Message::new("system", "be brief"),

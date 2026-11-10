@@ -146,14 +146,17 @@ impl Catalog {
 }
 
 impl Resolver {
-    /// Every enabled connection that opted into search fallback, as a target
+    /// Every enabled search provider or connection with a search tier, as a target
     /// with no model. Search providers have no model, so the model field stays
     /// empty and the upstream path comes from `search_path`.
     pub fn search_targets(&self) -> Vec<ResolvedTarget> {
         let mut targets: Vec<ResolvedTarget> = self
             .connections_by_id
             .values()
-            .filter(|connection| connection.search_tier.is_some())
+            .filter(|connection| {
+                connection.search_tier.is_some()
+                    || crate::providers::search_preset(connection.provider_id.as_deref()).is_some()
+            })
             .map(|connection| target_from(connection, String::new(), "search".to_string()))
             .collect();
         // Stable order inside a tier, so the round-robin rotation is predictable.
@@ -302,6 +305,7 @@ impl Resolver {
 }
 
 fn target_from(connection: &Connection, model: String, source: String) -> ResolvedTarget {
+    let preset = crate::providers::search_preset(connection.provider_id.as_deref());
     let mut api_keys = Vec::new();
     if let Some(key) = &connection.api_key
         && !key.trim().is_empty()
@@ -316,7 +320,11 @@ fn target_from(connection: &Connection, model: String, source: String) -> Resolv
         provider_type: connection.provider_type.clone(),
         base_url: connection.base_url.clone(),
         search_path: connection.search_path.clone(),
-        search_tier: connection.search_tier,
+        search_tier: connection.search_tier.or_else(|| {
+            preset
+                .as_ref()
+                .and_then(|preset| preset.default_search_tier)
+        }),
         model,
         api_keys,
         custom_headers: connection.headers(),

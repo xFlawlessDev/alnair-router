@@ -129,7 +129,7 @@ async fn quota_on_the_primary_falls_back_to_a_search_tier() {
     let (primary, primary_hits) = spawn_provider(429, "primary").await;
     let (search, search_hits) = spawn_provider(200, "search").await;
 
-    create_search_connection(&app, "chatty", &primary, None).await;
+    create_search_connection(&app, "chatty", &primary, Some(1)).await;
     alias_connection(&app, "chatty", "chatty").await;
     create_search_connection(&app, "exa-like", &search, Some(1)).await;
 
@@ -153,7 +153,7 @@ async fn a_404_does_not_fall_back_so_a_wrong_path_stays_visible() {
     let (primary, primary_hits) = spawn_provider(404, "primary").await;
     let (search, search_hits) = spawn_provider(200, "search").await;
 
-    create_search_connection(&app, "chatty", &primary, None).await;
+    create_search_connection(&app, "chatty", &primary, Some(1)).await;
     alias_connection(&app, "chatty", "chatty").await;
     create_search_connection(&app, "exa-like", &search, Some(1)).await;
 
@@ -265,7 +265,8 @@ async fn a_chat_default_or_resolved_chat_model_does_not_shadow_search() {
         "POST",
         "/api/connections",
         json!({
-            "name": "chat", "base_url": chat, "provider_type": "openai-compatible"
+            "name": "chat", "base_url": chat, "provider_type": "openai-compatible",
+            "search_path": "/web/search"
         }),
     )
     .await;
@@ -278,7 +279,25 @@ async fn a_chat_default_or_resolved_chat_model_does_not_shadow_search() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{settings}");
-    create_search_connection(&app, "tavily", &search, Some(1)).await;
+    let (status, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        json!({
+            "name":"tavily", "base_url":search, "provider_id":"tavily"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{connection}");
+    let (status, connection) = json_request(
+        &app,
+        "PATCH",
+        &format!("/api/connections/{}", connection["id"].as_str().unwrap()),
+        json!({"search_tier":null, "web_fetch_path":null, "web_fetch_shape":null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{connection}");
+    assert!(connection["search_tier"].is_null());
     for body in [
         json!({"query":"rust"}),
         json!({"model":"chat", "query":"rust"}),

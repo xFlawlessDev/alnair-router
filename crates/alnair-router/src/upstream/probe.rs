@@ -123,7 +123,7 @@ pub async fn fetch_models(connection: &Connection) -> Result<ProbeOutcome> {
 /// `x-api-key` unless the connection is flagged `bearer`, which is how an
 /// OAuth/subscription session token authenticates. A probe that ignored
 /// `auth_style` would report a working `bearer` connection as broken.
-fn apply_auth(
+pub(crate) fn apply_auth(
     mut request: reqwest::RequestBuilder,
     connection: &Connection,
 ) -> reqwest::RequestBuilder {

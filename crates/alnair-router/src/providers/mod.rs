@@ -92,7 +92,7 @@ pub struct ProviderPreset {
     /// of asking for endpoints.
     pub oauth_preset: Option<&'static str>,
     /// Default `search_tier` for a new connection from this preset. Search
-    /// providers need a tier to be reachable by `/v1/search` at all.
+    /// providers also inherit this tier at routing time for older connections.
     pub default_search_tier: Option<i64>,
     /// Default `web_fetch_path` for a provider fetch, e.g. `/extract`.
     pub default_web_fetch_path: Option<&'static str>,
@@ -123,6 +123,11 @@ pub fn presets() -> Vec<ProviderPreset> {
 pub fn find(id: &str) -> Option<ProviderPreset> {
     let id = id.trim().to_ascii_lowercase();
     presets().into_iter().find(|preset| preset.id == id)
+}
+
+pub(crate) fn search_preset(id: Option<&str>) -> Option<ProviderPreset> {
+    id.and_then(find)
+        .filter(|preset| preset.category == ProviderCategory::Search)
 }
 
 /// An OAuth-backed subscription channel: no key, one login.

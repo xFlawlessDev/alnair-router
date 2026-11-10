@@ -64,6 +64,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::admin::connection_models),
         )
         .route(
+            "/api/connections/{id}/quota",
+            get(handlers::connection_quota::get_quota),
+        )
+        .route(
             "/api/connections/{id}/accounts",
             get(handlers::accounts::list_accounts).post(handlers::accounts::create_account),
         )

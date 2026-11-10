@@ -17,7 +17,9 @@ pub use model_config::{
     AuthStyle, CacheRetention, LlmStreamOptions, ModelConfig, ModelCostRates, ThinkingLevel,
     WireApi,
 };
-pub use provider::{LlmProvider, ProviderRegistry, provider_type_to_key};
+pub use provider::{
+    LlmProvider, ProviderCapabilities, ProviderRegistry, WebRequest, provider_type_to_key,
+};
 pub use providers::{
     AnthropicNativeProvider, CodeBuddyIntlProvider, CodexProvider, CommandCodeProvider,
     OpenAiProvider,
