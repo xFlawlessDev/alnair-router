@@ -154,12 +154,19 @@ async fn codex_search_and_fetch_use_responses_before_search_connections() {
             let fetch = body["input"][0]["content"][0]["text"].as_str().unwrap().contains("Open this exact URL");
             let action = if fetch { json!({"type":"open_page","url":"https://example.com"}) }
                 else { json!({"type":"search","sources":[{"url":"https://example.com","title":"Example"}]}) };
-            let event = json!({"type":"response.completed","response":{"status":"completed","output":[
+            let output = json!([
                 {"type":"web_search_call","status":"completed","action":action},
                 {"type":"message","content":[{"type":"output_text","text":"page content","annotations":[
                     {"type":"url_citation","url":"https://example.com","title":"Example"}]}]}
-            ]}});
-            format!("data: {event}\n\n")
+            ]);
+            let mut stream = String::new();
+            for item in output.as_array().unwrap() {
+                let event = json!({"type":"response.output_item.done", "item":item});
+                stream.push_str(&format!("data: {event}\n\n"));
+            }
+            let terminal = json!({"type":"response.completed","response":{"status":"completed","output":[]}});
+            stream.push_str(&format!("data: {terminal}\n\n"));
+            stream
         }
     }))).await;
     let app = app().await;

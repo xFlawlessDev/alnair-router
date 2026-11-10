@@ -27,6 +27,10 @@ pub(super) async fn dispatch(
     })
     .await
     .unwrap_or_else(|_| Err(Error::Upstream("hosted web request timed out".to_string())));
+    if let Err(error) = &result {
+        tracing::warn!(connection = %target.connection_name, model = %target.model, %error,
+            "hosted web request failed");
+    }
     context
         .record(
             target,

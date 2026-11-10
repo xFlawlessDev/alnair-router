@@ -63,6 +63,7 @@ pub(super) async fn execute(
 
 async fn read_response(response: reqwest::Response) -> Result<Value, ChatError> {
     let mut bytes = Vec::new();
+    let mut output = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         bytes.extend_from_slice(
@@ -76,12 +77,12 @@ async fn read_response(response: reqwest::Response) -> Result<Value, ChatError> 
         // Parse only complete lines; keeping bytes intact preserves split UTF-8.
         while let Some(end) = bytes.iter().position(|byte| *byte == b'\n') {
             let line: Vec<u8> = bytes.drain(..=end).collect();
-            if let Some(response) = completed_event(&line)? {
+            if let Some(response) = response_event(&line, &mut output)? {
                 return Ok(response);
             }
         }
     }
-    if let Some(response) = completed_event(&bytes)? {
+    if let Some(response) = response_event(&bytes, &mut output)? {
         return Ok(response);
     }
     Err(ChatError::Provider(
@@ -89,7 +90,7 @@ async fn read_response(response: reqwest::Response) -> Result<Value, ChatError> 
     ))
 }
 
-fn completed_event(line: &[u8]) -> Result<Option<Value>, ChatError> {
+fn response_event(line: &[u8], output: &mut Vec<Value>) -> Result<Option<Value>, ChatError> {
     let line = std::str::from_utf8(line)
         .map_err(|_| ChatError::Provider("invalid Codex web stream".to_string()))?;
     let Some(data) = line.trim().strip_prefix("data:") else {
@@ -99,13 +100,38 @@ fn completed_event(line: &[u8]) -> Result<Option<Value>, ChatError> {
         return Ok(None);
     };
     match event["type"].as_str() {
+        Some("response.output_item.done") => {
+            if event["item"].is_object() {
+                merge_item(output, event["item"].clone());
+            }
+            Ok(None)
+        }
         Some("response.completed") if event["response"]["status"] == "completed" => {
-            Ok(Some(event["response"].clone()))
+            let mut response = event["response"].clone();
+            // Codex can deliver output only in item events, leaving the final
+            // response's output empty or limited to a subset of those items.
+            for item in response["output"].as_array().into_iter().flatten() {
+                merge_item(output, item.clone());
+            }
+            response["output"] = json!(output);
+            Ok(Some(response))
         }
         Some("response.failed" | "response.incomplete" | "error") => Err(ChatError::Provider(
             "Codex hosted web request failed".to_string(),
         )),
         _ => Ok(None),
+    }
+}
+
+fn merge_item(output: &mut Vec<Value>, item: Value) {
+    if let Some(existing) = output.iter_mut().find(|existing| {
+        item["id"].as_str().is_some_and(|id| existing["id"] == id) || **existing == item
+    }) {
+        if let (Some(existing), Some(item)) = (existing.as_object_mut(), item.as_object()) {
+            existing.extend(item.iter().map(|(key, value)| (key.clone(), value.clone())));
+        }
+    } else {
+        output.push(item);
     }
 }
 
@@ -118,6 +144,20 @@ fn normalize(response: &Value, operation: &WebRequest) -> Result<Value, ChatErro
         .filter(|item| item["type"] == "web_search_call" && item["status"] == "completed")
         .collect();
     if calls.is_empty() {
+        let output_types: Vec<_> = output
+            .iter()
+            .filter_map(|item| item["type"].as_str())
+            .collect();
+        let web_statuses: Vec<_> = output
+            .iter()
+            .filter(|item| item["type"] == "web_search_call")
+            .filter_map(|item| item["status"].as_str())
+            .collect();
+        tracing::warn!(
+            ?output_types,
+            ?web_statuses,
+            "Codex returned no completed hosted web call"
+        );
         return Err(ChatError::Provider(
             "Codex did not execute a web tool".to_string(),
         ));
@@ -204,7 +244,57 @@ mod tests {
     #[test]
     fn failed_and_incomplete_events_cannot_return_success() {
         for kind in ["response.failed", "response.incomplete", "error"] {
-            assert!(completed_event(format!("data: {}", json!({"type":kind})).as_bytes()).is_err());
+            assert!(
+                response_event(
+                    format!("data: {}", json!({"type":kind})).as_bytes(),
+                    &mut Vec::new()
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn item_events_survive_an_empty_terminal_output_and_are_not_duplicated() {
+        let item = json!({"id":"ws_1", "type":"web_search_call", "status":"completed",
+            "action":{"type":"search", "sources":[{"url":"https://example.com", "title":"Example"}]}});
+        for terminal_output in [
+            json!([]),
+            json!([item.clone()]),
+            json!([{"id":"ws_1", "type":"web_search_call", "status":"completed"}]),
+        ] {
+            let mut output = Vec::new();
+            response_event(
+                format!(
+                    "data: {}",
+                    json!({"type":"response.output_item.done", "item":item})
+                )
+                .as_bytes(),
+                &mut output,
+            )
+            .unwrap();
+            let response = response_event(
+                format!(
+                    "data: {}",
+                    json!({"type":"response.completed", "response":{
+                        "status":"completed", "output":terminal_output
+                    }})
+                )
+                .as_bytes(),
+                &mut output,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(response["output"].as_array().unwrap().len(), 1);
+            let result = normalize(
+                &response,
+                &WebRequest::Search {
+                    query: "test".to_string(),
+                    max_results: 3,
+                },
+            )
+            .unwrap();
+            assert_eq!(result["results"][0]["url"], "https://example.com");
         }
     }
 }
