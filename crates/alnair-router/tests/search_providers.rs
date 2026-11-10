@@ -153,10 +153,17 @@ async fn codex_search_and_fetch_use_responses_before_search_connections() {
             assert_eq!(body["tools"][0]["type"], "web_search");
             let fetch = body["input"][0]["content"][0]["text"].as_str().unwrap().contains("Open this exact URL");
             let action = if fetch { json!({"type":"open_page","url":"https://example.com"}) }
-                else { json!({"type":"search","sources":[{"url":"https://example.com","title":"Example"}]}) };
+                else { json!({"type":"search","sources":[{"url":"https://example.com"}]}) };
+            let text = if fetch { "page content".to_string() } else {
+                assert!(body["instructions"].as_str().unwrap().contains("published_at"));
+                json!({"answer":"Example answer", "results":[
+                    {"url":"https://example.com", "title":"Example", "snippet":"Example source summary", "published_at":"2026-10-01"},
+                    {"url":"https://unobserved.example", "title":"Not a tool source", "snippet":"Discard this"}
+                ]}).to_string()
+            };
             let output = json!([
                 {"type":"web_search_call","status":"completed","action":action},
-                {"type":"message","content":[{"type":"output_text","text":"page content","annotations":[
+                {"type":"message","content":[{"type":"output_text","text":text,"annotations":[
                     {"type":"url_citation","url":"https://example.com","title":"Example"}]}]}
             ]);
             let mut stream = String::new();
@@ -198,6 +205,11 @@ async fn codex_search_and_fetch_use_responses_before_search_connections() {
     .await;
     assert_eq!(status, StatusCode::OK, "{result}");
     assert_eq!(result["results"][0]["url"], "https://example.com");
+    assert_eq!(result["results"].as_array().unwrap().len(), 1);
+    assert_eq!(result["results"][0]["title"], "Example");
+    assert_eq!(result["results"][0]["snippet"], "Example source summary");
+    assert_eq!(result["results"][0]["published_at"], "2026-10-01");
+    assert_eq!(result["answer"], "Example answer");
     let (status, result) = request(
         &app,
         "POST",
