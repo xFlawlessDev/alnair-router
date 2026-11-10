@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   BookOpen,
+  Cable,
   CircleDollarSign,
   FlaskConical,
   History,
@@ -57,6 +58,7 @@ const manageItems: NavItem[] = [
   { label: "Aliases", to: "/aliases", icon: Tags },
   { label: "Combos", to: "/combos", icon: Layers },
   { label: "API Keys", to: "/keys", icon: KeyRound },
+  { label: "CLI Tools", to: "/cli-tools", icon: Cable },
   { label: "Pricing", to: "/pricing", icon: CircleDollarSign },
   { label: "Settings", to: "/settings", icon: Settings },
 ];

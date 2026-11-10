@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import AliasesPage from "@/pages/AliasesPage.vue";
 import ChangelogPage from "@/pages/ChangelogPage.vue";
+import CliToolsPage from "@/pages/CliToolsPage.vue";
 import CombosPage from "@/pages/CombosPage.vue";
 import ConnectionsPage from "@/pages/ConnectionsPage.vue";
 import ConsolePage from "@/pages/ConsolePage.vue";
@@ -108,6 +109,12 @@ export const router = createRouter({
       name: "guide",
       component: GuidePage,
       meta: { title: "API Guide" },
+    },
+    {
+      path: "/cli-tools",
+      name: "cli-tools",
+      component: CliToolsPage,
+      meta: { title: "CLI Tools" },
     },
     {
       path: "/changelog",
