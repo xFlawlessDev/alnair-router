@@ -11,7 +11,10 @@ only in API routes and commands. Small print labels identify real image formats
 and sample data rather than inventing product status.
 
 The opening spread pairs a large headline with the real dashboard. A cobalt
-cutout emphasizes the single address, with a mustard install action. The routing
+cutout emphasizes the single address, with a mustard install action. A compact
+install snippet under the actions repeats the npm command with its own copy
+button, so the first step needs no scrolling. Its copy-status line stays empty
+until a copy is attempted. The routing
 section uses a diagram because ordered fallback needs a visible sequence; its
 arrows communicate request direction. Supporting controls sit in a ruled index,
 not repeated feature cards. The usage section shows the actual sharing surface.

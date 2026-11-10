@@ -101,25 +101,43 @@ select.addEventListener("change", () => {
   status.textContent = "";
 });
 
+const heroCopy = document.querySelector("#hero-copy");
+const heroCommand = document.querySelector("#hero-command");
+const heroStatus = document.querySelector("#hero-copy-status");
+heroCopy.hidden = false;
+let heroCopying = false;
+
+async function copyText(text, target, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    label.textContent = "Command copied.";
+  } catch {
+    label.textContent =
+      "Clipboard unavailable. Select the command to copy it manually.";
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+}
+
+heroCopy.addEventListener("click", async () => {
+  if (heroCopying) return;
+  heroCopying = true;
+  heroCopy.disabled = true;
+  heroStatus.textContent = "Copying command…";
+  await copyText(heroCommand.textContent, heroCommand, heroStatus);
+  heroCopying = false;
+  heroCopy.disabled = false;
+});
+
 copy.addEventListener("click", async () => {
   if (copying) return;
   copying = true;
   copy.disabled = true;
-  const commandText = command.textContent;
   status.textContent = "Copying command…";
-  try {
-    await navigator.clipboard.writeText(commandText);
-    status.textContent = "Command copied.";
-  } catch {
-    status.textContent =
-      "Clipboard unavailable. Select the command above to copy it manually.";
-    const range = document.createRange();
-    range.selectNodeContents(command);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-  } finally {
-    copying = false;
-    copy.disabled = false;
-  }
+  await copyText(command.textContent, command, status);
+  copying = false;
+  copy.disabled = false;
 });

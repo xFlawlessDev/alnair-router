@@ -273,6 +273,44 @@ h1 {
   font-size: 12px;
   color: var(--muted);
 }
+.hero-snippet {
+  margin-top: 28px;
+  max-width: 440px;
+  background: var(--panel);
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  padding: 14px 16px 16px;
+}
+.snippet-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.hero-snippet pre {
+  padding: 14px;
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.hero-snippet .copy-status {
+  padding-top: 0;
+}
+.hero-snippet .copy-status:empty {
+  display: none;
+}
+.snippet-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.snippet-note code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .cover {
   position: relative;
   background: var(--ink);
