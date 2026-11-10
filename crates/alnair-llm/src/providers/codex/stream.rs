@@ -1,5 +1,4 @@
-//! Response parsing for the Codex Responses dialect: the SSE event sequence
-//! and the one-shot JSON body produce the same chunk stream.
+//! Response parsing for the Codex Responses SSE event sequence.
 //!
 //! The events that matter are `response.output_text.delta`,
 //! `response.reasoning_summary_text.delta`, `response.output_item.done`
@@ -215,66 +214,6 @@ fn response_usage(response: &Value, rates: Option<&ModelCostRates>) -> Option<Ll
         cost_reasoning_usd: costs.reasoning_usd,
         cost_cache_usd: costs.cache_usd,
     })
-}
-
-/// Turns a one-shot `{output: [...], usage: {...}}` body into chunks.
-pub(super) fn completion_chunks(
-    body: &Value,
-    rates: Option<&ModelCostRates>,
-) -> Vec<LlmStreamChunk> {
-    let mut chunks = Vec::new();
-    let empty = Vec::new();
-    let output = body
-        .get("output")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
-
-    for item in output {
-        match item.get("type").and_then(Value::as_str) {
-            Some("message") => {
-                let parts = item
-                    .get("content")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                for part in parts {
-                    let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
-                    if !text.is_empty() {
-                        chunks.push(LlmStreamChunk::Text(text.to_string()));
-                    }
-                }
-            }
-            Some("reasoning") => {
-                let summaries = item
-                    .get("summary")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                for summary in summaries {
-                    let text = summary
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    if !text.is_empty() {
-                        chunks.push(LlmStreamChunk::Thinking(text.to_string()));
-                    }
-                }
-            }
-            Some("function_call") => {
-                let mut calls = BTreeMap::new();
-                if collect_function_call(item, &mut calls).is_ok() {
-                    chunks.extend(calls.into_values());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(usage) = response_usage(body, rates) {
-        chunks.push(usage);
-    }
-    chunks.push(LlmStreamChunk::Done(terminal_reason(body)));
-    chunks
 }
 
 fn terminal_reason(body: &Value) -> Option<String> {

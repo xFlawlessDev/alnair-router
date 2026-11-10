@@ -1,7 +1,6 @@
 use serde_json::json;
 
 use super::request::{build_request_body, convert_tools};
-use super::stream::completion_chunks;
 use crate::model_config::{LlmStreamOptions, ModelConfig, ThinkingLevel};
 use crate::providers::codex::{CODEX_OPENAI_BETA, CODEX_ORIGINATOR, CODEX_USER_AGENT};
 use crate::types::{
@@ -39,13 +38,7 @@ fn system_messages_are_hoisted_into_instructions() {
         Message::new("developer", "cite files"),
         Message::new("user", "hi"),
     ];
-    let body = build_request_body(
-        &config(),
-        &messages,
-        &LlmStreamOptions::default(),
-        None,
-        true,
-    );
+    let body = build_request_body(&config(), &messages, &LlmStreamOptions::default(), None);
 
     assert_eq!(body["instructions"], json!("be brief\n\ncite files"));
     let roles: Vec<&str> = body["input"]
@@ -64,7 +57,6 @@ fn the_body_is_stateless_and_asks_for_encrypted_reasoning() {
         &[Message::new("user", "hi")],
         &LlmStreamOptions::default(),
         None,
-        true,
     );
 
     assert_eq!(body["store"], json!(false));
@@ -80,7 +72,6 @@ fn a_missing_output_limit_gets_the_backend_placeholder() {
         &[Message::new("user", "hi")],
         &LlmStreamOptions::default(),
         None,
-        false,
     );
     assert_eq!(body["max_output_tokens"], json!(32_000));
 
@@ -88,13 +79,7 @@ fn a_missing_output_limit_gets_the_backend_placeholder() {
         max_tokens: Some(512),
         ..Default::default()
     };
-    let body = build_request_body(
-        &config(),
-        &[Message::new("user", "hi")],
-        &options,
-        None,
-        false,
-    );
+    let body = build_request_body(&config(), &[Message::new("user", "hi")], &options, None);
     assert_eq!(body["max_output_tokens"], json!(512));
 }
 
@@ -105,17 +90,11 @@ fn thinking_levels_map_onto_codex_efforts() {
             thinking_level: Some(level),
             ..Default::default()
         };
-        build_request_body(
-            &config(),
-            &[Message::new("user", "hi")],
-            &options,
-            None,
-            true,
-        )
-        .get("reasoning")
-        .and_then(|reasoning| reasoning.get("effort"))
-        .and_then(|effort| effort.as_str())
-        .map(str::to_string)
+        build_request_body(&config(), &[Message::new("user", "hi")], &options, None)
+            .get("reasoning")
+            .and_then(|reasoning| reasoning.get("effort"))
+            .and_then(|effort| effort.as_str())
+            .map(str::to_string)
     };
 
     assert_eq!(effort(ThinkingLevel::Low).as_deref(), Some("low"));
@@ -158,7 +137,6 @@ fn tool_calls_and_results_use_function_call_items() {
         &[assistant, result],
         &LlmStreamOptions::default(),
         None,
-        true,
     );
 
     assert_eq!(body["input"][0]["type"], json!("function_call"));
@@ -191,75 +169,70 @@ fn multipart_user_messages_keep_images() {
         cache_control: false,
     };
 
-    let body = build_request_body(
-        &config(),
-        &[message],
-        &LlmStreamOptions::default(),
-        None,
-        true,
-    );
+    let body = build_request_body(&config(), &[message], &LlmStreamOptions::default(), None);
     let content = &body["input"][0]["content"];
 
     assert_eq!(content[0]["type"], json!("input_text"));
     assert_eq!(content[1]["type"], json!("input_image"));
 }
 
-#[test]
-fn completion_chunks_carry_text_reasoning_and_usage() {
-    let body = json!({
-        "status": "completed",
-        "output": [
-            { "type": "reasoning", "summary": [{ "type": "summary_text", "text": "thinking" }] },
-            { "type": "message", "content": [{ "type": "output_text", "text": "hello" }] },
-            { "type": "function_call", "call_id": "call-9", "name": "read_file", "arguments": "{\"path\":\"a\"}" }
-        ],
-        "usage": {
-            "input_tokens": 10,
-            "output_tokens": 4,
-            "input_tokens_details": { "cached_tokens": 2 },
-            "output_tokens_details": { "reasoning_tokens": 1 }
-        }
-    });
+#[tokio::test]
+async fn codex_streams_upstream_for_both_client_modes() {
+    use crate::provider::LlmProvider;
+    use crate::types::LlmStreamChunk;
+    use axum::{Json, Router, routing::post};
+    use futures::StreamExt;
 
-    let chunks = completion_chunks(&body, None);
-
-    assert!(
-        matches!(&chunks[0], crate::types::LlmStreamChunk::Thinking(text) if text == "thinking")
-    );
-    assert!(matches!(&chunks[1], crate::types::LlmStreamChunk::Text(text) if text == "hello"));
-    assert!(matches!(
-        &chunks[2],
-        crate::types::LlmStreamChunk::ToolCall { id, name, .. }
-            if id == "call-9" && name == "read_file"
-    ));
-    match &chunks[3] {
-        crate::types::LlmStreamChunk::Usage {
-            prompt_eval_count,
-            cached_prompt_eval_count,
-            eval_count,
-            reasoning_eval_count,
-            ..
-        } => {
-            assert_eq!(*prompt_eval_count, Some(10));
-            assert_eq!(*cached_prompt_eval_count, Some(2));
-            assert_eq!(*eval_count, Some(4));
-            assert_eq!(*reasoning_eval_count, Some(1));
+    async fn respond(Json(body): Json<serde_json::Value>) -> impl axum::response::IntoResponse {
+        if body["stream"] != json!(true) {
+            return (axum::http::StatusCode::BAD_REQUEST, "stream required");
         }
-        other => panic!("expected usage, got {other:?}"),
+        (
+            axum::http::StatusCode::OK,
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":4}}}\n\n",
+        )
     }
-    assert!(matches!(
-        &chunks[4],
-        crate::types::LlmStreamChunk::Done(reason) if reason.as_deref() == Some("stop")
-    ));
-}
 
-#[test]
-fn an_incomplete_turn_reports_length() {
-    let body = json!({ "status": "incomplete", "output": [] });
-    let chunks = completion_chunks(&body, None);
-
-    assert!(matches!(
-        chunks.last(),
-        Some(crate::types::LlmStreamChunk::Done(reason)) if reason.as_deref() == Some("length")
-    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/responses", post(respond)))
+            .await
+            .unwrap();
+    });
+    let mut config = config();
+    config.base_url = format!("http://{address}");
+    let provider = super::CodexProvider::new();
+    let options = LlmStreamOptions::default();
+    for streaming in [false, true] {
+        let messages = vec![Message::new("user", "hi")];
+        let chunks: Vec<_> = if streaming {
+            provider
+                .stream(&config, messages, &options, None)
+                .collect()
+                .await
+        } else {
+            provider
+                .complete(&config, messages, &options, None)
+                .collect()
+                .await
+        };
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| matches!(chunk, Ok(LlmStreamChunk::Text(text)) if text == "hello"))
+        );
+        assert!(chunks.iter().any(|chunk| matches!(
+            chunk,
+            Ok(LlmStreamChunk::Usage {
+                prompt_eval_count: Some(10),
+                eval_count: Some(4),
+                ..
+            })
+        )));
+        assert!(
+            matches!(chunks.last(), Some(Ok(LlmStreamChunk::Done(reason))) if reason.as_deref() == Some("stop"))
+        );
+    }
+    server.abort();
 }

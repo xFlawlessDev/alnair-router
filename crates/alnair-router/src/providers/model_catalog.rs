@@ -29,78 +29,74 @@ pub struct CatalogModel {
 /// Kept as one constant so the API, the README and the dashboard cannot drift
 /// apart on the wording.
 pub const CODEX_CATALOG_NOTICE: &str = "This list is built into the router, because the ChatGPT/Codex backend \
-     publishes no model list. It was captured from OpenAI's catalog at build time: a newer model still works if \
+     publishes no model list. This is a snapshot: a newer model still works if \
      you type its id, and one that has been retired may still be listed here.";
 
-/// Every model the Codex backend served when this list was captured, in its own
-/// priority order. The eight entries are the `visibility == "list"` and
-/// `supported_in_api == true` models; hidden ones (`gpt-reserve`,
-/// `codex-auto-review`) are deliberately absent, because offering a model the
-/// backend rejects fails at request time instead of at pick time.
+/// Model choices in the order supplied for the Codex connection.
 const CODEX_MODELS: &[CatalogModel] = &[
     CatalogModel {
         id: "gpt-6.1-sol",
         display_name: "GPT-6.1-Sol",
         priority: 0,
-        context_length: 272_000,
+        context_length: 500_000,
         vision: true,
-        efforts: &["low", "medium", "high", "xhigh", "max"],
+        efforts: &["low", "medium", "high", "xhigh"],
     },
     CatalogModel {
-        id: "gpt-5.5",
-        display_name: "GPT-5.5",
+        id: "gpt-6-astra",
+        display_name: "GPT-6-Astra",
         priority: 1,
         context_length: 272_000,
         vision: true,
         efforts: &["low", "medium", "high", "xhigh"],
     },
     CatalogModel {
-        id: "gpt-5.1-codex-max",
-        display_name: "GPT-5.1-Codex-Max",
+        id: "gpt-6-sol",
+        display_name: "GPT-6-Sol",
         priority: 2,
         context_length: 272_000,
         vision: true,
         efforts: &["low", "medium", "high", "xhigh"],
     },
     CatalogModel {
-        id: "gpt-5.1-codex",
-        display_name: "GPT-5.1-Codex",
+        id: "gpt-6-luna",
+        display_name: "GPT-6-Luna",
         priority: 3,
         context_length: 272_000,
         vision: true,
-        efforts: &["low", "medium", "high"],
+        efforts: &["low", "medium", "high", "xhigh"],
     },
     CatalogModel {
-        id: "gpt-5.1-codex-mini",
-        display_name: "GPT-5.1-Codex-Mini",
+        id: "gpt-5.6-sol",
+        display_name: "GPT-5.6-Sol",
         priority: 4,
         context_length: 272_000,
         vision: true,
-        efforts: &["low", "medium", "high"],
+        efforts: &["low", "medium", "high", "xhigh"],
     },
     CatalogModel {
-        id: "gpt-5-codex",
-        display_name: "GPT-5-Codex",
+        id: "gpt-6.1-terra",
+        display_name: "GPT-6.1 Terra",
         priority: 5,
-        context_length: 272_000,
+        context_length: 500_000,
         vision: true,
-        efforts: &["low", "medium", "high"],
+        efforts: &["low", "medium", "high", "xhigh"],
     },
     CatalogModel {
-        id: "gpt-5-codex-mini",
-        display_name: "GPT-5-Codex-Mini",
+        id: "gpt-5.6-terra",
+        display_name: "GPT-5.6-Terra",
         priority: 6,
         context_length: 272_000,
         vision: true,
-        efforts: &["low", "medium", "high"],
+        efforts: &["low", "medium", "high", "xhigh"],
     },
     CatalogModel {
-        id: "codex-mini-latest",
-        display_name: "Codex Mini",
+        id: "gpt-5.6-luna",
+        display_name: "GPT-5.6-Luna",
         priority: 7,
         context_length: 272_000,
         vision: true,
-        efforts: &["low", "medium", "high"],
+        efforts: &["low", "medium", "high", "xhigh"],
     },
 ];
 
@@ -127,6 +123,20 @@ mod tests {
     #[test]
     fn the_codex_catalog_is_ordered_and_unique() {
         let models = models_for("openai-codex").expect("codex catalog");
+
+        assert_eq!(
+            models.iter().map(|model| model.id).collect::<Vec<_>>(),
+            [
+                "gpt-6.1-sol",
+                "gpt-6-astra",
+                "gpt-6-sol",
+                "gpt-6-luna",
+                "gpt-5.6-sol",
+                "gpt-6.1-terra",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna"
+            ]
+        );
 
         let mut ids: Vec<&str> = models.iter().map(|model| model.id).collect();
         ids.sort_unstable();

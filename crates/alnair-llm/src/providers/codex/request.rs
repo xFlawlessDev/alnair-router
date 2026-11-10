@@ -27,7 +27,6 @@ pub(super) fn build_request_body(
     messages: &[Message],
     options: &LlmStreamOptions,
     tools: Option<&[Value]>,
-    streaming: bool,
 ) -> Value {
     let mut instructions: Vec<String> = Vec::new();
     let mut input: Vec<Value> = Vec::new();
@@ -102,7 +101,7 @@ pub(super) fn build_request_body(
         "include": ["reasoning.encrypted_content"],
         // The backend is stateless, so a prompt-cache hint would be ignored.
         "prompt_cache_key": Value::Null,
-        "stream": streaming,
+        "stream": true,
     });
 
     if !instructions.is_empty() {
@@ -115,9 +114,6 @@ pub(super) fn build_request_body(
     }
     if let Some(effort) = reasoning_effort(options.thinking_level) {
         body["reasoning"] = json!({ "effort": effort, "summary": "auto" });
-    }
-    if streaming {
-        body["stream"] = json!(true);
     }
 
     // A JSON `null` is not the same as an absent field to every backend; drop

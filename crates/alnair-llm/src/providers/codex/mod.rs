@@ -78,7 +78,7 @@ impl LlmProvider for CodexProvider {
         let account_id = config.chatgpt_account_id.clone();
         let custom_headers = config.custom_headers.clone();
         let rates = config.effective_cost_rates();
-        let body = request::build_request_body(config, &messages, options, tools.as_deref(), true);
+        let body = request::build_request_body(config, &messages, options, tools.as_deref());
         let client = self.client.clone();
 
         Box::pin(async_stream::stream! {
@@ -106,61 +106,6 @@ impl LlmProvider for CodexProvider {
             futures::pin_mut!(chunks);
             while let Some(chunk) = chunks.next().await {
                 yield chunk;
-            }
-        })
-    }
-
-    /// One-shot call with `stream: false`; the backend answers one JSON body.
-    fn complete<'a>(
-        &'a self,
-        config: &'a ModelConfig,
-        messages: Vec<Message>,
-        options: &'a LlmStreamOptions,
-        tools: Option<Vec<serde_json::Value>>,
-    ) -> BoxStream<'a, Result<LlmStreamChunk, ChatError>> {
-        let endpoint = format!("{}{RESPONSES_PATH}", normalize_base_url(&config.base_url));
-        let bearer = config.api_key.clone();
-        let account_id = config.chatgpt_account_id.clone();
-        let custom_headers = config.custom_headers.clone();
-        let rates = config.effective_cost_rates();
-        let body = request::build_request_body(config, &messages, options, tools.as_deref(), false);
-        let client = self.client.clone();
-
-        Box::pin(async_stream::stream! {
-            let Some(bearer) = bearer.as_deref().filter(|key| !key.trim().is_empty()) else {
-                yield Err(ChatError::BadRequest(
-                    "a ChatGPT/Codex connection needs a signed-in OAuth account".to_string(),
-                ));
-                return;
-            };
-
-            let response = match request::send(&client, &endpoint, bearer, account_id.as_deref(), &custom_headers, &body, options).await {
-                Ok(response) => response,
-                Err(error) => {
-                    yield Err(error);
-                    return;
-                }
-            };
-
-            if !response.status().is_success() {
-                yield Err(request::failure(response).await);
-                return;
-            }
-
-            let text = response.text().await.unwrap_or_default();
-            let json: serde_json::Value = match serde_json::from_str(&text) {
-                Ok(json) => json,
-                Err(_) => {
-                    yield Err(ChatError::Provider(format!(
-                        "Codex returned a non-JSON response: {}",
-                        crate::providers::common::describe_non_json_body(&text)
-                    )));
-                    return;
-                }
-            };
-
-            for chunk in stream::completion_chunks(&json, rates.as_ref()) {
-                yield Ok(chunk);
             }
         })
     }

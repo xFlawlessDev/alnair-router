@@ -459,7 +459,7 @@ async fn models_list_exposes_the_codex_catalog_under_its_alias() {
     )
     .await;
     let connection_id = connection["id"].as_str().expect("connection id");
-    create_alias_for(&app, connection_id, "codex", Some("gpt-5.5")).await;
+    create_alias_for(&app, connection_id, "codex", Some("gpt-6-astra")).await;
 
     let (status, body) = get(&app, "/v1/models").await;
     assert_eq!(status, StatusCode::OK);
@@ -471,7 +471,7 @@ async fn models_list_exposes_the_codex_catalog_under_its_alias() {
         .filter_map(|entry| entry["id"].as_str())
         .collect();
     assert!(ids.contains(&"codex"), "{ids:?}");
-    assert!(ids.contains(&"codex/gpt-5.5"), "{ids:?}");
+    assert!(ids.contains(&"codex/gpt-6-astra"), "{ids:?}");
     assert!(ids.contains(&"codex/gpt-6.1-sol"), "{ids:?}");
     assert!(
         body["notice"]
@@ -481,7 +481,7 @@ async fn models_list_exposes_the_codex_catalog_under_its_alias() {
     );
 
     // A built-in reference resolves by id, so an SDK can retrieve it.
-    let (status, model) = get(&app, "/v1/models/codex/gpt-5.5").await;
+    let (status, model) = get(&app, "/v1/models/codex/gpt-6-astra").await;
     assert_eq!(status, StatusCode::OK, "{model}");
     assert_eq!(model["router_kind"], "builtin");
 
