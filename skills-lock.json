@@ -13,6 +13,12 @@
       "skillPath": "skills/rust-best-practices/SKILL.md",
       "computedHash": "7e12e68aa50152eb7ba9ea1f88ca5380c846ea0175f8ab6788bb79b7faf12ca0"
     },
+    "security-audit": {
+      "source": "cloudflare/security-audit-skill",
+      "sourceType": "github",
+      "skillPath": "skills/security-audit/SKILL.md",
+      "computedHash": "8513eb3b2c39b8d05ef4f47b32ef4d18280b93a5efb91d8df6272f7435034af5"
+    },
     "sqlx": {
       "source": "melonask/sqlx-skills",
       "sourceType": "github",
