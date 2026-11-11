@@ -673,8 +673,9 @@ suite should tell you.
     happens in the handlers right after the model is read — chat, messages
     (incl. count_tokens), responses, embeddings, images, audio and video — and
     fails with `403 permission_error`. Rate limiting runs before the allowlist,
-    so a denied request still consumes a token. `/v1/models` is not filtered by
-    the allowlist yet. (`policy.rs`, `middleware.rs`, `handlers/*`)
+    so a denied request still consumes a token. `/v1/models` filters listed
+    references using the authenticated key's effective allowlist.
+    (`policy.rs`, `middleware.rs`, `handlers/*`)
 
 22. **Plans are reusable rule sets with one clear blast radius.** Deleting a
     plan detaches it from every key (`UPDATE api_keys SET plan_id = NULL`) and

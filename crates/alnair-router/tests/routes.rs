@@ -441,6 +441,82 @@ async fn models_list_is_empty_on_a_fresh_database() {
     assert!(body.get("notice").is_none(), "{body}");
 }
 
+#[tokio::test]
+async fn models_list_respects_effective_key_allowlist() {
+    fn model_ids(body: &serde_json::Value) -> Vec<String> {
+        body["data"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|entry| entry["id"].as_str().expect("id").to_string())
+            .collect()
+    }
+
+    let (app, _) = app(true).await;
+    let (_, connection) = json_request(
+        &app,
+        "POST",
+        "/api/connections",
+        serde_json::json!({ "name": "codex", "provider_id": "openai-codex" }),
+    )
+    .await;
+    create_alias_for(&app, connection["id"].as_str().unwrap(), "codex", None).await;
+    let (status, combo) = json_request(
+        &app,
+        "POST",
+        "/api/combos",
+        serde_json::json!({ "name": "smart", "entries": ["codex/gpt-6-astra"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{combo}");
+    let (_, plan) = json_request(
+        &app,
+        "POST",
+        "/api/plans",
+        serde_json::json!({ "name": "plan", "allowed_models": ["codex/*"] }),
+    )
+    .await;
+    let (_, inherited) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "inherited", "plan_id": plan["id"] }),
+    )
+    .await;
+    let (_, body) = get_with_auth(&app, "/v1/models", inherited["secret"].as_str()).await;
+    let ids = model_ids(&body);
+    assert!(ids.contains(&"codex/gpt-6-astra".to_string()), "{body}");
+    assert!(!ids.contains(&"codex".to_string()), "{body}");
+    assert!(!ids.contains(&"smart".to_string()), "{body}");
+    assert!(body.get("notice").is_some(), "{body}");
+
+    let (_, restricted) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({
+            "name": "restricted", "plan_id": plan["id"], "allowed_models": ["smart"]
+        }),
+    )
+    .await;
+    let (_, body) = get_with_auth(&app, "/v1/models", restricted["secret"].as_str()).await;
+    assert_eq!(model_ids(&body), vec!["smart".to_string()]);
+    assert!(body.get("notice").is_none(), "{body}");
+
+    let (_, open) = json_request(
+        &app,
+        "POST",
+        "/api/keys",
+        serde_json::json!({ "name": "open" }),
+    )
+    .await;
+    let (_, body) = get_with_auth(&app, "/v1/models", open["secret"].as_str()).await;
+    let ids = model_ids(&body);
+    assert!(ids.contains(&"codex".to_string()), "{body}");
+    assert!(ids.contains(&"smart".to_string()), "{body}");
+    assert!(ids.contains(&"codex/gpt-6-astra".to_string()), "{body}");
+}
+
 /// A Codex alias exposes its compiled-in models under the alias prefix, so a
 /// client can discover them without guessing, and the list is disclosed as a
 /// snapshot.

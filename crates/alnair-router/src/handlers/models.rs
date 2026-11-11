@@ -5,6 +5,7 @@ use axum::extract::State;
 use serde::Serialize;
 
 use crate::error::{Error, Result};
+use crate::middleware::AuthenticatedKey;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -29,7 +30,7 @@ pub struct ModelObject {
     pub router_kind: Option<&'static str>,
 }
 
-/// Lists every model reference a caller can ask for.
+/// Lists configured model references allowed by the caller's effective policy.
 ///
 /// Connections are deliberately absent: only a combo name, an alias prefix and
 /// a bare model name resolve, so a connection name here would 404 at request
@@ -39,7 +40,10 @@ pub struct ModelObject {
 /// models under the alias prefix that reaches it, because the backend publishes
 /// no listing of its own. Those entries are a snapshot, so the reply carries the
 /// catalog's notice.
-pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList>> {
+pub async fn list_models(
+    State(state): State<AppState>,
+    axum::Extension(key): axum::Extension<Option<AuthenticatedKey>>,
+) -> Result<Json<ModelList>> {
     let catalog = state.catalog_snapshot().await?.catalog;
     let created = chrono::Utc::now().timestamp();
 
@@ -89,6 +93,15 @@ pub async fn list_models(State(state): State<AppState>) -> Result<Json<ModelList
             owned_by: "alnair-router".to_string(),
             router_kind: Some("combo"),
         });
+    }
+    if let Some(auth) = &key {
+        data.retain(|model| auth.policy.allows(&model.id));
+        if !data
+            .iter()
+            .any(|model| model.router_kind == Some("builtin"))
+        {
+            notice = None;
+        }
     }
 
     data.sort_by(|a, b| a.id.cmp(&b.id));

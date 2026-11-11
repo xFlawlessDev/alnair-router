@@ -394,7 +394,7 @@ proxy is reachable from the network. In Docker, publish the port explicitly
 |---|---|
 | `POST /v1/chat/completions` | Core. Streaming (SSE) and non-streaming. |
 | `POST /v1/responses` | OpenAI Responses shape. Streaming (SSE `response.*` events) and non-streaming; accepts `tools`/`tool_choice` (`auto` or `none`). |
-| `GET /v1/models` | Lists configured aliases and combos. |
+| `GET /v1/models` | Lists configured aliases, combos and built-in models allowed by the authenticated key's effective allowlist. |
 | `GET /v1/models/{id}` | One model object; 404 for an unknown alias or combo. |
 | `GET /v1/models/info` | Per-reference metadata, including resolved combo tiers. |
 | `POST /v1/embeddings` | Proxied to the resolved connection. |
