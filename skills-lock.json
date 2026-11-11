@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "skills": {
+    "axum-rust": {
+      "source": "avbel/ai-skills",
+      "sourceType": "github",
+      "skillPath": "skills/axum-rust/SKILL.md",
+      "computedHash": "eb9e7cb83cdb4a7939c7c241e022e229bacb902bd894c9396076dfa97437ef76"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-best-practices/SKILL.md",
+      "computedHash": "7e12e68aa50152eb7ba9ea1f88ca5380c846ea0175f8ab6788bb79b7faf12ca0"
+    },
+    "sqlx": {
+      "source": "melonask/sqlx-skills",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "35872b959a2c1ce3f2bd8ae21aa9d0522714a0c486e9b36b5e37cf595dd5fdc0"
+    },
+    "tailwind-v4": {
+      "source": "existential-birds/beagle",
+      "sourceType": "github",
+      "skillPath": "plugins/beagle-react/skills/tailwind-v4/SKILL.md",
+      "computedHash": "4664c2f6021f69005af119edd25a3d62dc39cba59190950b59e462af8f56fd39"
+    },
+    "vue": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vue/SKILL.md",
+      "computedHash": "973126c2d026d971177def462808c99b65965b3f88e6769282aa300c214af66f"
+    },
+    "vue-best-practices": {
+      "source": "vuejs-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vue-best-practices/SKILL.md",
+      "computedHash": "2b4ee45c8b9d77d99896c510ca1c0ecb56914b7bdda84dcbd872f3941d3b9f54"
+    }
+  }
+}
