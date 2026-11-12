@@ -535,6 +535,12 @@ rates; configure time windows manually in the Pricing dashboard. Request costs
 and token-saving estimates are estimates, not provider invoices; token-saving
 estimates use the base rate.
 
+Alias and combo capability overrides offer multiple selection for reasoning
+levels and input/output formats. Choose **Use catalog** to inherit, or **Choose
+values** with no selections to explicitly specify none. Existing and custom
+values remain available alongside options from the synced catalog. Context
+windows accept token counts or `K`/`M` suffixes (1K = 1,000; 1M = 1,000,000).
+
 **Public (client key):** `GET /api/public/usage` and `GET /api/public/models` —
 outside the admin-token guard. The caller authenticates with a router-issued
 key (`Authorization: Bearer sk-router-…`). Usage returns only its own rollup:

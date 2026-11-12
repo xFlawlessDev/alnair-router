@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { toast } from "vue-sonner";
+import CapabilityMultiSelect from "@/components/CapabilityMultiSelect.vue";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,9 +33,26 @@ const busy = ref(false);
 const context = ref("");
 const reasoning = ref("");
 const toolCall = ref("");
-const levels = ref("");
-const input = ref("");
-const output = ref("");
+const levels = ref<string[] | null>(null);
+const input = ref<string[] | null>(null);
+const output = ref<string[] | null>(null);
+const options = computed(() => {
+  const result = {
+    reasoning_levels: new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "default"]),
+    input_formats: new Set(["text", "image", "audio", "video", "pdf"]),
+    output_formats: new Set(["text", "image", "audio", "video"]),
+  };
+  for (const entry of props.catalog.entries) {
+    for (const key of ["reasoning_levels", "input_formats", "output_formats"] as const) {
+      for (const value of entry.capabilities[key] ?? []) result[key].add(value);
+    }
+  }
+  return {
+    reasoning_levels: [...result.reasoning_levels],
+    input_formats: [...result.input_formats],
+    output_formats: [...result.output_formats],
+  };
+});
 const manual = computed(
   () =>
     props.catalog.overrides.find(
@@ -62,49 +80,43 @@ const booleanText = (value: boolean | null) =>
   value == null ? "Unknown" : value ? "Yes" : "No";
 const listText = (value: string[] | null) =>
   value == null ? "Unknown" : value.length ? value.join(", ") : "None";
-const parseList = (value: string) =>
-  value.trim() === "-"
-    ? []
-    : value.trim()
-      ? value
-          .split(",")
-          .map((part) => part.trim())
-          .filter(Boolean)
-      : null;
 const parseBool = (value: string) => (value === "" ? null : value === "yes");
 
 function edit() {
   const value = manual.value;
-  context.value = value?.context?.toString() ?? "";
+  const tokens = value?.context;
+  context.value = tokens == null ? "" : tokens % 1_000_000 === 0
+    ? `${tokens / 1_000_000}M`
+    : tokens % 1_000 === 0
+      ? `${tokens / 1_000}K`
+      : String(tokens);
   reasoning.value =
     value?.reasoning == null ? "" : value.reasoning ? "yes" : "no";
   toolCall.value =
     value?.tool_call == null ? "" : value.tool_call ? "yes" : "no";
-  levels.value = value?.reasoning_levels
-    ? value.reasoning_levels.join(", ") || "-"
-    : "";
-  input.value = value?.input_formats
-    ? value.input_formats.join(", ") || "-"
-    : "";
-  output.value = value?.output_formats
-    ? value.output_formats.join(", ") || "-"
-    : "";
+  levels.value = value?.reasoning_levels?.slice() ?? null;
+  input.value = value?.input_formats?.slice() ?? null;
+  output.value = value?.output_formats?.slice() ?? null;
   open.value = true;
 }
 
 async function save() {
-  const number = context.value.trim() ? Number(context.value) : null;
+  const text = context.value.trim();
+  const match = /^(\d+(?:\.\d+)?)([km])?$/i.exec(text);
+  const multiplier = match?.[2]?.toUpperCase() === "M" ? 1_000_000
+    : match?.[2] ? 1_000 : 1;
+  const number = text ? (match ? Number(match[1]) * multiplier : NaN) : null;
   if (number != null && (!Number.isSafeInteger(number) || number <= 0)) {
-    toast.error("Context must be a positive whole number");
+    toast.error("Context must be a positive whole token count, e.g. 128K or 1M");
     return;
   }
   const value: ModelCapabilities = {
     context: number,
     reasoning: parseBool(reasoning.value),
     tool_call: parseBool(toolCall.value),
-    reasoning_levels: parseList(levels.value),
-    input_formats: parseList(input.value),
-    output_formats: parseList(output.value),
+    reasoning_levels: levels.value,
+    input_formats: input.value,
+    output_formats: output.value,
   };
   busy.value = true;
   try {
@@ -192,8 +204,9 @@ async function reset() {
         <DialogHeader
           ><DialogTitle>Override model capabilities</DialogTitle
           ><DialogDescription
-            >Blank fields use catalog data. Overrides on a combo apply to each
-            fallback tier.</DialogDescription
+            >Blank fields use catalog data. Select “Use catalog” to inherit
+            list values. Overrides on a combo apply
+            to each fallback tier.</DialogDescription
           ></DialogHeader
         >
         <div class="grid gap-4">
@@ -202,11 +215,16 @@ async function reset() {
             ><Input
               :id="`cap-context-${id}`"
               v-model="context"
-              type="number"
-              min="1"
-              step="1"
-              placeholder="Use catalog"
+              type="text"
+              :aria-describedby="`cap-context-guide-${id}`"
+              placeholder="Use catalog (e.g. 128K or 1M)"
             />
+            <p :id="`cap-context-guide-${id}`" class="text-xs text-muted-foreground">
+              Enter a context window such as 128K or 1M (K = 1,000 tokens;
+              M = 1,000,000). Exact token counts are also accepted. Check your
+              provider's documentation for the limit, or leave blank to use the
+              catalog. This is informational and does not enforce a limit.
+            </p>
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="grid gap-2">
@@ -234,33 +252,23 @@ async function reset() {
               </select>
             </div>
           </div>
-          <div class="grid gap-2">
-            <Label :for="`cap-levels-${id}`">Reasoning levels</Label
-            ><Input
-              :id="`cap-levels-${id}`"
-              v-model="levels"
-              placeholder="low, medium, high"
-            />
-          </div>
-          <div class="grid gap-2">
-            <Label :for="`cap-input-${id}`">Input formats</Label
-            ><Input
-              :id="`cap-input-${id}`"
-              v-model="input"
-              placeholder="text, image, pdf"
-            />
-          </div>
-          <div class="grid gap-2">
-            <Label :for="`cap-output-${id}`">Output formats</Label
-            ><Input
-              :id="`cap-output-${id}`"
-              v-model="output"
-              placeholder="text, audio"
-            />
-          </div>
+          <CapabilityMultiSelect
+            v-model="levels"
+            label="Reasoning levels"
+            :options="options.reasoning_levels"
+          />
+          <CapabilityMultiSelect
+            v-model="input"
+            label="Input formats"
+            :options="options.input_formats"
+          />
+          <CapabilityMultiSelect
+            v-model="output"
+            label="Output formats"
+            :options="options.output_formats"
+          />
           <p class="text-xs text-muted-foreground">
-            Separate values with commas; enter a dash for none. This information
-            does not change routing.
+            This information does not change routing.
           </p>
         </div>
         <DialogFooter
