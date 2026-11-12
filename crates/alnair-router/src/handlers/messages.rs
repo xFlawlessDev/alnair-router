@@ -91,8 +91,10 @@ async fn complete_response(
     let completion = chat_backend::collect(executed.stream).await?;
     crate::token_rate::reconcile(&token_reservation, completion.usage);
     let usage = completion.usage.unwrap_or_default();
-    let savings_totals =
-        saver_savings.finalize(usage.completion_tokens, tier_price(&state, &target).await);
+    let savings_totals = saver_savings.finalize(
+        usage.completion_tokens,
+        tier_price(&state, &target).await.as_ref(),
+    );
 
     state.metrics.record_request(latency_ms);
     state.metrics.record_usage(

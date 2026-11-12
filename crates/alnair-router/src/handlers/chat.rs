@@ -99,7 +99,7 @@ async fn complete_response(
     let usage_snapshot = completion.usage.unwrap_or_default();
     let savings_totals = saver_savings.finalize(
         usage_snapshot.completion_tokens,
-        tier_price(&state, &target).await,
+        tier_price(&state, &target).await.as_ref(),
     );
     state.metrics.record_token_totals(savings_totals);
     state.metrics.record_request(latency_ms);

@@ -5,6 +5,12 @@
 //! and invalidated by every pricing write or sync. A `builtin` answer is not a
 //! stored row: it is resolved from the in-memory table so a crawl can never
 //! shadow it and no migration is needed.
+//!
+//! A row may also carry [`PriceTier`]s: conditional rates for long prompts
+//! (a context threshold) or for daily UTC time windows (peak/off-peak). The
+//! tiers are stored as an ordered JSON array, travel with the price through the
+//! cache, and are selected per request by the calculation layer; an empty array
+//! means the row's base rates apply unchanged.
 
 pub mod builtin;
 pub mod sources;
@@ -15,6 +21,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
 use sqlx::{FromRow, SqlitePool};
 use tokio::sync::RwLock;
 
@@ -22,7 +29,7 @@ use crate::error::{Error, Result};
 pub use sources::FetchedPrice;
 
 /// USD rates per million tokens.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Price {
     pub input_per_million_usd: f64,
     pub output_per_million_usd: f64,
@@ -34,6 +41,88 @@ pub struct Price {
     pub reasoning_per_million_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit_price: Option<UnitPrice>,
+    /// Conditional rates, tried in order. The first tier whose conditions all
+    /// hold prices the whole request; an empty array means the base rates above
+    /// apply unconditionally.
+    #[serde(default)]
+    pub tiers: Vec<PriceTier>,
+}
+
+/// One conditional rate card: a long-context band, a daily peak window, or
+/// both, with the rates to charge when they match.
+///
+/// `context_above` is a strict threshold: the tier matches when the request's
+/// prompt token count (cached tokens included) is greater than this value.
+/// `start_minute_utc`/`end_minute_utc` are minutes since midnight UTC; the
+/// window is start-inclusive, end-exclusive, and wraps when start > end. Both
+/// are set or both are `None`. Every condition present must hold (AND).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PriceTier {
+    #[serde(default)]
+    pub context_above: Option<u64>,
+    #[serde(default)]
+    pub start_minute_utc: Option<u32>,
+    #[serde(default)]
+    pub end_minute_utc: Option<u32>,
+    pub input_per_million_usd: f64,
+    pub output_per_million_usd: f64,
+    #[serde(default)]
+    pub cache_read_per_million_usd: Option<f64>,
+    #[serde(default)]
+    pub cache_write_per_million_usd: Option<f64>,
+    #[serde(default)]
+    pub reasoning_per_million_usd: Option<f64>,
+}
+
+impl PriceTier {
+    /// Rejects tiers the selector cannot interpret, so a stored row always has
+    /// a single meaning.
+    fn validate(&self, index: usize) -> Result<()> {
+        for (name, value) in [
+            ("input_per_million_usd", Some(self.input_per_million_usd)),
+            ("output_per_million_usd", Some(self.output_per_million_usd)),
+            (
+                "cache_read_per_million_usd",
+                self.cache_read_per_million_usd,
+            ),
+            (
+                "cache_write_per_million_usd",
+                self.cache_write_per_million_usd,
+            ),
+            ("reasoning_per_million_usd", self.reasoning_per_million_usd),
+        ] {
+            if let Some(value) = value
+                && (!value.is_finite() || value < 0.0)
+            {
+                return Err(Error::BadRequest(format!(
+                    "tiers[{index}].{name} must be zero or positive"
+                )));
+            }
+        }
+
+        match (self.start_minute_utc, self.end_minute_utc) {
+            (None, None) => {}
+            (Some(start), Some(end)) => {
+                if start > 1439 || end > 1439 {
+                    return Err(Error::BadRequest(format!(
+                        "tiers[{index}] time window must be within 0..=1439 minutes UTC"
+                    )));
+                }
+                if start == end {
+                    return Err(Error::BadRequest(format!(
+                        "tiers[{index}] start_minute_utc and end_minute_utc must differ"
+                    )));
+                }
+            }
+            _ => {
+                return Err(Error::BadRequest(format!(
+                    "tiers[{index}] must set both start_minute_utc and end_minute_utc, or neither"
+                )));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -65,6 +154,9 @@ pub struct PricedModel {
     pub unit_kind: Option<PriceUnit>,
     pub unit_quantity: Option<f64>,
     pub unit_price_usd: Option<f64>,
+    /// Conditional rates in application order; `[]` means base rates only.
+    #[sqlx(json)]
+    pub tiers: Vec<PriceTier>,
     /// `override` (set from the dashboard) or `sync` (crawled catalog).
     pub source: String,
     pub updated_at: DateTime<Utc>,
@@ -84,6 +176,9 @@ pub struct PriceInput {
     pub reasoning_per_million_usd: Option<f64>,
     #[serde(default)]
     pub unit_price: Option<UnitPrice>,
+    /// Conditional rates, evaluated first-match-wins at request time.
+    #[serde(default)]
+    pub tiers: Vec<PriceTier>,
 }
 
 impl PriceInput {
@@ -125,6 +220,10 @@ impl PriceInput {
                     "{name} must be zero or positive"
                 )));
             }
+        }
+
+        for (index, tier) in self.tiers.iter().enumerate() {
+            tier.validate(index)?;
         }
 
         Ok(())
@@ -169,8 +268,8 @@ impl PricingRepository {
                 "INSERT INTO model_prices
                     (model, input_per_million_usd, output_per_million_usd, cache_read_per_million_usd,
                      cache_write_per_million_usd, reasoning_per_million_usd, source, updated_at,
-                     unit_kind, unit_quantity, unit_price_usd)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'override', ?7, ?8, ?9, ?10)
+                     unit_kind, unit_quantity, unit_price_usd, tiers)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'override', ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT (model, source) DO UPDATE SET
                     input_per_million_usd = excluded.input_per_million_usd,
                     output_per_million_usd = excluded.output_per_million_usd,
@@ -180,6 +279,7 @@ impl PricingRepository {
                     unit_kind = excluded.unit_kind,
                     unit_quantity = excluded.unit_quantity,
                     unit_price_usd = excluded.unit_price_usd,
+                    tiers = excluded.tiers,
                     updated_at = excluded.updated_at",
             )
             .bind(input.model.trim())
@@ -192,6 +292,7 @@ impl PricingRepository {
             .bind(input.unit_price.map(|unit| unit.unit))
             .bind(input.unit_price.map(|unit| unit.quantity))
             .bind(input.unit_price.map(|unit| unit.price_usd))
+            .bind(Json(&input.tiers))
             .execute(&mut *transaction)
             .await?;
         }
@@ -229,8 +330,8 @@ impl PricingRepository {
             sqlx::query(
                 "INSERT INTO model_prices
                     (model, input_per_million_usd, output_per_million_usd, cache_read_per_million_usd,
-                     cache_write_per_million_usd, reasoning_per_million_usd, source, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'sync', ?7)",
+                     cache_write_per_million_usd, reasoning_per_million_usd, source, updated_at, tiers)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'sync', ?7, ?8)",
             )
             .bind(&entry.model)
             .bind(entry.price.input_per_million_usd)
@@ -239,6 +340,7 @@ impl PricingRepository {
             .bind(entry.price.cache_write_per_million_usd)
             .bind(entry.price.reasoning_per_million_usd)
             .bind(at)
+            .bind(Json(&entry.price.tiers))
             .execute(&mut *transaction)
             .await?;
         }
@@ -322,6 +424,7 @@ impl PricingIndex {
                         }),
                         _ => None,
                     },
+                    tiers: row.tiers,
                 },
             };
 

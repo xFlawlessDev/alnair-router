@@ -25,6 +25,7 @@ pub fn price(model_id: &str) -> Option<Price> {
             cache_read_per_million_usd: Some(1.25),
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: Some(15.00),
+            tiers: Vec::new(),
         },
         "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" => Price {
             unit_price: None,
@@ -33,6 +34,7 @@ pub fn price(model_id: &str) -> Option<Price> {
             cache_read_per_million_usd: Some(0.075),
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: Some(0.90),
+            tiers: Vec::new(),
         },
         "gpt-4.1" => Price {
             unit_price: None,
@@ -41,6 +43,7 @@ pub fn price(model_id: &str) -> Option<Price> {
             cache_read_per_million_usd: Some(0.50),
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: Some(12.00),
+            tiers: Vec::new(),
         },
         "gpt-4.1-mini" => Price {
             unit_price: None,
@@ -49,6 +52,7 @@ pub fn price(model_id: &str) -> Option<Price> {
             cache_read_per_million_usd: Some(0.10),
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: Some(2.40),
+            tiers: Vec::new(),
         },
         _ => return None,
     };

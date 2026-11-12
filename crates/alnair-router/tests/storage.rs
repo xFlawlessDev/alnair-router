@@ -1654,6 +1654,7 @@ async fn pricing_overrides_shadow_synced_rows() {
 
     repo.upsert_overrides(&[PriceInput {
         unit_price: None,
+        tiers: Vec::new(),
         model: "gpt-4o".to_string(),
         input_per_million_usd: 1.0,
         output_per_million_usd: 2.0,
@@ -1729,6 +1730,7 @@ async fn an_override_beats_a_synced_row_which_beats_the_builtin_table() {
     // Layer 1: a dashboard override outranks both.
     repo.upsert_overrides(&[PriceInput {
         unit_price: None,
+        tiers: Vec::new(),
         model: "gpt-4o".to_string(),
         input_per_million_usd: 0.5,
         output_per_million_usd: 1.5,
@@ -1788,6 +1790,7 @@ async fn pricing_sync_runs_keep_the_latest_status() {
 fn synced_price(input: f64, output: f64) -> Price {
     Price {
         unit_price: None,
+        tiers: Vec::new(),
         input_per_million_usd: input,
         output_per_million_usd: output,
         cache_read_per_million_usd: None,

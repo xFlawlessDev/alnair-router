@@ -260,6 +260,9 @@ impl LlmProvider for AnthropicNativeProvider {
         let api_key = config.api_key.clone();
         let auth_style = config.auth_style;
         let custom_headers = config.custom_headers.clone();
+        // Snapshot before sending: the request-start minute is what selects a
+        // time-windowed tier, and the whole turn bills at that snapshot.
+        let rates = config.effective_cost_rates();
 
         Box::pin(async_stream::stream! {
             // TODO E4: non-streaming path
@@ -313,7 +316,6 @@ impl LlmProvider for AnthropicNativeProvider {
                 return;
             }
 
-            let rates = config.effective_cost_rates();
             let mut stream = response.bytes_stream();
             let mut line_buffer = SseLineBuffer::default();
             let mut pending_tool_uses: HashMap<usize, PendingToolUse> = HashMap::new();

@@ -63,7 +63,7 @@ pub struct ModelConfig {
     pub cost_rates: Option<ModelCostRates>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ModelCostRates {
     /// USD per million input tokens
     pub input_per_million_usd: f64,
@@ -77,6 +77,134 @@ pub struct ModelCostRates {
     /// the output rate, because completion tokens already include it.
     #[serde(default)]
     pub reasoning_per_million_usd: Option<f64>,
+    /// Conditional rate overrides, in precedence order. The first tier whose
+    /// conditions hold for a request replaces the base rates above for that
+    /// whole request; an empty list means the base rates always apply.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tiers: Vec<CostTier>,
+    /// Minute of the day (UTC) at which the request was started, captured once
+    /// per upstream call. It decides which time-windowed tier applies, so a
+    /// request is billed at its start rate even if it finishes after a window
+    /// closes. `None` until the provider layer stamps it; a tier with a time
+    /// window never matches an unstamped request.
+    #[serde(default, skip_serializing)]
+    pub request_start_minute_utc: Option<u32>,
+}
+
+/// One conditional price override.
+///
+/// A tier carries a complete rate set, exactly like the base rates: a missing
+/// cache rate falls back to this tier's input rate and a missing reasoning rate
+/// means no reasoning premium. Conditions are ANDed; an absent condition does
+/// not constrain the tier. The presence of any `context_above` threshold makes
+/// the tier depend on a known prompt size — a request whose upstream reported
+/// no prompt tokens never matches it.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+pub struct CostTier {
+    /// Applies when the prompt (cached tokens included) exceeds this many
+    /// tokens.
+    #[serde(default)]
+    pub context_above: Option<u64>,
+    /// Window start, minute of the day UTC, inclusive. `None` with `end` unset
+    /// makes the tier time-independent.
+    #[serde(default)]
+    pub start_minute_utc: Option<u32>,
+    /// Window end, minute of the day UTC, exclusive. A window whose start is
+    /// greater than its end wraps past midnight.
+    #[serde(default)]
+    pub end_minute_utc: Option<u32>,
+    /// USD per million input tokens
+    pub input_per_million_usd: f64,
+    /// USD per million output tokens
+    pub output_per_million_usd: f64,
+    /// USD per million cache-read tokens; falls back to this tier's input rate
+    #[serde(default)]
+    pub cache_read_per_million_usd: Option<f64>,
+    /// USD per million cache-write tokens; falls back to this tier's input rate
+    #[serde(default)]
+    pub cache_write_per_million_usd: Option<f64>,
+    /// USD per million reasoning tokens, billed as a premium over the output
+    /// rate. `None` bills reasoning as ordinary output.
+    #[serde(default)]
+    pub reasoning_per_million_usd: Option<f64>,
+}
+
+/// The rates that actually apply to one request.
+///
+/// Resolved from [`ModelCostRates`] once the prompt size and start minute are
+/// known, so the token arithmetic has a single flat rate set per request.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EffectiveCostRates {
+    pub input_per_million_usd: f64,
+    pub output_per_million_usd: f64,
+    pub cache_read_per_million_usd: Option<f64>,
+    pub cache_write_per_million_usd: Option<f64>,
+    pub reasoning_per_million_usd: Option<f64>,
+}
+
+impl CostTier {
+    /// Whether this tier's conditions hold for the given request.
+    pub fn matches(&self, prompt_tokens: Option<u64>, minute_utc: Option<u32>) -> bool {
+        let context_matches = match self.context_above {
+            // A threshold is strictly greater-than, so a prompt exactly at it
+            // keeps the cheaper tier. Without a prompt count the condition is
+            // unknowable and must not match.
+            Some(threshold) => prompt_tokens.is_some_and(|prompt| prompt > threshold),
+            None => true,
+        };
+        if !context_matches {
+            return false;
+        }
+
+        match (self.start_minute_utc, self.end_minute_utc) {
+            (None, None) => true,
+            (Some(start), Some(end)) if start < 1440 && end < 1440 && start != end => {
+                let Some(minute) = minute_utc else {
+                    return false;
+                };
+                if start < end {
+                    minute >= start && minute < end
+                } else {
+                    // Wraps midnight: [start, 1440) ∪ [0, end).
+                    minute >= start || minute < end
+                }
+            }
+            // Half a window is unusable, and an empty one would otherwise read
+            // as "any minute". Neither may silently reprice a request.
+            _ => false,
+        }
+    }
+
+    fn effective(&self) -> EffectiveCostRates {
+        EffectiveCostRates {
+            input_per_million_usd: self.input_per_million_usd,
+            output_per_million_usd: self.output_per_million_usd,
+            cache_read_per_million_usd: self.cache_read_per_million_usd,
+            cache_write_per_million_usd: self.cache_write_per_million_usd,
+            reasoning_per_million_usd: self.reasoning_per_million_usd,
+        }
+    }
+}
+
+impl ModelCostRates {
+    /// The first tier that matches this request, else the base rates.
+    ///
+    /// `prompt_tokens` is the upstream's prompt total including cached tokens.
+    /// The whole request uses the selected tier, so a request never mixes
+    /// tiers across its input and output charges.
+    pub fn resolve(&self, prompt_tokens: Option<u64>) -> EffectiveCostRates {
+        self.tiers
+            .iter()
+            .find(|tier| tier.matches(prompt_tokens, self.request_start_minute_utc))
+            .map(CostTier::effective)
+            .unwrap_or(EffectiveCostRates {
+                input_per_million_usd: self.input_per_million_usd,
+                output_per_million_usd: self.output_per_million_usd,
+                cache_read_per_million_usd: self.cache_read_per_million_usd,
+                cache_write_per_million_usd: self.cache_write_per_million_usd,
+                reasoning_per_million_usd: self.reasoning_per_million_usd,
+            })
+    }
 }
 
 /// Who picks the tool, and which one. Provider-neutral, so every dialect can
@@ -270,9 +398,27 @@ impl ModelConfig {
     /// The provider layer no longer carries a built-in price table: pricing is
     /// router policy, so an upstream is only ever told the rate the router
     /// already decided on.
+    ///
+    /// The returned snapshot stamps the UTC minute of the call when the caller
+    /// left it unset, so conditional tiers are chosen by when the request was
+    /// *started*. Providers call this once, before sending, and bill the whole
+    /// turn from that snapshot; a caller that pre-computed the minute keeps it.
     pub fn effective_cost_rates(&self) -> Option<ModelCostRates> {
-        self.cost_rates.clone()
+        self.cost_rates.clone().map(|mut rates| {
+            rates
+                .request_start_minute_utc
+                .get_or_insert_with(current_utc_minute);
+            rates
+        })
     }
+}
+
+/// Minute of the day (UTC), 0..=1439.
+fn current_utc_minute() -> u32 {
+    use chrono::Timelike;
+
+    let now = chrono::Utc::now();
+    now.hour() * 60 + now.minute()
 }
 
 pub(crate) fn apply_custom_headers(
@@ -499,6 +645,7 @@ mod tests {
             cache_read_per_million_usd: Some(0.12),
             cache_write_per_million_usd: Some(0.34),
             reasoning_per_million_usd: Some(6.78),
+            ..ModelCostRates::default()
         };
         let mut config = ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
         config.cost_rates = Some(custom.clone());
@@ -555,6 +702,290 @@ mod tests {
         );
         assert_eq!(options.max_status_retries, PROVIDER_MAX_TRANSPORT_RETRIES);
         assert_eq!(options.max_retry_delay_ms, 30_000);
+    }
+
+    #[test]
+    fn no_tiers_always_yields_the_base_rates() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 2.0,
+            output_per_million_usd: 8.0,
+            cache_read_per_million_usd: Some(0.5),
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
+            ..ModelCostRates::default()
+        };
+
+        let effective = rates.resolve(Some(10_000_000));
+
+        assert_eq!(effective.input_per_million_usd, 2.0);
+        assert_eq!(effective.output_per_million_usd, 8.0);
+        assert_eq!(effective.cache_read_per_million_usd, Some(0.5));
+        assert_eq!(effective.cache_write_per_million_usd, None);
+        assert_eq!(effective.reasoning_per_million_usd, None);
+    }
+
+    fn tier_input(context_above: Option<u64>, start: Option<u32>, end: Option<u32>) -> CostTier {
+        CostTier {
+            context_above,
+            start_minute_utc: start,
+            end_minute_utc: end,
+            input_per_million_usd: 9.0,
+            output_per_million_usd: 90.0,
+            ..CostTier::default()
+        }
+    }
+
+    fn rates_with(tiers: Vec<CostTier>, minute: Option<u32>) -> ModelCostRates {
+        ModelCostRates {
+            input_per_million_usd: 1.0,
+            output_per_million_usd: 2.0,
+            tiers,
+            request_start_minute_utc: minute,
+            ..ModelCostRates::default()
+        }
+    }
+
+    #[test]
+    fn a_context_threshold_applies_strictly_above_it() {
+        let rates = rates_with(vec![tier_input(Some(1_000), None, None)], None);
+
+        assert_eq!(rates.resolve(Some(1_001)).input_per_million_usd, 9.0);
+        assert_eq!(rates.resolve(Some(1_000)).input_per_million_usd, 1.0);
+        assert_eq!(rates.resolve(Some(999)).input_per_million_usd, 1.0);
+    }
+
+    #[test]
+    fn an_unknown_prompt_count_cannot_satisfy_a_context_tier() {
+        let rates = rates_with(vec![tier_input(Some(1_000), None, None)], None);
+
+        assert_eq!(
+            rates.resolve(None).input_per_million_usd,
+            1.0,
+            "an upstream that reported no prompt must not be billed a context tier by guess"
+        );
+    }
+
+    #[test]
+    fn a_time_window_is_start_inclusive_and_end_exclusive() {
+        let rates = rates_with(vec![tier_input(None, Some(540), Some(1020))], Some(540));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 9.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(540), Some(1020))], Some(1019));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 9.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(540), Some(1020))], Some(1020));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 1.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(540), Some(1020))], Some(539));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 1.0);
+    }
+
+    #[test]
+    fn a_window_wraps_past_midnight() {
+        let rates = rates_with(vec![tier_input(None, Some(1380), Some(60))], Some(1400));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 9.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(1380), Some(60))], Some(0));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 9.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(1380), Some(60))], Some(59));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 9.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(1380), Some(60))], Some(60));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 1.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(1380), Some(60))], Some(1200));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 1.0);
+    }
+
+    #[test]
+    fn a_time_tier_never_matches_an_unstamped_request() {
+        let rates = rates_with(vec![tier_input(None, Some(0), Some(720))], None);
+        assert_eq!(
+            rates.resolve(None).input_per_million_usd,
+            1.0,
+            "without a start minute a windowed tier cannot be chosen"
+        );
+    }
+
+    #[test]
+    fn half_a_time_window_is_not_a_match() {
+        let rates = rates_with(vec![tier_input(None, Some(0), None)], Some(0));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 1.0);
+
+        let rates = rates_with(vec![tier_input(None, None, Some(600))], Some(0));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 1.0);
+
+        let rates = rates_with(vec![tier_input(None, Some(600), Some(600))], Some(600));
+        assert_eq!(rates.resolve(None).input_per_million_usd, 1.0);
+    }
+
+    #[test]
+    fn the_first_matching_tier_wins_over_later_ones() {
+        let rates = rates_with(
+            vec![
+                // Off-peak discount listed first, so it keeps precedence at any
+                // prompt size it matches.
+                tier_input(None, Some(0), Some(480)),
+                tier_input(Some(100_000), None, None),
+            ],
+            Some(120),
+        );
+        assert_eq!(rates.resolve(Some(1_000)).input_per_million_usd, 9.0);
+
+        let rates = rates_with(
+            vec![
+                CostTier {
+                    input_per_million_usd: 5.0,
+                    ..tier_input(None, Some(0), Some(480))
+                },
+                CostTier {
+                    input_per_million_usd: 6.0,
+                    ..tier_input(None, None, None)
+                },
+            ],
+            Some(120),
+        );
+        assert_eq!(
+            rates.resolve(None).input_per_million_usd,
+            5.0,
+            "two matching tiers must resolve to the first one, not a mix"
+        );
+    }
+
+    #[test]
+    fn conditions_on_one_tier_are_anded() {
+        let rates = rates_with(
+            vec![tier_input(Some(1_000), Some(540), Some(1020))],
+            Some(540),
+        );
+
+        // Time matches but the prompt is too small.
+        assert_eq!(rates.resolve(Some(500)).input_per_million_usd, 1.0);
+        // Prompt matches but the minute is outside the window.
+        let outside = rates_with(
+            vec![tier_input(Some(1_000), Some(540), Some(1020))],
+            Some(60),
+        );
+        assert_eq!(outside.resolve(Some(5_000)).input_per_million_usd, 1.0);
+        // Both hold.
+        assert_eq!(rates.resolve(Some(5_000)).input_per_million_usd, 9.0);
+    }
+
+    #[test]
+    fn a_tier_carries_the_whole_rate_set_including_nulls() {
+        let rates = rates_with(
+            vec![CostTier {
+                input_per_million_usd: 9.0,
+                output_per_million_usd: 90.0,
+                cache_read_per_million_usd: None,
+                cache_write_per_million_usd: Some(3.0),
+                reasoning_per_million_usd: None,
+                ..CostTier::default()
+            }],
+            None,
+        );
+
+        let effective = rates.resolve(None);
+
+        assert_eq!(effective.cache_read_per_million_usd, None);
+        assert_eq!(effective.cache_write_per_million_usd, Some(3.0));
+        assert_eq!(
+            effective.reasoning_per_million_usd, None,
+            "a tier's null reasoning rate must not inherit the base premium"
+        );
+    }
+
+    #[test]
+    fn tiers_deserialize_from_the_shared_json_contract() {
+        let json = r#"{
+            "input_per_million_usd": 1.0,
+            "output_per_million_usd": 2.0,
+            "cache_read_per_million_usd": null,
+            "cache_write_per_million_usd": null,
+            "reasoning_per_million_usd": null,
+            "tiers": [
+                {
+                    "context_above": 200000,
+                    "start_minute_utc": null,
+                    "end_minute_utc": null,
+                    "input_per_million_usd": 1.5,
+                    "output_per_million_usd": 3.0,
+                    "cache_read_per_million_usd": null,
+                    "cache_write_per_million_usd": null,
+                    "reasoning_per_million_usd": null
+                },
+                {
+                    "context_above": null,
+                    "start_minute_utc": 480,
+                    "end_minute_utc": 1200,
+                    "input_per_million_usd": 2.0,
+                    "output_per_million_usd": 4.0,
+                    "cache_read_per_million_usd": 0.2,
+                    "cache_write_per_million_usd": 0.4,
+                    "reasoning_per_million_usd": 6.0
+                }
+            ]
+        }"#;
+
+        let rates: ModelCostRates = serde_json::from_str(json).expect("shared contract");
+
+        assert_eq!(rates.tiers.len(), 2);
+        assert_eq!(rates.tiers[0].context_above, Some(200_000));
+        assert_eq!(rates.tiers[0].start_minute_utc, None);
+        assert_eq!(rates.tiers[1].start_minute_utc, Some(480));
+        assert_eq!(rates.tiers[1].end_minute_utc, Some(1200));
+        assert_eq!(rates.tiers[1].cache_read_per_million_usd, Some(0.2));
+        assert_eq!(rates.request_start_minute_utc, None);
+
+        // The request-start minute is a runtime stamp, never part of the wire
+        // price the router configures.
+        let encoded = serde_json::to_value(&rates).expect("serialize");
+        assert!(
+            encoded.get("request_start_minute_utc").is_none(),
+            "the runtime stamp must not be serialized"
+        );
+        assert_eq!(encoded["tiers"].as_array().expect("tiers").len(), 2);
+    }
+
+    #[test]
+    fn a_missing_tiers_field_means_base_rates_only() {
+        let rates: ModelCostRates = serde_json::from_str(
+            r#"{"input_per_million_usd": 1.0, "output_per_million_usd": 2.0}"#,
+        )
+        .expect("base-only price");
+
+        assert!(rates.tiers.is_empty());
+        assert_eq!(rates.resolve(Some(1_000_000)).input_per_million_usd, 1.0);
+    }
+
+    #[test]
+    fn effective_cost_rates_stamp_the_start_minute_only_when_unset() {
+        let config = ModelConfig::openai_compatible("https://api.example.com", "gpt-4o", None);
+
+        let mut unpriced = config.clone();
+        unpriced.cost_rates = None;
+        assert!(unpriced.effective_cost_rates().is_none());
+
+        let mut stamped = config.clone();
+        stamped.cost_rates = Some(rates_with(Vec::new(), Some(123)));
+        assert_eq!(
+            stamped
+                .effective_cost_rates()
+                .expect("rates")
+                .request_start_minute_utc,
+            Some(123),
+            "a caller-provided minute must be kept"
+        );
+
+        let mut unstamped = config;
+        unstamped.cost_rates = Some(rates_with(Vec::new(), None));
+        let minute = unstamped
+            .effective_cost_rates()
+            .expect("rates")
+            .request_start_minute_utc
+            .expect("the provider layer stamps the start minute");
+        assert!(minute < 1440, "a minute of the day, got {minute}");
     }
 }
 

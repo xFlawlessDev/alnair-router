@@ -119,6 +119,9 @@ pub(crate) fn calculate_token_costs(
             cache_usd: None,
         };
     };
+    // The prompt total includes the cached buckets, which is the size a
+    // context tier measures. One tier applies to the whole request.
+    let rates = rates.resolve(input_tokens);
 
     let uncached_input_tokens = input_tokens
         .unwrap_or(0)
@@ -257,6 +260,7 @@ mod tests {
             cache_read_per_million_usd: Some(0.5),
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: None,
+            ..ModelCostRates::default()
         };
 
         let costs = calculate_token_costs(Some(&rates), Some(100), Some(40), None, Some(10), None);
@@ -276,6 +280,7 @@ mod tests {
             cache_read_per_million_usd: Some(0.5),
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: None,
+            ..ModelCostRates::default()
         };
 
         // 100 prompt tokens of which 40 are a cache read.
@@ -304,6 +309,7 @@ mod tests {
             cache_read_per_million_usd: Some(0.5),
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: None,
+            ..ModelCostRates::default()
         };
 
         // The case that made the dashboard misread: 99% of the prompt cached,
@@ -337,6 +343,7 @@ mod tests {
             cache_read_per_million_usd: None,
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: Some(15.0),
+            ..ModelCostRates::default()
         };
 
         // 100 completion tokens include 40 reasoning tokens: the base output
@@ -366,12 +373,168 @@ mod tests {
             cache_read_per_million_usd: None,
             cache_write_per_million_usd: None,
             reasoning_per_million_usd: None,
+            ..ModelCostRates::default()
         };
 
         let costs = calculate_token_costs(Some(&rates), Some(0), None, None, Some(100), Some(40));
 
         assert_eq!(costs.output_usd, Some(100.0 * 10.0 / 1_000_000.0));
         assert_eq!(costs.reasoning_usd, None);
+    }
+
+    #[test]
+    fn calculate_token_costs_bills_a_context_tier_once_the_prompt_exceeds_it() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 2.0,
+            output_per_million_usd: 8.0,
+            cache_read_per_million_usd: Some(0.5),
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
+            tiers: vec![crate::model_config::CostTier {
+                context_above: Some(200_000),
+                input_per_million_usd: 4.0,
+                output_per_million_usd: 16.0,
+                cache_read_per_million_usd: Some(1.0),
+                cache_write_per_million_usd: None,
+                reasoning_per_million_usd: None,
+                ..crate::model_config::CostTier::default()
+            }],
+            ..ModelCostRates::default()
+        };
+
+        // 150k prompt: still the base rates.
+        let small =
+            calculate_token_costs(Some(&rates), Some(150_000), None, None, Some(1_000), None);
+        assert_eq!(small.output_usd, Some(1_000.0 * 8.0 / 1_000_000.0));
+
+        // 250k prompt: the tier, applied to the whole request.
+        let large =
+            calculate_token_costs(Some(&rates), Some(250_000), None, None, Some(1_000), None);
+        assert_eq!(large.output_usd, Some(1_000.0 * 16.0 / 1_000_000.0));
+        assert_eq!(large.input_usd, Some(250_000.0 * 4.0 / 1_000_000.0));
+
+        // A prompt exactly at the threshold keeps the base rate.
+        let at = calculate_token_costs(Some(&rates), Some(200_000), None, None, Some(1_000), None);
+        assert_eq!(at.output_usd, Some(1_000.0 * 8.0 / 1_000_000.0));
+    }
+
+    #[test]
+    fn a_tier_missing_a_cache_rate_falls_back_to_its_own_input_rate() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 1.0,
+            output_per_million_usd: 2.0,
+            cache_read_per_million_usd: Some(0.1),
+            cache_write_per_million_usd: Some(0.2),
+            reasoning_per_million_usd: None,
+            tiers: vec![crate::model_config::CostTier {
+                input_per_million_usd: 5.0,
+                output_per_million_usd: 10.0,
+                ..crate::model_config::CostTier::default()
+            }],
+            request_start_minute_utc: None,
+        };
+
+        let costs = calculate_token_costs(Some(&rates), Some(1_000), Some(400), None, None, None);
+
+        // 600 uncached at 5.0 plus 400 cached at the tier's own 5.0, never the
+        // base cache rate.
+        assert_eq!(costs.input_usd, Some(1_000.0 * 5.0 / 1_000_000.0));
+        assert_eq!(costs.cache_usd, Some(400.0 * 5.0 / 1_000_000.0));
+    }
+
+    #[test]
+    fn a_tier_without_a_reasoning_rate_has_no_separate_premium() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 1.0,
+            output_per_million_usd: 10.0,
+            cache_read_per_million_usd: None,
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: Some(15.0),
+            tiers: vec![crate::model_config::CostTier {
+                input_per_million_usd: 1.0,
+                output_per_million_usd: 10.0,
+                ..crate::model_config::CostTier::default()
+            }],
+            request_start_minute_utc: None,
+        };
+
+        let costs = calculate_token_costs(Some(&rates), Some(0), None, None, Some(100), Some(40));
+
+        assert_eq!(costs.reasoning_usd, None);
+    }
+
+    #[test]
+    fn a_time_tier_is_selected_from_the_captured_start_minute() {
+        let rates = || ModelCostRates {
+            input_per_million_usd: 1.0,
+            output_per_million_usd: 10.0,
+            cache_read_per_million_usd: None,
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
+            tiers: vec![crate::model_config::CostTier {
+                context_above: None,
+                start_minute_utc: Some(1380),
+                end_minute_utc: Some(60),
+                input_per_million_usd: 0.5,
+                output_per_million_usd: 5.0,
+                cache_read_per_million_usd: None,
+                cache_write_per_million_usd: None,
+                reasoning_per_million_usd: None,
+            }],
+            request_start_minute_utc: None,
+        };
+
+        let mut inside = rates();
+        inside.request_start_minute_utc = Some(23 * 60 + 30);
+        let costs = calculate_token_costs(Some(&inside), Some(0), None, None, Some(100), None);
+        assert_eq!(costs.output_usd, Some(100.0 * 5.0 / 1_000_000.0));
+
+        let mut outside = rates();
+        outside.request_start_minute_utc = Some(12 * 60);
+        let costs = calculate_token_costs(Some(&outside), Some(0), None, None, Some(100), None);
+        assert_eq!(costs.output_usd, Some(100.0 * 10.0 / 1_000_000.0));
+
+        // The request is billed at its start, so a caller that leaves the
+        // minute unset still gets base rates rather than a guess.
+        let unstamped = rates();
+        let costs = calculate_token_costs(Some(&unstamped), Some(0), None, None, Some(100), None);
+        assert_eq!(costs.output_usd, Some(100.0 * 10.0 / 1_000_000.0));
+    }
+
+    #[test]
+    fn a_cached_prompt_counts_toward_the_context_threshold() {
+        let rates = ModelCostRates {
+            input_per_million_usd: 1.0,
+            output_per_million_usd: 10.0,
+            cache_read_per_million_usd: Some(0.1),
+            cache_write_per_million_usd: None,
+            reasoning_per_million_usd: None,
+            tiers: vec![crate::model_config::CostTier {
+                context_above: Some(100_000),
+                input_per_million_usd: 2.0,
+                output_per_million_usd: 20.0,
+                ..crate::model_config::CostTier::default()
+            }],
+            request_start_minute_utc: None,
+        };
+
+        // 60k fresh + 60k cached = a 120k prompt, over the threshold. The
+        // upstream reports the prompt total including the cached bucket.
+        let costs = calculate_token_costs(
+            Some(&rates),
+            Some(120_000),
+            Some(60_000),
+            None,
+            Some(10),
+            None,
+        );
+
+        assert_eq!(costs.output_usd, Some(10.0 * 20.0 / 1_000_000.0));
+        assert_eq!(
+            costs.cache_usd,
+            Some(60_000.0 * 2.0 / 1_000_000.0),
+            "the tier's cache rate falls back to the tier input rate"
+        );
     }
 
     #[test]

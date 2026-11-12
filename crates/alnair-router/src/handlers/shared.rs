@@ -167,7 +167,9 @@ impl StreamUsage {
 
         crate::token_rate::reconcile(&self.reservation, usage);
         let usage = usage.unwrap_or_default();
-        let totals = self.savings.finalize(usage.completion_tokens, self.price);
+        let totals = self
+            .savings
+            .finalize(usage.completion_tokens, self.price.as_ref());
 
         self.state.metrics.record_request(self.latency_ms);
         self.state.metrics.record_usage(

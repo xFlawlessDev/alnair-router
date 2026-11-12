@@ -14,9 +14,9 @@ pub mod providers;
 pub mod types;
 
 pub use model_config::{
-    AuthStyle, CacheRetention, Citation, LlmStreamOptions, ModelConfig, ModelCostRates,
-    ResponseFormat, ThinkingLevel, ToolChoice, WireApi, response_format_to_openai,
-    tool_choice_to_openai,
+    AuthStyle, CacheRetention, Citation, CostTier, EffectiveCostRates, LlmStreamOptions,
+    ModelConfig, ModelCostRates, ResponseFormat, ThinkingLevel, ToolChoice, WireApi,
+    response_format_to_openai, tool_choice_to_openai,
 };
 pub use provider::{
     LlmProvider, ProviderCapabilities, ProviderRegistry, WebRequest, provider_type_to_key,

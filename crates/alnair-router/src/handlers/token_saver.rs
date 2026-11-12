@@ -101,7 +101,7 @@ pub async fn playground(
     let totals = match request.assumed_completion_tokens {
         Some(completion) => {
             let price = state.pricing_cache.price_for(&model).await;
-            Some(run.savings.finalize(completion, price))
+            Some(run.savings.finalize(completion, price.as_ref()))
         }
         None => None,
     };

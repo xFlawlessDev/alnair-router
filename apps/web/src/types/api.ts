@@ -835,6 +835,33 @@ export interface PlaygroundResult {
   totals: SavingsTotals | null;
 }
 
+/**
+ * One conditional rate rule on a model price.
+ *
+ * Rules are evaluated in array order and the first rule whose conditions all
+ * match applies to the whole request. A null condition is unconstrained.
+ */
+export interface PriceTier {
+  /**
+   * Applies only when the prompt token count (cached tokens included) is
+   * strictly greater than this value; null means any context size.
+   */
+  context_above: number | null;
+  /**
+   * Daily UTC window start in minutes after midnight, inclusive. Both window
+   * bounds are null (no time condition) or both are set and differ; a start
+   * greater than the end wraps past midnight.
+   */
+  start_minute_utc: number | null;
+  /** Daily UTC window end in minutes after midnight, exclusive. */
+  end_minute_utc: number | null;
+  input_per_million_usd: number;
+  output_per_million_usd: number;
+  cache_read_per_million_usd: number | null;
+  cache_write_per_million_usd: number | null;
+  reasoning_per_million_usd: number | null;
+}
+
 /** One stored model price (USD per million tokens). */
 export interface ModelPrice {
   model: string;
@@ -843,6 +870,8 @@ export interface ModelPrice {
   cache_read_per_million_usd: number | null;
   cache_write_per_million_usd: number | null;
   reasoning_per_million_usd: number | null;
+  /** Conditional rules; an empty array bills the base rates above. */
+  tiers: PriceTier[];
   unit_kind: UnitPrice["unit"] | null;
   unit_quantity: number | null;
   unit_price_usd: number | null;
@@ -858,6 +887,8 @@ export interface ModelPriceInput {
   cache_read_per_million_usd?: number | null;
   cache_write_per_million_usd?: number | null;
   reasoning_per_million_usd?: number | null;
+  /** Conditional rules in evaluation order; omit or send `[]` for base rates. */
+  tiers?: PriceTier[];
   unit_price?: UnitPrice | null;
 }
 

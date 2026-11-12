@@ -24,6 +24,11 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Table,
   TableBody,
   TableCell,
@@ -33,6 +38,7 @@ import {
 } from "@/components/ui/table";
 import { ApiError, api } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { describeTier } from "@/lib/pricingTiers";
 import type { ModelPrice, PriceMatch, PricingSyncStatus } from "@/types/api";
 
 /** Long catalogs are searchable; render at most this many rows at once. */
@@ -79,7 +85,10 @@ async function load(): Promise<void> {
       api.listPricing(),
       api.pricingSyncStatus(),
     ]);
-    prices.value = priceList;
+    prices.value = priceList.map((price) => ({
+      ...price,
+      tiers: price.tiers ?? [],
+    }));
     status.value = syncStatus;
   } catch (caught) {
     error.value =
@@ -267,13 +276,15 @@ onMounted(load);
 
       <Card v-else class="editorial-panel editorial-table">
         <div class="border-b px-4 py-3 text-sm text-muted-foreground">
-          Token rates are USD per million tokens. Unit rates are saved but do
-          not yet calculate media costs.
+          Token rates are USD per million tokens. Conditional rules are checked
+          in order and the first match bills the whole request. Unit rates are
+          saved but do not yet calculate media costs.
         </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Model</TableHead>
+              <TableHead>Conditional rules</TableHead>
               <TableHead class="text-right">Input</TableHead>
               <TableHead class="text-right">Output</TableHead>
               <TableHead class="text-right">Cache read</TableHead>
@@ -293,6 +304,54 @@ onMounted(load);
               <TableCell
                 ><code class="text-xs">{{ price.model }}</code></TableCell
               >
+              <TableCell class="text-xs whitespace-nowrap">
+                <Popover v-if="price.tiers.length">
+                  <PopoverTrigger as-child>
+                    <button
+                      type="button"
+                      class="underline decoration-muted-foreground/40 decoration-dotted underline-offset-4"
+                      :aria-label="`Show ${price.tiers.length} conditional rules for ${price.model}`"
+                    >
+                      {{ price.tiers.length }} rule{{
+                        price.tiers.length === 1 ? "" : "s"
+                      }}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    class="w-96 max-w-[calc(100vw-2rem)]"
+                    align="start"
+                  >
+                    <p class="text-xs font-medium">
+                      First match wins, applied to the whole request
+                    </p>
+                    <p class="mt-1 text-[10px] text-muted-foreground">
+                      Rates are USD per million tokens. Context is strictly
+                      greater than the prompt tokens, cached tokens included;
+                      windows are daily UTC, start inclusive and end exclusive.
+                    </p>
+                    <ol class="mt-2 grid gap-2">
+                      <li
+                        v-for="(tier, index) in price.tiers"
+                        :key="index"
+                        class="grid gap-1 border-t pt-2 text-xs first:border-t-0 first:pt-0"
+                      >
+                        <span class="font-medium"
+                          >{{ index + 1 }}. {{ describeTier(tier) }}</span
+                        >
+                        <span class="text-muted-foreground">
+                          in {{ rate(tier.input_per_million_usd) }}/M · out
+                          {{ rate(tier.output_per_million_usd) }}/M · cache read
+                          {{ rate(tier.cache_read_per_million_usd) }}/M · cache
+                          write {{ rate(tier.cache_write_per_million_usd) }}/M ·
+                          reasoning
+                          {{ rate(tier.reasoning_per_million_usd) }}/M
+                        </span>
+                      </li>
+                    </ol>
+                  </PopoverContent>
+                </Popover>
+                <template v-else>—</template>
+              </TableCell>
               <TableCell class="text-right text-xs tabular-nums">{{
                 rate(price.input_per_million_usd)
               }}</TableCell>

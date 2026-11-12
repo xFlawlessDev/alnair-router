@@ -147,7 +147,7 @@ async fn stream_response(
         attempt_count,
         latency_ms,
     )
-    .with_savings(saver_savings.clone(), price);
+    .with_savings(saver_savings.clone(), price.clone());
 
     let opening = Event::default().data(
         serde_json::to_string(&RouterFrame {
@@ -221,7 +221,11 @@ fn frame_events(
         })))],
         Ok(StreamChunk::Usage(usage)) => {
             state.usage.record(Some(usage), "ok");
-            vec![Ok(usage_frame(&usage, &state.savings, state.price))]
+            vec![Ok(usage_frame(
+                &usage,
+                &state.savings,
+                state.price.as_ref(),
+            ))]
         }
         Ok(StreamChunk::Done(_)) => {
             // Providers that report no usage still need a row, and the recorder
@@ -247,7 +251,7 @@ fn frame_events(
 fn usage_frame(
     usage: &TokenUsage,
     savings: &Savings,
-    price: Option<crate::pricing::Price>,
+    price: Option<&crate::pricing::Price>,
 ) -> Event {
     data_frame(&UsageFrame {
         kind: "usage",

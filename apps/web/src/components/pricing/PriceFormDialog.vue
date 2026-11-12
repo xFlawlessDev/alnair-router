@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "@lucide/vue";
 import { computed, ref, watch } from "vue";
 import { toast } from "vue-sonner";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -14,7 +16,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, api } from "@/lib/api";
-import type { ModelPrice, ModelPriceInput, UnitPrice } from "@/types/api";
+import {
+  draftToTier,
+  emptyTierDraft,
+  tierToDraft,
+  type TierDraft,
+} from "@/lib/pricingTiers";
+import type {
+  ModelPrice,
+  ModelPriceInput,
+  PriceTier,
+  UnitPrice,
+} from "@/types/api";
 
 const props = defineProps<{ open: boolean; price: ModelPrice | null }>();
 const emit = defineEmits<{ "update:open": [boolean]; saved: [] }>();
@@ -28,6 +41,7 @@ const reasoning = ref("");
 const unit = ref<UnitPrice["unit"] | "">("");
 const unitQuantity = ref("1");
 const unitRate = ref("");
+const tiers = ref<TierDraft[]>([]);
 const saving = ref(false);
 
 const isEdit = computed(() => props.price !== null);
@@ -56,7 +70,9 @@ watch(
       price?.reasoning_per_million_usd != null
         ? String(price.reasoning_per_million_usd)
         : "";
+    tiers.value = (price?.tiers ?? []).map(tierToDraft);
   },
+  { immediate: true },
 );
 
 /** Rate input: blank clears the field, anything else must be a non-negative number. */
@@ -65,6 +81,22 @@ function parseRate(value: string | number): number | null {
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : Number.NaN;
+}
+
+function addTier(): void {
+  tiers.value.push(emptyTierDraft());
+}
+
+function removeTier(index: number): void {
+  tiers.value.splice(index, 1);
+}
+
+/** Rules are evaluated top to bottom, so order is part of the meaning. */
+function moveTier(index: number, offset: -1 | 1): void {
+  const target = index + offset;
+  if (target < 0 || target >= tiers.value.length) return;
+  const [draft] = tiers.value.splice(index, 1);
+  tiers.value.splice(target, 0, draft);
 }
 
 async function save(): Promise<void> {
@@ -112,6 +144,16 @@ async function save(): Promise<void> {
     return;
   }
 
+  const parsedTiers: PriceTier[] = [];
+  for (const [index, draft] of tiers.value.entries()) {
+    const parsed = draftToTier(draft);
+    if ("error" in parsed) {
+      toast.error(`Rule ${index + 1}: ${parsed.error}`);
+      return;
+    }
+    parsedTiers.push(parsed.tier);
+  }
+
   const body: ModelPriceInput = {
     model: name,
     input_per_million_usd: rates.input_per_million_usd as number,
@@ -119,6 +161,7 @@ async function save(): Promise<void> {
     cache_read_per_million_usd: rates.cache_read_per_million_usd,
     cache_write_per_million_usd: rates.cache_write_per_million_usd,
     reasoning_per_million_usd: rates.reasoning_per_million_usd,
+    tiers: parsedTiers,
     unit_price: unit.value
       ? {
           unit: unit.value,
@@ -234,6 +277,176 @@ async function save(): Promise<void> {
             />
           </div>
         </div>
+
+        <fieldset class="grid gap-3 rounded-md border p-4">
+          <legend class="px-1 text-sm font-medium">
+            Conditional rules (optional)
+          </legend>
+          <p class="text-xs text-muted-foreground">
+            Rules are checked in order and the <strong>first match wins</strong>
+            — that rule's rates bill the entire request. A rule matches only
+            when every condition it sets matches. Context compares strictly
+            greater than the prompt tokens, cached tokens included, and times
+            use the UTC request start. With no rules, the base rates above
+            apply.
+          </p>
+
+          <div
+            v-for="(tier, index) in tiers"
+            :key="tier.key"
+            class="grid gap-3 rounded-md border bg-muted/30 p-3"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="text-xs font-medium">Rule {{ index + 1 }}</p>
+              <div class="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :disabled="index === 0"
+                  :aria-label="`Move rule ${index + 1} up`"
+                  @click="moveTier(index, -1)"
+                >
+                  <ArrowUp />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  :disabled="index === tiers.length - 1"
+                  :aria-label="`Move rule ${index + 1} down`"
+                  @click="moveTier(index, 1)"
+                >
+                  <ArrowDown />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-destructive hover:text-destructive"
+                  :aria-label="`Remove rule ${index + 1}`"
+                  @click="removeTier(index)"
+                >
+                  <Trash2 />
+                </Button>
+              </div>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-3">
+              <div class="grid gap-2">
+                <Label :for="`tier-context-${index}`"
+                  >Context above (tokens)</Label
+                >
+                <Input
+                  :id="`tier-context-${index}`"
+                  v-model="tier.contextAbove"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Any"
+                />
+              </div>
+              <div class="grid gap-2">
+                <Label :for="`tier-start-${index}`">UTC start</Label>
+                <Input
+                  :id="`tier-start-${index}`"
+                  v-model="tier.start"
+                  type="time"
+                  :disabled="!tier.timeWindow"
+                />
+              </div>
+              <div class="grid gap-2">
+                <Label :for="`tier-end-${index}`">UTC end</Label>
+                <Input
+                  :id="`tier-end-${index}`"
+                  v-model="tier.end"
+                  type="time"
+                  :disabled="!tier.timeWindow"
+                />
+              </div>
+            </div>
+
+            <div class="flex items-start gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                :id="`tier-window-${index}`"
+                class="mt-0.5"
+                :aria-label="`Limit rule ${index + 1} to a daily UTC window`"
+                :model-value="tier.timeWindow"
+                @update:model-value="tier.timeWindow = $event === true"
+              />
+              <span
+                class="cursor-pointer select-none"
+                @click="tier.timeWindow = !tier.timeWindow"
+              >
+                Limit to a daily UTC window (start inclusive, end exclusive; a
+                start after the end wraps past midnight)
+              </span>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div class="grid gap-2">
+                <Label :for="`tier-input-${index}`">Input rate</Label>
+                <Input
+                  :id="`tier-input-${index}`"
+                  v-model="tier.input"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                />
+              </div>
+              <div class="grid gap-2">
+                <Label :for="`tier-output-${index}`">Output rate</Label>
+                <Input
+                  :id="`tier-output-${index}`"
+                  v-model="tier.output"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                />
+              </div>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-3">
+              <div class="grid gap-2">
+                <Label :for="`tier-cache-read-${index}`">Cache read</Label>
+                <Input
+                  :id="`tier-cache-read-${index}`"
+                  v-model="tier.cacheRead"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="= input"
+                />
+              </div>
+              <div class="grid gap-2">
+                <Label :for="`tier-cache-write-${index}`">Cache write</Label>
+                <Input
+                  :id="`tier-cache-write-${index}`"
+                  v-model="tier.cacheWrite"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="= input"
+                />
+              </div>
+              <div class="grid gap-2">
+                <Label :for="`tier-reasoning-${index}`">Reasoning</Label>
+                <Input
+                  :id="`tier-reasoning-${index}`"
+                  v-model="tier.reasoning"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="= output"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <Button variant="outline" size="sm" @click="addTier">
+              <Plus /> Add rule
+            </Button>
+          </div>
+        </fieldset>
+
         <fieldset class="grid gap-3 rounded-md border p-4">
           <legend class="px-1 text-sm font-medium">Unit rate (optional)</legend>
           <div class="grid gap-4 sm:grid-cols-3">

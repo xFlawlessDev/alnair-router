@@ -31,9 +31,9 @@ use futures::stream::{BoxStream, Stream};
 use crate::error::{Error, Result};
 use crate::pricing::Price;
 use alnair_llm::{
-    AuthStyle, CacheRetention, ContentPart, ImageUrlContentPart, LlmStreamChunk, LlmStreamOptions,
-    Message, MessageContent, MessageToolCall, ModelConfig, ModelCostRates, TextContentPart,
-    ThinkingLevel,
+    AuthStyle, CacheRetention, ContentPart, CostTier, ImageUrlContentPart, LlmStreamChunk,
+    LlmStreamOptions, Message, MessageContent, MessageToolCall, ModelConfig, ModelCostRates,
+    TextContentPart, ThinkingLevel,
 };
 
 mod capability;
@@ -475,6 +475,21 @@ fn cost_rates(price: Price) -> ModelCostRates {
         cache_read_per_million_usd: price.cache_read_per_million_usd,
         cache_write_per_million_usd: price.cache_write_per_million_usd,
         reasoning_per_million_usd: price.reasoning_per_million_usd,
+        tiers: price
+            .tiers
+            .into_iter()
+            .map(|tier| CostTier {
+                context_above: tier.context_above,
+                start_minute_utc: tier.start_minute_utc,
+                end_minute_utc: tier.end_minute_utc,
+                input_per_million_usd: tier.input_per_million_usd,
+                output_per_million_usd: tier.output_per_million_usd,
+                cache_read_per_million_usd: tier.cache_read_per_million_usd,
+                cache_write_per_million_usd: tier.cache_write_per_million_usd,
+                reasoning_per_million_usd: tier.reasoning_per_million_usd,
+            })
+            .collect(),
+        request_start_minute_utc: None,
     }
 }
 

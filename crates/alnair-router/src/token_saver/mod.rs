@@ -212,7 +212,7 @@ impl Savings {
 
     /// Closes the calculation once the provider reported its completion token
     /// count, applying `price` (the winning tier's catalog rate) to both sides.
-    pub fn finalize(&self, completion_tokens: u64, price: Option<Price>) -> SavingsTotals {
+    pub fn finalize(&self, completion_tokens: u64, price: Option<&Price>) -> SavingsTotals {
         let mut totals = SavingsTotals {
             saved_rtk_tokens: self.slimmer_tokens,
             saved_headroom_tokens: self.headroom_tokens,

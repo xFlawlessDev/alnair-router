@@ -3862,6 +3862,52 @@ async fn pricing_overrides_round_trip_through_the_api() {
 }
 
 #[tokio::test]
+async fn conditional_pricing_round_trips_and_rejects_invalid_windows() {
+    let (app, _) = app(false).await;
+    let tier = serde_json::json!({
+        "context_above": 200000,
+        "start_minute_utc": 1320,
+        "end_minute_utc": 360,
+        "input_per_million_usd": 4.0,
+        "output_per_million_usd": 8.0,
+        "cache_read_per_million_usd": null,
+        "cache_write_per_million_usd": null,
+        "reasoning_per_million_usd": null
+    });
+    let (status, _) = json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({
+            "prices": [{"model":"tiered", "input_per_million_usd":1.0,
+                        "output_per_million_usd":2.0, "tiers":[tier.clone()]}]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, rows) = get(&app, "/api/pricing").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rows[0]["tiers"][0], tier);
+    let (status, matched) = get(&app, "/api/pricing/match?model=tiered").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(matched["price"]["tiers"][0], tier);
+
+    let (status, _) = json_request(
+        &app,
+        "PUT",
+        "/api/pricing",
+        serde_json::json!({
+            "prices": [{"model":"bad-window", "input_per_million_usd":1.0,
+                        "output_per_million_usd":2.0,
+                        "tiers":[{"start_minute_utc":60, "end_minute_utc":60,
+                                  "input_per_million_usd":1.0, "output_per_million_usd":2.0}]}]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn unit_pricing_round_trips_and_rejects_invalid_quantity() {
     let (app, _) = app_with_config(RouterConfig::default()).await;
     let (status, _) = json_request(

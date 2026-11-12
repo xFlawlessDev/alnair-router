@@ -525,6 +525,16 @@ Pricing rate lookups strip a `vendor/` prefix and fall back to a connection's
 `pricing_model` when the upstream id is a relay path;
 `GET /api/pricing/match?model=…` reports which catalog key answers an id.
 
+Pricing overrides can include ordered conditional token-rate tiers. A tier may
+require the prompt token count (including cached tokens) to be strictly greater
+than a threshold, a daily UTC time window, or both. Windows include their start
+minute and exclude their end minute; a window can cross midnight. The first
+matching tier applies to the whole request, using its start time; otherwise the
+base rates apply. LiteLLM and models.dev sync import supported long-context
+rates; configure time windows manually in the Pricing dashboard. Request costs
+and token-saving estimates are estimates, not provider invoices; token-saving
+estimates use the base rate.
+
 **Public (client key):** `GET /api/public/usage` and `GET /api/public/models` —
 outside the admin-token guard. The caller authenticates with a router-issued
 key (`Authorization: Bearer sk-router-…`). Usage returns only its own rollup:

@@ -67,6 +67,11 @@ impl OpenAiProvider {
         let api_key = config.api_key.clone();
         let custom_headers = config.custom_headers.clone();
         let capture_thinking = !matches!(options.thinking_level, Some(ThinkingLevel::None));
+        // Snapshot the rates (and the request-start minute that selects a
+        // conditional tier) when the call is made, not when a usage frame
+        // finally arrives: a turn started inside a cheap window keeps that
+        // window's rate even if it finishes after the window closes.
+        let rates = config.effective_cost_rates();
 
         Box::pin(async_stream::stream! {
             let endpoint = format!("{}/chat/completions", normalize_base_url(&base_url));
@@ -315,7 +320,6 @@ impl OpenAiProvider {
                             .or_else(|| usage.get("cached_tokens").and_then(|v| v.as_u64()));
                         let eval_count = usage.get("completion_tokens").and_then(|v| v.as_u64());
                         let reasoning_eval_count = reasoning_tokens(usage);
-                        let rates = config.effective_cost_rates();
                         let costs = calculate_token_costs(
                             rates.as_ref(),
                             prompt_eval_count,
@@ -503,7 +507,6 @@ impl OpenAiProvider {
                             .or_else(|| usage.get("cached_tokens").and_then(|v| v.as_u64()));
                         let eval_count = usage.get("completion_tokens").and_then(|v| v.as_u64());
                         let reasoning_eval_count = reasoning_tokens(usage);
-                        let rates = config.effective_cost_rates();
                         let costs = calculate_token_costs(
                             rates.as_ref(),
                             prompt_eval_count,
