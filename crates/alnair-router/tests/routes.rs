@@ -6871,6 +6871,40 @@ async fn spawn_capturing_responses_upstream() -> (
     (format!("http://{address}/v1"), captured)
 }
 
+#[tokio::test]
+async fn anthropic_custom_tools_reach_openai_upstream_as_functions() {
+    let (app, _db) = app(false).await;
+    let (url, bodies) = spawn_capturing_chat_upstream().await;
+    let connection = create_probe_connection(&app, &url).await;
+    create_alias_for(&app, &connection, "toolroute", Some("gpt-4o")).await;
+
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"]
+    });
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/messages",
+        serde_json::json!({
+            "model": "toolroute",
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": "read a file"}],
+            "tools": [{"name": "read_file", "description": "Read a file", "input_schema": schema}]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unexpected body: {body}");
+    assert_eq!(
+        bodies.lock().expect("capture lock")[0]["tools"][0],
+        serde_json::json!({
+            "type": "function",
+            "function": {"name": "read_file", "description": "Read a file", "parameters": schema}
+        })
+    );
+}
+
 /// A `tool_choice: "required"` from the chat endpoint must reach a chat
 /// upstream as `required`, an Anthropic upstream as `{"type":"any"}` and a
 /// Responses upstream as `required` — the acceptance criterion for the hub

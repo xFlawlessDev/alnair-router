@@ -453,7 +453,7 @@ connections. Custom connections use `web_fetch_mode = "provider"` and
 
 | Endpoint | Notes |
 |---|---|
-| `POST /v1/messages` | Translates to the shared executor; streams with proper Anthropic event ordering. |
+| `POST /v1/messages` | Translates to the shared executor; streams with proper Anthropic event ordering. Accepts system prompts both in the top-level `system` field and as `system` messages for client compatibility. Custom tools translate to the upstream wire format. `output_config.effort` maps to the shared reasoning level; `format` is optional. |
 | `POST /v1/messages/count_tokens` | Heuristic estimate (no tokenizer dependency). |
 
 **Probes (always public):** `GET /api/health` (liveness, no database touch) and

@@ -38,7 +38,7 @@ pub struct MessagesRequest {
     /// `{"user_id": "…"}`. Becomes the hub's `metadata` and `user`.
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
-    /// `{"format": {"type": "json_schema", "schema": {…}}}`.
+    /// Anthropic output effort and optional structured-output format.
     #[serde(default)]
     pub output_config: Option<serde_json::Value>,
     /// Extended-thinking configuration; `budget_tokens` maps to an effort level.
@@ -183,21 +183,52 @@ impl MessagesRequest {
             seed: None,
             presence_penalty: None,
             frequency_penalty: None,
-            tools: self.tools,
+            tools: self.tools.map(|tools| {
+                tools
+                    .into_iter()
+                    .map(|mut tool| {
+                        if let Some(object) = tool.as_object_mut()
+                            && object.get("input_schema").is_some()
+                            && matches!(
+                                object.get("type").and_then(serde_json::Value::as_str),
+                                None | Some("custom")
+                            )
+                        {
+                            object.remove("type");
+                            if let Some(schema) = object.remove("input_schema") {
+                                object.insert("parameters".to_string(), schema);
+                            }
+                            return serde_json::json!({ "type": "function", "function": tool });
+                        }
+                        tool
+                    })
+                    .collect()
+            }),
             // Anthropic clients read usage from `message_delta` instead.
             stream_options: None,
-            reasoning_effort: self.thinking.and_then(|thinking| {
-                // `type: "disabled"` (or any non-enabled type) keeps thinking off.
-                if thinking
-                    .kind
-                    .as_deref()
-                    .is_some_and(|kind| kind != "enabled")
-                {
-                    return None;
-                }
-                let budget = thinking.budget_tokens.unwrap_or(0);
-                Some(crate::upstream::chat_backend::thinking_level_from_budget(budget).to_string())
-            }),
+            reasoning_effort: self
+                .output_config
+                .as_ref()
+                .and_then(|config| config.get("effort"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| {
+                    self.thinking.and_then(|thinking| {
+                        // `type: "disabled"` (or any non-enabled type) keeps thinking off.
+                        if thinking
+                            .kind
+                            .as_deref()
+                            .is_some_and(|kind| kind != "enabled")
+                        {
+                            return None;
+                        }
+                        let budget = thinking.budget_tokens.unwrap_or(0);
+                        Some(
+                            crate::upstream::chat_backend::thinking_level_from_budget(budget)
+                                .to_string(),
+                        )
+                    })
+                }),
             // Anthropic's own web search is a `tools` entry, not this field.
             web_search_options: None,
             tool_choice: anthropic_tool_choice_to_openai(self.tool_choice.as_ref())?,
@@ -280,9 +311,19 @@ fn anthropic_output_config_to_openai(
     let Some(value) = value else {
         return Ok(None);
     };
-    let format = value
-        .get("format")
-        .ok_or_else(|| Error::BadRequest("output_config requires a `format`".to_string()))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| Error::BadRequest("output_config must be a JSON object".to_string()))?;
+    if let Some(effort) = object.get("effort")
+        && !matches!(effort.as_str(), Some("low" | "medium" | "high" | "max"))
+    {
+        return Err(Error::BadRequest(
+            "output_config.effort must be low, medium, high, or max".to_string(),
+        ));
+    }
+    let Some(format) = object.get("format") else {
+        return Ok(None);
+    };
     let kind = format.get("type").and_then(serde_json::Value::as_str);
 
     match kind {
@@ -327,6 +368,7 @@ impl AnthropicMessage {
         let role = match self.role.trim().to_ascii_lowercase().as_str() {
             "assistant" => "assistant",
             "user" => "user",
+            "system" => "system",
             other => {
                 return Err(Error::BadRequest(format!(
                     "unsupported Anthropic message role: {other}"
@@ -443,7 +485,7 @@ impl AnthropicMessage {
             }
         } else if content.is_some() {
             out.push(OpenAiMessage {
-                role: "user".to_string(),
+                role: role.to_string(),
                 content,
                 name: None,
                 tool_call_id: None,

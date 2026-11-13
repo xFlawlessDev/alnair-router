@@ -8,6 +8,62 @@ fn request(body: serde_json::Value) -> crate::protocol::openai::ChatCompletionRe
 }
 
 #[test]
+fn system_messages_preserve_text_and_blocks_alongside_top_level_system() {
+    let chat = request(serde_json::json!({
+        "model": "test",
+        "system": "top-level",
+        "messages": [
+            {"role": "system", "content": "first"},
+            {"role": "system", "content": [{"type": "text", "text": "second"}]},
+            {"role": "user", "content": "hello"}
+        ]
+    }));
+    let messages = chat.into_messages().expect("messages");
+    let actual: Vec<_> = messages
+        .iter()
+        .map(|message| (message.role.as_str(), message.content.as_text()))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("system", "top-level".to_string()),
+            ("system", "first".to_string()),
+            ("system", "second".to_string()),
+            ("user", "hello".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn output_config_effort_does_not_require_format() {
+    for output_config in [
+        serde_json::json!({"effort": "high"}),
+        serde_json::json!({"effort": "high", "format": {"type": "json_schema", "schema": {"type": "object"}}}),
+    ] {
+        let has_format = output_config.get("format").is_some();
+        let chat = request(serde_json::json!({
+            "model": "claude",
+            "messages": [{"role": "user", "content": "hi"}],
+            "output_config": output_config
+        }));
+        let options = chat.generation_options().expect("options");
+        assert_eq!(options.thinking_level.as_deref(), Some("high"));
+        assert_eq!(options.response_format.is_some(), has_format);
+    }
+}
+
+#[test]
+fn output_config_rejects_invalid_effort() {
+    let request: MessagesRequest = serde_json::from_value(serde_json::json!({
+        "model": "claude",
+        "messages": [{"role": "user", "content": "hi"}],
+        "output_config": {"effort": "unknown"}
+    }))
+    .expect("valid request shape");
+    assert!(request.into_chat_request().is_err());
+}
+
+#[test]
 fn thinking_budget_maps_to_reasoning_effort() {
     let chat = request(serde_json::json!({
         "model": "claude",
